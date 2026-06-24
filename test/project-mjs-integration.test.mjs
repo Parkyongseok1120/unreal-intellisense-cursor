@@ -10,8 +10,9 @@ const projectRoot = path.resolve(extRoot, '..', 'Project_MJS');
 const uprojectPath = path.join(projectRoot, 'Project_MJS.uproject');
 const mcpJsonPath = path.join(projectRoot, '.cursor', 'mcp.json');
 const dataDir = path.join(projectRoot, '.ue5_8cursor');
+const localGameProjectAvailable = fs.existsSync(uprojectPath);
 
-describe('Project_MJS integration', () => {
+describe.skipIf(!localGameProjectAvailable)('local game project integration (optional)', () => {
   it('has .uproject with MCP plugins', () => {
     assert.ok(fs.existsSync(uprojectPath), 'Project_MJS.uproject missing');
     const data = JSON.parse(fs.readFileSync(uprojectPath, 'utf-8'));

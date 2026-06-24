@@ -8,8 +8,10 @@ import { execFileSync } from 'node:child_process';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const extRoot = path.join(__dirname, '..');
 const projectRoot = path.resolve(extRoot, '..', 'Project_MJS');
+const uprojectPath = path.join(projectRoot, 'Project_MJS.uproject');
 const engineRoot = process.env.UE_ENGINE_ROOT ?? 'C:\\Program Files\\Epic Games\\UE_5.8';
 const setupScript = path.join(extRoot, 'scripts', 'setup-intellisense.mjs');
+const localGameProjectAvailable = fs.existsSync(uprojectPath);
 
 function ensureIntellisenseArtifacts() {
   if (!fs.existsSync(engineRoot)) return;
@@ -21,9 +23,11 @@ function ensureIntellisenseArtifacts() {
   );
 }
 
-describe('v6 zero-touch bootstrap artifacts (Project_MJS)', () => {
+describe.skipIf(!localGameProjectAvailable)(
+  'v6 zero-touch bootstrap artifacts (local game project — optional)',
+  () => {
   it('project exists', () => {
-    assert.ok(fs.existsSync(path.join(projectRoot, 'Project_MJS.uproject')));
+    assert.ok(fs.existsSync(uprojectPath));
   });
 
   it('bootstrap artifacts present after setup-intellisense', () => {
@@ -51,7 +55,8 @@ describe('v6 zero-touch bootstrap artifacts (Project_MJS)', () => {
       assert.ok(Array.isArray(entries) && entries.length > 0, 'compile_commands should have entries');
     }
   });
-});
+  },
+);
 
 describe('bundled clangd layout', () => {
   it('fetch-llvm output path exists when packaged', () => {
