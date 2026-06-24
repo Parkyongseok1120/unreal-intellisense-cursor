@@ -1,0 +1,95 @@
+{
+  "version": "5.8.0",
+  "engineMcpMode": "tool-search",
+  "defaultPort": 8000,
+  "metaTools": {
+    "listToolsets": "list_toolsets",
+    "describeToolset": "describe_toolset",
+    "callTool": "call_tool"
+  },
+  "requiredPlugins": ["ModelContextProtocol", "AllToolsets"],
+  "logicalTools": {
+    "openAsset": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "open_asset", "argMap": { "path": "asset_path" } },
+        { "toolset": "EditorAssetTools", "tool": "open", "argMap": { "path": "asset_path" } },
+        { "legacyFlat": "open_asset", "argMap": { "path": "path" } }
+      ]
+    },
+    "createBlueprint": {
+      "candidates": [
+        { "toolset": "BlueprintTools", "tool": "create", "argMap": { "parentClass": "parent_class", "name": "name" } },
+        { "legacyFlat": "create_blueprint", "argMap": { "parentClass": "parentClass", "name": "name" } }
+      ]
+    },
+    "findBlueprintsByClass": {
+      "candidates": [
+        { "toolset": "BlueprintTools", "tool": "find_by_parent_class", "argMap": { "className": "parent_class" } },
+        { "toolset": "BlueprintTools", "tool": "find_blueprints_for_class", "argMap": { "className": "class_name" } },
+        { "legacyFlat": "find_blueprints_by_class", "argMap": { "className": "className" } }
+      ]
+    },
+    "getBlueprintParentClass": {
+      "candidates": [
+        { "toolset": "BlueprintTools", "tool": "get_parent_class", "argMap": { "assetPath": "asset_path" } },
+        { "legacyFlat": "get_blueprint_parent_class", "argMap": { "assetPath": "assetPath" } }
+      ]
+    },
+    "liveCodingCompile": {
+      "candidates": [
+        { "toolset": "LiveCodingToolset", "tool": "CompileLiveCoding", "argMap": {} },
+        { "legacyFlat": "live_coding_compile", "argMap": {} }
+      ]
+    },
+    "executeCommand": {
+      "candidates": [
+        { "toolset": "EditorTools", "tool": "execute_console_command", "argMap": { "command": "command" } },
+        { "legacyFlat": "execute_command", "argMap": { "command": "command" } }
+      ]
+    },
+    "findFunctionReferences": {
+      "candidates": [
+        { "toolset": "BlueprintTools", "tool": "find_function_references", "argMap": { "className": "class_name", "functionName": "function_name" } },
+        { "toolset": "BlueprintTools", "tool": "find_blueprint_function_usages", "argMap": { "className": "class_name", "functionName": "function_name" } },
+        { "legacyFlat": "find_function_references", "argMap": { "className": "className", "functionName": "functionName" } }
+      ]
+    },
+    "highlightBlueprintNode": {
+      "candidates": [
+        { "toolset": "BlueprintTools", "tool": "highlight_node", "argMap": { "assetPath": "asset_path", "functionName": "node_name" } },
+        { "legacyFlat": "highlight_blueprint_node", "argMap": { "assetPath": "assetPath", "functionName": "functionName" } }
+      ]
+    },
+    "listAssets": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "list_assets", "argMap": { "path": "path", "classFilter": "class_filter" } },
+        { "toolset": "AssetTools", "tool": "search", "argMap": { "query": "query", "classFilter": "class_filter" } }
+      ]
+    },
+    "getAssetInfo": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "get_asset_info", "argMap": { "assetPath": "asset_path" } },
+        { "toolset": "AssetTools", "tool": "describe", "argMap": { "assetPath": "asset_path" } }
+      ]
+    },
+    "getAssetReferencers": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "get_referencers", "argMap": { "assetPath": "asset_path" } },
+        { "toolset": "AssetTools", "tool": "get_asset_references", "argMap": { "assetPath": "asset_path" } }
+      ]
+    },
+    "getAssetDependencies": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "get_dependencies", "argMap": { "assetPath": "asset_path" } }
+      ]
+    },
+    "importAsset": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "import_asset", "argMap": { "sourcePath": "source_path", "destPath": "dest_path", "assetPath": "asset_path" } },
+        { "toolset": "EditorAssetTools", "tool": "import", "argMap": { "sourcePath": "source_path", "destPath": "dest_path" } },
+        { "legacyFlat": "import_asset", "argMap": { "sourcePath": "sourcePath", "destPath": "destPath" } }
+      ]
+    }
+  },
+  "toolsets": {}
+}

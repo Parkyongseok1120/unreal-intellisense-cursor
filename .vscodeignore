@@ -1,0 +1,16 @@
+.vscode/**
+.github/**
+src/**
+node_modules/**
+test/**
+scripts/**
+docs/**
+.gitignore
+tsconfig.json
+esbuild.mjs
+package-lock.json
+**/*.ts
+!dist/**
+*.vsix
+!bin/**
+.llvm-cache/**

@@ -1,0 +1,159 @@
+import * as vscode from 'vscode';
+import { parseBuildProgress } from '../parsers/buildProgressParser';
+import { probeMcpEndpoint } from '../cursor/mcpConfig';
+import { getIndexCounts } from '../assets/indexCoordinator';
+import { Commands } from '../constants';
+import type { IntelliSenseMode } from '../cursor/bootstrapProject';
+import type { UE5_8CursorContext } from '../types';
+import type { UE5_8CursorSettings } from '../config/settings';
+
+export class StatusBarManager implements vscode.Disposable {
+  private readonly mainItem: vscode.StatusBarItem;
+  private readonly intelliSenseItem: vscode.StatusBarItem;
+  private readonly editorItem: vscode.StatusBarItem;
+  private readonly mcpItem: vscode.StatusBarItem;
+  private readonly assetsItem: vscode.StatusBarItem;
+  private readonly uhtItem: vscode.StatusBarItem;
+  private readonly buildItem: vscode.StatusBarItem;
+  private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private editorRunning = false;
+  private mcpConnected = false;
+  private mcpPort = 8000;
+  private lastMcpCheck = 0;
+  private indexCounts = { assets: 0, reflection: 0 };
+  private intelliSenseMode: IntelliSenseMode = 'missing';
+
+  constructor() {
+    this.mainItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    this.mainItem.command = 'ue58rider.showProjectInfo';
+
+    this.intelliSenseItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+    this.intelliSenseItem.command = Commands.GenerateCompileCommands;
+
+    this.editorItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
+    this.editorItem.command = 'ue58rider.debugAttachEditor';
+
+    this.mcpItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 97);
+    this.mcpItem.command = 'ue58rider.showMcpDiagnostics';
+
+    this.assetsItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 96);
+    this.assetsItem.command = 'ue58rider.showContentBrowser';
+
+    this.uhtItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 95);
+    this.uhtItem.command = 'ue58rider.refreshUhtIntellisense';
+
+    this.buildItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 94);
+    this.buildItem.hide();
+  }
+
+  startPolling(): void {
+    void this.pollEditorState();
+    this.pollTimer = setInterval(() => void this.pollEditorState(), 5000);
+  }
+
+  setIntelliSense(mode: IntelliSenseMode): void {
+    this.intelliSenseMode = mode;
+    this.updateIntelliSenseItem();
+  }
+
+  setBuildProgress(current: number, total: number): void {
+    const pct = Math.round((current / total) * 100);
+    this.buildItem.text = `$(loading~spin) Build ${current}/${total} (${pct}%)`;
+    this.buildItem.show();
+  }
+
+  clearBuildProgress(): void {
+    this.buildItem.hide();
+  }
+
+  onBuildOutputLine(line: string): void {
+    const p = parseBuildProgress(line);
+    if (p) this.setBuildProgress(p.current, p.total);
+  }
+
+  private async pollEditorState(): Promise<void> {
+    const { isUnrealEditorRunning } = await import('../platform/process');
+    const wasRunning = this.editorRunning;
+    this.editorRunning = await isUnrealEditorRunning();
+    if (wasRunning !== this.editorRunning) this.updateEditorItem();
+
+    const now = Date.now();
+    if (now - this.lastMcpCheck > 30_000) {
+      this.lastMcpCheck = now;
+      this.mcpConnected = await probeMcpEndpoint(this.mcpPort, 500);
+      this.updateMcpItem();
+    }
+  }
+
+  async update(ctx: UE5_8CursorContext, settings: UE5_8CursorSettings): Promise<void> {
+    if (!ctx.project) {
+      this.mainItem.text = '$(game) UE5_8: No Project';
+      this.mainItem.show();
+      this.intelliSenseItem.hide();
+      this.editorItem.hide();
+      this.mcpItem.hide();
+      this.assetsItem.hide();
+      this.uhtItem.hide();
+      return;
+    }
+    const engineLabel = ctx.engine ? `UE${ctx.engine.version}` : 'No Engine';
+    this.mainItem.text = `$(game) ${ctx.project.name} | ${engineLabel} | ${settings.buildConfiguration}`;
+    this.mainItem.show();
+    this.updateIntelliSenseItem();
+    this.mcpPort = settings.mcpPort || settings.mcpPortDefault;
+    this.indexCounts = await getIndexCounts(ctx.project.projectRoot);
+    this.updateEditorItem();
+    this.updateMcpItem();
+    this.updateIndexItems();
+  }
+
+  private updateIntelliSenseItem(): void {
+    switch (this.intelliSenseMode) {
+      case 'ready':
+        this.intelliSenseItem.text = '$(check) IntelliSense: Ready';
+        this.intelliSenseItem.tooltip = 'compile_commands.json + clangd 준비 완료';
+        break;
+      case 'partial':
+        this.intelliSenseItem.text = '$(warning) IntelliSense: Partial';
+        this.intelliSenseItem.tooltip = '에디터에서 한 번 빌드하면 정확도가 올라갑니다.';
+        break;
+      default:
+        this.intelliSenseItem.text = '$(error) IntelliSense: Missing';
+        this.intelliSenseItem.tooltip = 'Setup 또는 Refresh IntelliSense 실행';
+        break;
+    }
+    this.intelliSenseItem.show();
+  }
+
+  private updateEditorItem(): void {
+    if (this.editorRunning) {
+      this.editorItem.text = '$(debug-alt) Editor';
+      this.editorItem.show();
+    } else {
+      this.editorItem.hide();
+    }
+  }
+
+  private updateMcpItem(): void {
+    this.mcpItem.text = this.mcpConnected ? `$(plug) MCP:${this.mcpPort}` : '$(plug) MCP:off';
+    this.mcpItem.show();
+  }
+
+  private updateIndexItems(): void {
+    this.assetsItem.text = `$(database) Assets:${this.indexCounts.assets}`;
+    this.assetsItem.show();
+    this.uhtItem.text = `$(symbol-class) UHT:${this.indexCounts.reflection}`;
+    this.uhtItem.show();
+  }
+
+  dispose(): void {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.mainItem.dispose();
+    this.intelliSenseItem.dispose();
+    this.editorItem.dispose();
+    this.mcpItem.dispose();
+    this.assetsItem.dispose();
+    this.uhtItem.dispose();
+    this.buildItem.dispose();
+  }
+}

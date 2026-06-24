@@ -1,0 +1,707 @@
+{
+  "name": "ue5-8-cursor",
+  "displayName": "UE5_8 Cursor",
+  "description": "Cursor dedicated Unreal Engine 5.8 C++ workflow — IntelliSense, build, Live Coding, MCP",
+  "version": "6.1.1",
+  "publisher": "truesync",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YongseokPark/ue5-8-cursor.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Extension Packs",
+    "Programming Languages",
+    "Snippets",
+    "Other"
+  ],
+  "extensionPack": [
+    "anysphere.cpptools",
+    "llvm-vs-code-extensions.vscode-clangd"
+  ],
+  "keywords": [
+    "unreal engine",
+    "ue5",
+    "ue58",
+    "cursor",
+    "clangd",
+    "intellisense",
+    "c++",
+    "game development",
+    "ue5.8"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.uproject",
+    "onCommand:ue58rider.openUproject",
+    "onCommand:ue58rider.setupProject",
+    "onCommand:ue58rider.generateCompileCommands",
+    "onCustomEditor:ue58rider.uproject"
+  ],
+  "contributes": {
+    "snippets": [
+      {
+        "language": "cpp",
+        "path": "./snippets/ue-macros.json"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "ue58rider.uproject",
+        "displayName": "UE5_8 Cursor Project",
+        "selector": [
+          {
+            "filenamePattern": "*.uproject"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ue58rider.openUproject",
+        "title": "Open UE Project in Cursor",
+        "category": "UE5_8 Cursor",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "ue58rider.setupProject",
+        "title": "Setup UE 5.8 Project (Full IntelliSense)",
+        "category": "UE5_8 Cursor",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "ue58rider.build",
+        "title": "Build",
+        "category": "UE5_8 Cursor",
+        "icon": "$(play)"
+      },
+      {
+        "command": "ue58rider.rebuild",
+        "title": "Rebuild (Clean + Build)",
+        "category": "UE5_8 Cursor",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ue58rider.clean",
+        "title": "Clean",
+        "category": "UE5_8 Cursor",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ue58rider.launchEditor",
+        "title": "Launch Unreal Editor",
+        "category": "UE5_8 Cursor",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "ue58rider.liveCoding",
+        "title": "Live Coding Compile",
+        "category": "UE5_8 Cursor",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "ue58rider.generateCompileCommands",
+        "title": "Refresh IntelliSense (compile_commands.json)",
+        "category": "UE5_8 Cursor",
+        "icon": "$(database)"
+      },
+      {
+        "command": "ue58rider.switchHeaderSource",
+        "title": "Switch Header / Source",
+        "category": "UE5_8 Cursor",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "ue58rider.selectEngine",
+        "title": "Select UE 5.8 Engine",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.selectProject",
+        "title": "Select UE Project",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.selectBuildConfig",
+        "title": "Select Build Configuration",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.showProjectInfo",
+        "title": "Show Project Info",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.checkPrerequisites",
+        "title": "Check Prerequisites",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.applyExplorerFilter",
+        "title": "Apply Explorer Filter (Hide Cache Folders)",
+        "category": "UE5_8 Cursor",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "ue58rider.resetExplorerFilter",
+        "title": "Reset Explorer Filter",
+        "category": "UE5_8 Cursor",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "ue58rider.debugLaunchEditor",
+        "title": "Debug: Launch Editor",
+        "category": "UE5_8 Cursor",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "ue58rider.debugAttachEditor",
+        "title": "Debug: Attach to Editor",
+        "category": "UE5_8 Cursor",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "ue58rider.debugLaunchGame",
+        "title": "Debug: Launch Game (Standalone)",
+        "category": "UE5_8 Cursor",
+        "icon": "$(debug-console)"
+      },
+      {
+        "command": "ue58rider.newCppClass",
+        "title": "New C++ Class...",
+        "category": "UE5_8 Cursor",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ue58rider.openBlueprint",
+        "title": "Open Blueprint in Editor",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.findBlueprints",
+        "title": "Find Blueprints for Class",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.jumpToCppFromBlueprint",
+        "title": "Jump to C++ from Blueprint",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.setupMcp",
+        "title": "Setup UE 5.8 MCP Connection",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.verifyMcp",
+        "title": "Verify MCP Connection",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.refreshUhtIntellisense",
+        "title": "Refresh UHT IntelliSense",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.startLogViewer",
+        "title": "Start Unreal Log Viewer",
+        "category": "UE5_8 Cursor",
+        "icon": "$(output)"
+      },
+      {
+        "command": "ue58rider.stopLogViewer",
+        "title": "Stop Unreal Log Viewer",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.showWelcome",
+        "title": "Welcome / Getting Started",
+        "category": "UE5_8 Cursor",
+        "icon": "$(question)"
+      },
+      {
+        "command": "ue58rider.openMultiRootWorkspace",
+        "title": "Generate Multi-Root Workspace",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.showUFunctionInfo",
+        "title": "Show UFUNCTION Info",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.createBlueprintSubclass",
+        "title": "Create Blueprint Subclass",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.debugPIE",
+        "title": "Debug: Play In Editor",
+        "category": "UE5_8 Cursor",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "ue58rider.findUFunctionBlueprints",
+        "title": "Find UFUNCTION Blueprint Usages",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.refreshMcpSchema",
+        "title": "Refresh MCP Schema Snapshot",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.refreshAssetIndex",
+        "title": "Refresh Content Asset Index",
+        "category": "UE5_8 Cursor",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ue58rider.openAsset",
+        "title": "Open Asset in Editor",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.findAssetReferences",
+        "title": "Find Asset References",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.showContentBrowser",
+        "title": "Show Content Browser",
+        "category": "UE5_8 Cursor",
+        "icon": "$(folder-library)"
+      },
+      {
+        "command": "ue58rider.showMcpDiagnostics",
+        "title": "Show MCP Diagnostics",
+        "category": "UE5_8 Cursor",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "ue58rider.filterContentBrowser",
+        "title": "Filter Content Browser by Class",
+        "category": "UE5_8 Cursor",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "ue58rider.searchAssets",
+        "title": "Search Assets",
+        "category": "UE5_8 Cursor",
+        "icon": "$(search)"
+      },
+      {
+        "command": "ue58rider.copyAssetPath",
+        "title": "Copy Asset Path",
+        "category": "UE5_8 Cursor",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "ue58rider.showContentWebview",
+        "title": "Show Content Browser (Grid)",
+        "category": "UE5_8 Cursor",
+        "icon": "$(layout-grid)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ue58rider-content",
+          "title": "UE Content",
+          "icon": "$(database)"
+        },
+        {
+          "id": "ue58rider-mcp",
+          "title": "UE MCP",
+          "icon": "$(plug)"
+        }
+      ]
+    },
+    "views": {
+      "ue58rider-content": [
+        {
+          "id": "ue58rider.contentBrowser",
+          "name": "Content Browser"
+        }
+      ],
+      "ue58rider-mcp": [
+        {
+          "id": "ue58rider.mcpDiagnostics",
+          "name": "MCP Diagnostics"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "UE5_8 Cursor",
+      "properties": {
+        "ue58rider.engineRoot": {
+          "type": "string",
+          "default": "",
+          "description": "UE 5.8 엔진 루트 경로. 비워두면 자동 탐지.",
+          "scope": "resource"
+        },
+        "ue58rider.projectFile": {
+          "type": "string",
+          "default": "",
+          "description": ".uproject 파일 경로. 비워두면 자동 탐지.",
+          "scope": "resource"
+        },
+        "ue58rider.buildConfiguration": {
+          "type": "string",
+          "default": "Development",
+          "enum": [
+            "Debug",
+            "DebugGame",
+            "Development",
+            "Shipping",
+            "Test"
+          ],
+          "description": "기본 빌드 구성.",
+          "scope": "resource"
+        },
+        "ue58rider.buildTarget": {
+          "type": "string",
+          "default": "Editor",
+          "enum": [
+            "Editor",
+            "Game",
+            "Client",
+            "Server"
+          ],
+          "description": "기본 빌드 타겟.",
+          "scope": "resource"
+        },
+        "ue58rider.platform": {
+          "type": "string",
+          "default": "Win64",
+          "description": "타겟 플랫폼.",
+          "scope": "resource"
+        },
+        "ue58rider.llvmPath": {
+          "type": "string",
+          "default": "",
+          "description": "clangd 실행 파일 경로. 비워두면 VSIX 번들 → PATH 순으로 탐색.",
+          "scope": "resource"
+        },
+        "ue58rider.autoSetupOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "프로젝트 열 때 Zero-Touch 부트스트랩 자동 실행 (.vscode, .clangd, compile_commands, MCP)."
+        },
+        "ue58rider.autoSetupSilent": {
+          "type": "boolean",
+          "default": true,
+          "description": "부트스트랩 시 확인 대화상자 없이 status bar + Output만 사용."
+        },
+        "ue58rider.autoGenerateCompileCommands": {
+          "type": "boolean",
+          "default": true,
+          "description": "compile_commands.json이 없으면 자동 생성."
+        },
+        "ue58rider.autoWarmUnrealCacheOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "캐시가 없는 첫 오픈 시 UBT Editor 빌드로 Intermediate/UHT generated headers/.rsp 캐시를 자동 생성."
+        },
+        "ue58rider.upsertClangdConfig": {
+          "type": "boolean",
+          "default": true,
+          "description": "UE 최적화 .clangd 설정 적용.",
+          "scope": "resource"
+        },
+        "ue58rider.liveCoding.method": {
+          "type": "string",
+          "default": "keystroke",
+          "enum": [
+            "keystroke",
+            "disabled"
+          ],
+          "description": "Live Coding 트리거 방식.",
+          "scope": "resource"
+        },
+        "ue58rider.hideExplorerNoise": {
+          "type": "boolean",
+          "default": true,
+          "description": "Explorer에서 Source/Plugins/Config 외 캐시 폴더 숨김.",
+          "scope": "resource"
+        },
+        "ue58rider.debug.buildConfiguration": {
+          "type": "string",
+          "default": "DebugGame",
+          "enum": [
+            "Debug",
+            "DebugGame",
+            "Development"
+          ],
+          "description": "디버깅용 빌드 구성. DebugGame 권장.",
+          "scope": "resource"
+        },
+        "ue58rider.debug.autoBuildBeforeLaunch": {
+          "type": "boolean",
+          "default": true,
+          "description": "디버그 시작 전 자동 빌드.",
+          "scope": "resource"
+        },
+        "ue58rider.autoRefreshOnSourceChange": {
+          "type": "boolean",
+          "default": true,
+          "description": "새 모듈/소스 추가 시 compile_commands 자동 갱신.",
+          "scope": "resource"
+        },
+        "ue58rider.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "UE 5.8 MCP .cursor/mcp.json 자동 설정.",
+          "scope": "resource"
+        },
+        "ue58rider.mcp.port": {
+          "type": "number",
+          "default": 0,
+          "description": "UE MCP 포트 (0=자동 탐색).",
+          "scope": "resource"
+        },
+        "ue58rider.mcp.portDefault": {
+          "type": "number",
+          "default": 8000,
+          "description": "UE MCP 기본 포트 (Epic 공식: 8000).",
+          "scope": "resource"
+        },
+        "ue58rider.contentBrowser.mode": {
+          "type": "string",
+          "default": "dedicated-view",
+          "enum": [
+            "hidden",
+            "dedicated-view",
+            "explorer-visible"
+          ],
+          "description": "Content 폴더 표시 방식. dedicated-view: 전용 사이드바만.",
+          "scope": "resource"
+        },
+        "ue58rider.contentBrowser.ui": {
+          "type": "string",
+          "default": "tree",
+          "enum": [
+            "tree",
+            "webview",
+            "both"
+          ],
+          "description": "Content Browser UI: TreeView, Webview grid, or both.",
+          "scope": "resource"
+        },
+        "ue58rider.mcp.autoFixUproject": {
+          "type": "boolean",
+          "default": true,
+          "description": "Setup 시 .uproject에 MCP 플러그인 항목 자동 추가.",
+          "scope": "resource"
+        },
+        "ue58rider.experimental.assetImportDnD": {
+          "type": "boolean",
+          "default": false,
+          "description": "Content Browser Webview에서 에셋 Import DnD (experimental). 에디터 MCP 필요.",
+          "scope": "resource"
+        },
+        "ue58rider.autoStartLogViewer": {
+          "type": "boolean",
+          "default": false,
+          "description": "에디터 실행 시 로그 뷰어 자동 시작.",
+          "scope": "resource"
+        },
+        "ue58rider.showWelcomeOnFirstOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "첫 실행 시 Welcome 가이드 표시."
+        }
+      }
+    },
+    "taskDefinitions": [
+      {
+        "type": "ue58rider",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "build",
+              "rebuild",
+              "clean",
+              "generateCompileCommands"
+            ]
+          },
+          "configuration": {
+            "type": "string",
+            "enum": [
+              "Debug",
+              "DebugGame",
+              "Development",
+              "Shipping",
+              "Test"
+            ]
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "Editor",
+              "Game",
+              "Client",
+              "Server"
+            ]
+          },
+          "platform": {
+            "type": "string"
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "ue58rider-msvc",
+        "owner": "ue58rider",
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(?:\\s*\\d+>)?([^\\s].*?)\\((\\d+),?(\\d+)?(?:,\\d+,\\d+)?\\)\\s*:\\s+(error|warning|info)\\s+(\\w{1,2}\\d+)\\s*:\\s*(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ue58rider.refreshAssetIndex",
+          "when": "view == ue58rider.contentBrowser",
+          "group": "navigation"
+        },
+        {
+          "command": "ue58rider.filterContentBrowser",
+          "when": "view == ue58rider.contentBrowser",
+          "group": "navigation"
+        },
+        {
+          "command": "ue58rider.searchAssets",
+          "when": "view == ue58rider.contentBrowser",
+          "group": "navigation"
+        },
+        {
+          "command": "ue58rider.showContentWebview",
+          "when": "view == ue58rider.contentBrowser",
+          "group": "navigation"
+        },
+        {
+          "command": "ue58rider.refreshMcpSchema",
+          "when": "view == ue58rider.mcpDiagnostics",
+          "group": "navigation"
+        },
+        {
+          "command": "ue58rider.showMcpDiagnostics",
+          "when": "view == ue58rider.mcpDiagnostics",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ue58rider.openAsset",
+          "when": "view == ue58rider.contentBrowser && viewItem == ueContentAsset",
+          "group": "inline"
+        },
+        {
+          "command": "ue58rider.findAssetReferences",
+          "when": "view == ue58rider.contentBrowser && viewItem == ueContentAsset",
+          "group": "navigation"
+        },
+        {
+          "command": "ue58rider.copyAssetPath",
+          "when": "view == ue58rider.contentBrowser && viewItem == ueContentAsset",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "ue58rider.openUproject",
+          "when": "resourceExtname == .uproject",
+          "group": "navigation"
+        }
+      ],
+      "editor/title/run": [
+        {
+          "command": "ue58rider.build",
+          "group": "navigation@1",
+          "when": "ue58rider.projectDetected"
+        },
+        {
+          "command": "ue58rider.launchEditor",
+          "group": "navigation@2",
+          "when": "ue58rider.projectDetected"
+        },
+        {
+          "command": "ue58rider.liveCoding",
+          "group": "navigation@3",
+          "when": "ue58rider.projectDetected"
+        },
+        {
+          "command": "ue58rider.debugLaunchEditor",
+          "group": "navigation@4",
+          "when": "ue58rider.projectDetected && ue58rider.engineFound"
+        },
+        {
+          "command": "ue58rider.debugAttachEditor",
+          "group": "navigation@5",
+          "when": "ue58rider.projectDetected && ue58rider.engineFound"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "ue58rider.build",
+        "key": "ctrl+shift+b",
+        "when": "ue58rider.projectDetected"
+      },
+      {
+        "command": "ue58rider.liveCoding",
+        "key": "ctrl+alt+f11",
+        "when": "ue58rider.projectDetected"
+      },
+      {
+        "command": "ue58rider.switchHeaderSource",
+        "key": "alt+o",
+        "when": "editorLangId == cpp && ue58rider.projectDetected"
+      },
+      {
+        "command": "ue58rider.debugLaunchEditor",
+        "key": "f5",
+        "when": "ue58rider.projectDetected && ue58rider.engineFound && editorLangId == cpp"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "vsce package --target win32-x64",
+    "prepackage": "npm run build && node scripts/fetch-llvm.mjs",
+    "test": "node --test test/*.test.mjs",
+    "verify:project-mjs": "node scripts/project-mjs-verify.mjs --capture-schema",
+    "setup:intellisense": "node scripts/setup-intellisense.mjs"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.22.0",
+    "ajv": "^8.17.1",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "version": "5.8.0",
+  "capturedAt": "2026-06-24T12:00:00.000Z",
+  "captureSource": "synthetic-ci-fixture",
+  "captureNote": "Run npm run verify:project-mjs with UE Editor on port 8000 to replace with live describe_toolset output",
+  "engineMcpMode": "tool-search",
+  "defaultPort": 8000,
+  "metaTools": {
+    "listToolsets": "list_toolsets",
+    "describeToolset": "describe_toolset",
+    "callTool": "call_tool"
+  },
+  "requiredPlugins": ["ModelContextProtocol", "AllToolsets"],
+  "logicalTools": {
+    "openAsset": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "open_asset", "argMap": { "path": "asset_path" } }
+      ]
+    },
+    "createBlueprint": {
+      "candidates": [
+        { "toolset": "BlueprintTools", "tool": "create", "argMap": { "parentClass": "parent_class", "name": "name" } }
+      ]
+    },
+    "findBlueprintsByClass": {
+      "candidates": [
+        { "toolset": "BlueprintTools", "tool": "find_by_parent_class", "argMap": { "className": "parent_class" } }
+      ]
+    },
+    "getBlueprintParentClass": {
+      "candidates": [
+        { "toolset": "BlueprintTools", "tool": "get_parent_class", "argMap": { "assetPath": "asset_path" } }
+      ]
+    },
+    "liveCodingCompile": {
+      "candidates": [
+        { "toolset": "LiveCodingToolset", "tool": "CompileLiveCoding", "argMap": {} }
+      ]
+    },
+    "executeCommand": {
+      "candidates": [
+        { "toolset": "EditorTools", "tool": "execute_console_command", "argMap": { "command": "command" } }
+      ]
+    },
+    "findFunctionReferences": {
+      "candidates": [
+        { "toolset": "BlueprintTools", "tool": "find_function_references", "argMap": { "className": "class_name", "functionName": "function_name" } }
+      ]
+    },
+    "highlightBlueprintNode": {
+      "candidates": [
+        { "toolset": "BlueprintTools", "tool": "highlight_node", "argMap": { "assetPath": "asset_path", "functionName": "node_name" } }
+      ]
+    },
+    "listAssets": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "list_assets", "argMap": { "path": "path", "classFilter": "class_filter" } }
+      ]
+    },
+    "getAssetInfo": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "get_asset_info", "argMap": { "assetPath": "asset_path" } }
+      ]
+    },
+    "getAssetReferencers": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "get_referencers", "argMap": { "assetPath": "asset_path" } }
+      ]
+    },
+    "getAssetDependencies": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "get_dependencies", "argMap": { "assetPath": "asset_path" } }
+      ]
+    },
+    "importAsset": {
+      "candidates": [
+        { "toolset": "AssetTools", "tool": "import_asset", "argMap": { "sourcePath": "source_path", "destPath": "dest_path" } }
+      ]
+    }
+  },
+  "toolsets": {
+    "AssetTools": {
+      "tools": ["open_asset", "get_asset_info", "get_referencers", "list_assets", "import_asset"]
+    },
+    "BlueprintTools": {
+      "tools": ["create", "find_by_parent_class", "get_parent_class", "find_function_references"]
+    },
+    "LiveCodingToolset": {
+      "tools": ["CompileLiveCoding"]
+    },
+    "EditorTools": {
+      "tools": ["execute_console_command"]
+    }
+  }
+}

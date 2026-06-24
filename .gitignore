@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# Extension build output (esbuild → dist/)
+dist/
+out/
+
+# VSIX packages — distribute via GitHub Releases, not git
+*.vsix
+
+# Bundled clangd/LLVM (~150MB) — scripts/fetch-llvm.mjs downloads at package time
+bin/
+.llvm-cache/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor / IDE (local only)
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.user
+*.DotSettings.user
+
+# Env / secrets
+.env
+.env.*
+*.local
+
+# Logs & caches
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+.cache/
+
+# Test / coverage
+coverage/
+.nyc_output/
+.vscode-test/
+
+# Optional: keep test fixtures committed; ignore scratch outputs
+test/**/*.tmp
+test/**/scratch/

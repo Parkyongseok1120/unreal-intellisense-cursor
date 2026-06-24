@@ -1,0 +1,103 @@
+{
+  "UCLASS": {
+    "prefix": "UCLASS",
+    "body": [
+      "UCLASS(${1|Blueprintable,BlueprintType,Abstract,NotBlueprintable,NotBlueprintType|})",
+      "class ${2:MYPROJECT}_API ${3:A}${4:MyActor} : public ${5:AActor}",
+      "{",
+      "\tGENERATED_BODY()",
+      "",
+      "public:",
+      "\t${3:A}${4:MyActor}();",
+      "",
+      "protected:",
+      "\tvirtual void BeginPlay() override;",
+      "",
+      "public:",
+      "\tvirtual void Tick(float DeltaTime) override;",
+      "};"
+    ],
+    "description": "UE UCLASS actor skeleton"
+  },
+  "USTRUCT": {
+    "prefix": "USTRUCT",
+    "body": [
+      "USTRUCT(${1|BlueprintType|})",
+      "struct ${2:FMyStruct}",
+      "{",
+      "\tGENERATED_BODY()",
+      "",
+      "\tUPROPERTY(${3|EditAnywhere,BlueprintReadWrite|})",
+      "\t${4:float} ${5:Value} = 0.f;",
+      "};"
+    ],
+    "description": "UE USTRUCT"
+  },
+  "UPROPERTY": {
+    "prefix": "UPROPERTY",
+    "body": ["UPROPERTY(${1|EditAnywhere,BlueprintReadWrite,VisibleAnywhere,BlueprintReadOnly|})"],
+    "description": "UE UPROPERTY"
+  },
+  "UFUNCTION": {
+    "prefix": "UFUNCTION",
+    "body": ["UFUNCTION(${1|BlueprintCallable,BlueprintPure,BlueprintImplementableEvent|})"],
+    "description": "UE UFUNCTION"
+  },
+  "UENUM": {
+    "prefix": "UENUM",
+    "body": [
+      "UENUM(${1|BlueprintType|})",
+      "enum class ${2:EMyEnum} : uint8",
+      "{",
+      "\t${3:None}\tUMETA(DisplayName = \"None\"),",
+      "};"
+    ],
+    "description": "UE UENUM"
+  },
+  "UINTERFACE": {
+    "prefix": "UINTERFACE",
+    "body": [
+      "UINTERFACE(${1|MinimalAPI,BlueprintType|})",
+      "class ${2:UMyInterface} : public UInterface",
+      "{",
+      "\tGENERATED_BODY()",
+      "};",
+      "",
+      "class ${3:IMyInterface}",
+      "{",
+      "\tGENERATED_BODY()",
+      "",
+      "public:",
+      "\t${4:}",
+      "};"
+    ],
+    "description": "UE UINTERFACE"
+  },
+  "GENERATED_BODY": {
+    "prefix": "GENBODY",
+    "body": ["GENERATED_BODY()"],
+    "description": "UE GENERATED_BODY macro"
+  },
+  "Subobject": {
+    "prefix": "TObjectPtr",
+    "body": ["TObjectPtr<${1:UObject}> ${2:Object};"],
+    "description": "UE 5 TObjectPtr"
+  },
+  "Component": {
+    "prefix": "UComponent",
+    "body": [
+      "UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))",
+      "class ${1:MYPROJECT}_API ${2:UMyComponent} : public ${3:UActorComponent}",
+      "{",
+      "\tGENERATED_BODY()",
+      "",
+      "public:",
+      "\t${2:UMyComponent}();",
+      "",
+      "protected:",
+      "\tvirtual void BeginPlay() override;",
+      "};"
+    ],
+    "description": "UE Actor Component"
+  }
+}
