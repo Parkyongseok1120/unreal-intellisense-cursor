@@ -1,4 +1,4 @@
-# UE5_8 Cursor
+# Unreal Engine 5.8 IntellisSense Cursor VSIX
 
 Cursor에서 UE 5.8 C++ 환경을 조금 더 편하게 써보려고 만든 실험 확장입니다.  
 처음에는 “Cursor에서도 Unreal C++ IntelliSense를 꽤 쓸만하게 만들 수 있지 않을까?” 정도의 생각으로 시작했는데, 파고들다 보니 UBT, `compile_commands.json`, clangd, UHT, PCH, 모듈 의존성까지 꽤 깊게 들어가게 됐습니다.
