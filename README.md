@@ -1,7 +1,7 @@
 # UE5_8 Cursor
 
-Experimental Unreal Engine 5.8 C++ workflow for Cursor (v6.x).  
-Cursor용 Unreal Engine 5.8 C++ 워크플로우 실험 저장소 (v6.x).
+Cursor에서 UE 5.8 C++ 돌려보려고 만든 실험 확장 (v6.x) — 잘 된 것도 있고, 여기서 멈춘 것도 있어요.  
+Experimental Unreal Engine 5.8 C++ workflow for Cursor (v6.x) — part archive, part spare parts bin.
 
 ---
 
@@ -9,13 +9,13 @@ Cursor용 Unreal Engine 5.8 C++ 워크플로우 실험 저장소 (v6.x).
 
 ### Project Status
 
-**Experiment ended (2026-06)** — We stopped pursuing **Rider-class UE C++ IntelliSense through clangd alone** in this extension.
+**Experiment ended (2026-06).** We tried to get **Rider-level UE C++ IntelliSense from clangd alone** in this extension — and eventually stopped.
 
-On a UE 5.8 game project, **MSVC (UBT) builds and the editor ran fine**. Many `source: clang` diagnostics still disagreed with the real compiler — a **Unreal (MSVC + UHT + PCH) vs generic clangd** mismatch that affects any clangd-based editor setup, not something specific to Cursor or VS Code.
+On a real UE 5.8 game project, **MSVC builds and the editor were fine**. Problems still lit up with `source: clang` errors that didn’t match the compiler. That’s mostly **Unreal (MSVC + UHT + PCH) vs plain clangd**, not “Cursor is broken” or “VS Code is bad.”
 
-**Cursor is still a strong fit** for AI-assisted work, MCP, and the automation in this repo. Teams that need full UObject/reflection IDE features often **also** use [JetBrains Rider](https://www.jetbrains.com/rider/unreal/) or **Visual Studio** (Unreal workload) for that layer — complementary tools, not a verdict against Cursor.
+**Cursor is still great** for AI, MCP, and the automation here. If you need full UObject/reflection IDE stuff, lots of teams **also** keep [JetBrains Rider](https://www.jetbrains.com/rider/unreal/) or **Visual Studio** (Unreal workload) around — different jobs, not a fight.
 
-This repo is an **archive** of what worked, what failed, and reusable code (MCP, compile DB automation, etc.).
+Think of this repo as a **notebook plus a parts bin**: what worked, what didn’t, and code you might reuse (MCP, compile DB automation, etc.).
 
 ---
 
@@ -66,6 +66,8 @@ This repo is an **archive** of what worked, what failed, and reusable code (MCP,
 
 ### What Did Not Work
 
+The honest part — tables below are still the facts.
+
 #### Core goals not met
 
 | Goal | Outcome |
@@ -85,7 +87,7 @@ This repo is an **archive** of what worked, what failed, and reusable code (MCP,
 | Cinematic subsystem | `IsValid`, `GetComponents` **errors** | OK |
 | Engine `Class.h` opened alone | `AutoRTFM/Defines.h` → `uint32`/`UClass` **cascade** | N/A (engine header) |
 
-**Pattern:** project `UCLASS::StaticClass()` often passes; **engine types fail**. Not missing config — **UHT + MSVC PCH vs clangd approximation**.
+**Pattern:** project `UCLASS::StaticClass()` often passes; **engine types fail**. Usually not “you forgot a setting” — it’s **UHT + MSVC PCH vs what clangd can approximate**.
 
 #### Structural limits
 
@@ -107,7 +109,7 @@ This repo is an **archive** of what worked, what failed, and reusable code (MCP,
 
 ### Performance & resources
 
-What we observed for **speed, memory, and load** during the experiment. (Exact numbers vary by project size and hardware.)
+Rough notes on **speed, RAM, and fan noise** from the experiment. Numbers vary a lot by project size and your PC.
 
 #### Design choices that helped
 
@@ -164,50 +166,50 @@ What we observed for **speed, memory, and load** during the experiment. (Exact n
 
 ### Conclusion
 
-- **Full UE C++ reflection / UObject IDE semantics** → often handled with **Rider or Visual Studio** (Epic’s usual toolchain partners)
-- **Cursor + this extension** → AI, editor MCP, asset/Blueprint bridge, compile DB automation — **where this experiment still adds value**
-- **compile_commands automation** → reusable for clangd, other analyzers, CI, AI context
-- In Problems: trust **`msCompile` errors (severity 8)** for build failures. Treat most `source: clang` on engine paths as IDE noise, not proof the game is broken
+- **Full UE reflection / UObject IDE semantics** → many folks use **Rider or Visual Studio** for that
+- **Cursor + this extension** → AI, editor MCP, assets/Blueprint bridge, compile DB automation — **still the interesting bit**
+- **compile_commands automation** → handy for clangd, CI, other tools, AI context
+- **Problems panel:** only **`msCompile` errors (severity 8)** mean “build is actually broken.” Most `source: clang` on engine paths is just IDE noise
 
 ---
 
 ### To those who continue this work
 
-A note for anyone who wants to **pick this experiment back up**.
+If you want to **pick this back up**, here’s what we’d tell past-us.
 
 **Read these first**
 
-1. [docs/ue-clangd-error-analysis.en.md](docs/ue-clangd-error-analysis.en.md) — why clangd alone did not reach Rider level
-2. [docs/uobject-lsp-research.md](docs/uobject-lsp-research.md) — why we did not recommend forking clangd or building a separate UE LSP
+1. [docs/ue-clangd-error-analysis.en.md](docs/ue-clangd-error-analysis.en.md) — why clangd alone didn’t get to Rider level
+2. [docs/uobject-lsp-research.md](docs/uobject-lsp-research.md) — why we didn’t fork clangd or build a whole new UE LSP
 3. `src/cursor/bootstrapProject.ts`, `compileDatabaseFromRsp.ts` — the compile DB pipeline that actually worked
 
-**Lessons from our dead ends**
+**Stuff we learned the hard way**
 
-- Clang errors with a **Ready** `compile_commands.json` are not **config bugs only**. They come from MSVC PCH + UHT + clangd approximation — a UE ecosystem constraint, not a Cursor defect.
-- Adding diagnostic suppress makes Problems quieter but **barely improves IntelliSense quality**.
-- A loop of “tweak clangd flags until Rider-level” has **sharply diminishing returns** for this approach.
+- A **Ready** `compile_commands.json` can still show clang errors. That’s not always “fix the config” — it’s MSVC PCH + UHT + clangd being what they are.
+- Cranking up diagnostic suppress makes Problems **quieter**, not **smarter**.
+- “One more clangd flag and we’ll hit Rider level” — **diminishing returns** hit fast.
 
-**Still worth pursuing**
+**Still worth a look**
 
 | Direction | Why |
 |-----------|-----|
-| **MCP · assets · Content Browser** | Cursor + live editor integration is a real strength — worth extending regardless of which C++ IDE you use. |
-| **compile_commands automation** | Useful beyond clangd — CI, other analyzers, AI context. |
-| **reflection-index / CodeLens** | Supplement UE semantics **beside** clangd instead of replacing it. |
-| **SharedPCH strip experiment** | Strip MSVC PCH `-include` in `compileDatabaseFromRsp.ts`, then run **full-module `clangd --check` before/after** — we stopped before doing this at scale. A good restart point. |
-| **Official Epic UE-aware LSP** | If it ships, adapt Cursor to it rather than maintaining a fork. |
+| **MCP · assets · Content Browser** | Cursor + live editor is genuinely useful — worth extending no matter which C++ IDE you use. |
+| **compile_commands automation** | Useful beyond clangd — CI, analyzers, AI context. |
+| **reflection-index / CodeLens** | Patch UE semantics **next to** clangd instead of replacing it. |
+| **SharedPCH strip experiment** | Strip MSVC PCH `-include` in `compileDatabaseFromRsp.ts`, run **full-module `clangd --check` before/after** — we never did this at scale. Good place to restart. |
+| **Official Epic UE-aware LSP** | If Epic ships one, plug Cursor into that instead of maintaining a fork. |
 
-**Minimum checklist if you restart**
+**If you restart, at least do this**
 
 1. Open a UE 5.8 game `.uproject` root as the workspace.
-2. Run `npm test` + `clangd --check` on **many modules** and record before/after numbers.
-3. Define success upfront — e.g. not “zero Problems” but “engine `StaticClass` errors down by N%” or “stable MCP asset index”.
-4. Treat **msCompile only** as build failure.
+2. Run `npm test` + `clangd --check` on **several modules** and write down before/after numbers.
+3. Decide what “success” means upfront — not “zero Problems,” maybe “engine `StaticClass` errors down N%” or “MCP asset index stable.”
+4. Only treat **msCompile** as build failure.
 
-**Using more than one tool is normal.**  
-Rider or Visual Studio for C++ navigation · Cursor for AI/MCP is a common split. This repo is a **log and parts warehouse** for the Cursor side of that workflow.
+**Using two (or three) tools is normal.**  
+Rider or VS for C++ navigation, Cursor for AI/MCP — totally fine. This repo is basically a **log and parts shelf** for the Cursor side.
 
-Pull requests, issues, and forks are welcome. Contributions with **measurable before/after** are especially helpful.
+PRs, issues, forks welcome. **Before/after you can measure** beats “changed one clangd line, trust me bro.”
 
 ---
 
@@ -215,13 +217,13 @@ Pull requests, issues, and forks are welcome. Contributions with **measurable be
 
 ### 프로젝트 상태
 
-**실험 종료 (2026-06)** — 이 확장에서 **clangd만으로 Rider급 UE C++ IntelliSense**를 맞추는 시도는 **중단**했습니다.
+**실험은 2026-06에 여기서 멈췄어요.** 이 확장에서 **clangd만으로 Rider급 UE C++ IntelliSense**를 맞춰 보다가, 결국 포기한 쪽에 가깝습니다.
 
-UE 5.8 게임 프로젝트에서 **MSVC(UBT) 빌드·에디터 실행은 정상**이었습니다. 그런데 `source: clang` 진단은 실제 컴파일러와 자주 어긋났습니다. 이는 **Unreal(MSVC + UHT + PCH) vs 범용 clangd** 구조 차이로, Cursor나 VS Code만의 문제가 아닙니다.
+UE 5.8 게임 프로젝트 기준으로 **MSVC 빌드랑 에디터는 잘 됐어요.** 그런데 Problems에는 `source: clang` 빨간 줄이 잔뜩 — 실제 컴파일러랑 안 맞는 경우가 많더라고요. Cursor나 VS Code 탓이라기보다 **Unreal(MSVC + UHT + PCH) vs 범용 clangd** 구조 차이에 가깝습니다.
 
-**Cursor는 AI·MCP·자동화** 측면에서 여전히 강합니다. UObject/리플렉션까지 IDE 수준으로 쓰려는 팀은 **[JetBrains Rider](https://www.jetbrains.com/rider/unreal/)** 또는 **Visual Studio**(Unreal 워크로드)를 **함께** 쓰는 경우가 많습니다 — Cursor를 부정하는 게 아니라 역할 분담입니다.
+**Cursor는 AI·MCP·자동화** 쪽은 여전히 잘 맞아요. UObject/리플렉션까지 IDE처럼 쓰고 싶으면 **[JetBrains Rider](https://www.jetbrains.com/rider/unreal/)**나 **Visual Studio**(Unreal 워크로드)를 **같이** 쓰는 팀도 많고요. Cursor를 깎아내리자는 얘기는 아닙니다.
 
-본 repo는 **성공·실패 기록과 재사용 가능한 코드(MCP, compile DB 자동화 등)** 를 남기는 아카이브입니다.
+이 repo는 **실험 메모 + 재활용 가능한 코드**(MCP, compile DB 자동화 등)를 남겨 둔 곳이에요.
 
 ---
 
@@ -272,6 +274,8 @@ UE 5.8 게임 프로젝트에서 **MSVC(UBT) 빌드·에디터 실행은 정상*
 
 ### 실패한 것들
 
+솔직히 말하면, 아래 표가 핵심이에요.
+
 #### 핵심 목표 미달성
 
 | 목표 | 결과 |
@@ -291,7 +295,7 @@ UE 5.8 게임 프로젝트에서 **MSVC(UBT) 빌드·에디터 실행은 정상*
 | 시네마틱 서브시스템 | `IsValid`, `GetComponents` 등 **error** | 정상 |
 | 엔진 `Class.h` 탭 단독 | `AutoRTFM/Defines.h` → `uint32`/`UClass` **연쇄 error** | (엔진 헤더, 게임 빌드와 무관) |
 
-**패턴:** 프로젝트 UCLASS `StaticClass()`는 종종 통과, **엔진 UCLASS는 실패**. 설정 누락이 아니라 **UHT + MSVC PCH vs clangd 근사** 문제.
+**패턴:** 프로젝트 UCLASS `StaticClass()`는 종종 통과하는데, **엔진 UCLASS는 자주 실패**해요. 설정 빠뜨린 것만은 아니고, **UHT + MSVC PCH vs clangd가 대충 맞춘 것** 쪽에 가깝습니다.
 
 #### 구조적 한계
 
@@ -313,7 +317,7 @@ UE 5.8 게임 프로젝트에서 **MSVC(UBT) 빌드·에디터 실행은 정상*
 
 ### 성능 · 리소스
 
-실험 중 체감한 **속도·메모리·부하** 정리입니다. (정확한 벤치마크 수치는 프로젝트 규모·머신에 따라 다름)
+실험하면서 **느린 구간, RAM, 팬 소리** 정도만 메모해 둔 거예요. 프로젝트 크기·PC마다 체감은 꽤 달라요.
 
 #### 잘 맞았던 설계 (체감 성능)
 
@@ -370,50 +374,50 @@ UE 5.8 게임 프로젝트에서 **MSVC(UBT) 빌드·에디터 실행은 정상*
 
 ### 결론
 
-- **UE C++ full 리플렉션 / UObject IDE 의미 분석** → **Rider 또는 Visual Studio**로 맡기는 팀이 많음 (Epic 생태계 일반 조합)
-- **Cursor + 이 확장** → AI, 에디터 MCP, 에셋/Blueprint 브릿지, compile DB 자동화 — **실험이 여전히 가치 있는 부분**
-- **compile_commands 자동 생성** → clangd, 다른 분석기, CI, AI 컨텍스트에 재사용 가능
-- Problems 패널: **`msCompile` error (severity 8)** 만 빌드 실패로 볼 것. `source: clang` + 엔진 경로는 IDE 노이즈로 보는 편이 안전
+- **UE full 리플렉션 / UObject IDE** → **Rider나 Visual Studio** 쓰는 팀 많음
+- **Cursor + 이 확장** → AI, MCP, 에셋/Blueprint, compile DB 자동화 — **아직 볼 만한 부분**
+- **compile_commands 자동 생성** → clangd 말고도 CI·다른 도구·AI 컨텍스트에 재활용 가능
+- **Problems:** **`msCompile` error (severity 8)** 만 “진짜 빌드 깨짐”으로 보면 됨. 엔진 경로 `source: clang`은 대부분 그냥 IDE 노이즈
 
 ---
 
 ### 후속 개발자에게
 
-이 실험을 **이어가고 싶은 분**께 남기는 말입니다.
+이 실험 **이어가고 싶은 분**한테, 지나온 우리 입장에서 남기는 메모예요.
 
-**먼저 읽을 것**
+**먼저 읽어보면 좋은 것**
 
-1. [docs/ue-clangd-error-analysis.ko.md](docs/ue-clangd-error-analysis.ko.md) — 왜 clangd만으로 Rider급이 안 됐는지
-2. [docs/uobject-lsp-research.md](docs/uobject-lsp-research.md) — fork clangd / 별도 LSP는 비추천이라 적어 둔 이유
+1. [docs/ue-clangd-error-analysis.ko.md](docs/ue-clangd-error-analysis.ko.md) — clangd만으로 Rider급이 왜 안 됐는지
+2. [docs/uobject-lsp-research.md](docs/uobject-lsp-research.md) — clangd fork / 별도 LSP 안 한 이유
 3. `src/cursor/bootstrapProject.ts`, `compileDatabaseFromRsp.ts` — 실제로 돌아가던 compile DB 파이프라인
 
-**우리가 겪은 함정 (참고)**
+**우리가 헛발질한 포인트**
 
-- `compile_commands`가 Ready인데도 clang error가 남는 건 **설정 버그만이 아닙니다.** MSVC PCH + UHT + clangd 근사 — UE 생태계 제약이지 Cursor 결함이 아닙니다.
-- diagnostic suppress만 늘리면 Problems는 조용해지지만 **IntelliSense 품질은 거의 안 오릅니다.**
-- “Rider급”을 목표로 clangd 설정만 튜닝하는 루프는 **수익 체감이 급격히 줄어듭니다.**
+- `compile_commands`가 Ready인데도 clang error 남는 건, **설정만 고치면 끝**인 경우가 많지 않아요. MSVC PCH + UHT + clangd 조합 문제에 가깝고, Cursor 버그는 아닙니다.
+- suppress만 늘리면 Problems는 **조용**해지는데, IntelliSense는 **별로** 안 나아져요.
+- “clangd 옵션 하나 더면 Rider급” 루프는 **금방 한계** 옵니다.
 
-**그래도 가치 있는 방향**
+**그래도 해볼 만한 것**
 
 | 방향 | 이유 |
 |------|------|
-| **MCP · 에셋 · Content Browser** | Cursor + 실행 중 에디터 연동은 확실한 강점 — C++ IDE를 무엇을 쓰든 확장할 가치가 있음. |
-| **compile_commands 자동화** | clangd뿐 아니라 다른 분석기·CI·AI 컨텍스트에 쓸 수 있습니다. |
-| **reflection-index / CodeLens 보강** | clangd를 대체하지 않고 **옆에서** UE semantics를 보완하는 쪽이 현실적입니다. |
-| **SharedPCH 제거 실험** | `compileDatabaseFromRsp.ts`에서 MSVC PCH `-include` strip 후 **전 모듈 `clangd --check` before/after** — 우리는 대규모 실험 전에 중단했습니다. 여기서부터 재개해도 됩니다. |
-| **Epic 공식 UE-aware LSP** | 나오면 그때 Cursor 어댑터만 얹는 편이 fork보다 낫습니다. |
+| **MCP · 에셋 · Content Browser** | Cursor + 실행 중 에디터 연동은 확실히 강점 — C++ IDE 뭘 쓰든 확장 가치 있음 |
+| **compile_commands 자동화** | clangd 말고도 분석기·CI·AI에 쓸 수 있음 |
+| **reflection-index / CodeLens** | clangd **대신** 말고 **옆에서** UE semantics 보완 |
+| **SharedPCH 제거 실험** | `compileDatabaseFromRsp.ts`에서 PCH strip → **전 모듈 `clangd --check` before/after** — 우리는 대규모로 안 해봤음. 여기서 재개해도 됨 |
+| **Epic 공식 UE-aware LSP** | 나오면 fork보다 Cursor 어댑터만 얹는 편이 낫겠죠 |
 
-**실험 재개 시 최소 체크리스트**
+**다시 시작할 때 최소한 이것만**
 
-1. UE 5.8 게임 `.uproject` 루트를 workspace로 연다.
-2. `npm test` + `clangd --check`를 **여러 모듈**에 돌려 before/after를 숫자로 남긴다.
-3. 성공 기준을 미리 정한다 — 예: “Problems 0개”가 아니라 “엔진 `StaticClass` 오류 N% 감소” 또는 “MCP asset index 안정화”.
+1. UE 5.8 게임 `.uproject` **루트**를 workspace로 연다.
+2. `npm test` + `clangd --check`를 **여러 모듈**에 돌리고 숫자로 before/after 남긴다.
+3. 성공 기준 미리 정하기 — “Problems 0” 말고 “엔진 `StaticClass` 오류 N%↓” 같은 식.
 4. **빌드 실패는 msCompile만** 본다.
 
-**툴을 여러 개 쓰는 건 흔한 일입니다.**  
-Rider/VS로 C++ 탐색 · Cursor로 AI/MCP — 이런 분업도 자연스럽습니다. 이 repo는 그중 **Cursor 쪽** 로그와 부품 창고입니다.
+**툴 두세 개 쓰는 건 흔해요.**  
+Rider/VS로 C++ · Cursor로 AI/MCP — 이런 분업도 자연스럽고, 이 repo는 그중 **Cursor 쪽** 일지랑 부품함 정도예요.
 
-Pull request, issue, fork 모두 환영합니다. **측정 가능한 before/after**가 있는 기여가 특히 도움이 됩니다.
+PR·issue·fork 환영합니다. **측정 가능한 before/after**가 “clangd 한 줄 바꿨더니 Rider 됐어요”보다 훨씬 도움 됩니다.
 
 ---
 
@@ -430,7 +434,7 @@ Pull request, issue, fork 모두 환영합니다. **측정 가능한 before/afte
 
 ## Archive: build extension · 레거시 빌드
 
-Experiment is closed; extension can still be built for reference.
+실험은 끝났지만, 확장 자체는 참고용으로 **빌드는 됩니다.**
 
 ```bash
 npm install
@@ -439,6 +443,6 @@ npm test
 npm run package   # fetch-llvm + win32-x64 VSIX
 ```
 
-Legacy commands (if installed): **Setup UE 5.8 Project**, **Refresh IntelliSense**, **Launch Unreal Editor**, **Verify MCP Connection**.
+설치돼 있으면: **Setup UE 5.8 Project**, **Refresh IntelliSense**, **Launch Unreal Editor**, **Verify MCP Connection** 정도 쓸 수 있어요.
 
-Key settings: `ue58rider.autoSetupOnOpen`, `ue58rider.engineRoot`, `ue58rider.llvmPath` (empty = bundled clangd).
+자주 건드릴 설정: `ue58rider.autoSetupOnOpen`, `ue58rider.engineRoot`, `ue58rider.llvmPath` (비우면 번들 clangd).
