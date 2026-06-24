@@ -38,7 +38,7 @@ flowchart LR
     MSVC --> UHT
   end
 
-  subgraph ide [Cursor IDE — approximation]
+  subgraph ide [Editor LSP — clangd + compile_commands]
     CC[compile_commands.json]
     Clangd[clangd 19.1]
     Stubs[UHTIDEStubs.h]
@@ -156,7 +156,7 @@ With **Ready** `compile_commands.json` from `.Shared.rsp` (AutoRTFM, SharedPCH, 
 | Suppress `no_member` / `fatal_too_many_errors` | clangdConfig.ts | Less noise (not a real fix) |
 | Orphan-header UI hint | extension UI | Less user confusion |
 
-Experiment shutdown rationale: suppress + fallback alone **cannot reach Rider-level fidelity** — **JetBrains Rider** recommended for UE C++ IDE work.
+Experiment shutdown rationale: suppress + fallback alone **cannot reach Rider-level fidelity**. That is a **UE (MSVC/UHT/PCH) vs generic clangd** gap — not a Cursor or VS Code defect. Teams that need full UObject/reflection IDE often **also** use **JetBrains Rider** or **Visual Studio** alongside Cursor.
 
 ---
 
@@ -256,7 +256,7 @@ flowchart TD
 | Build OK + IDE errors coexist | **Confirmed** |
 | msCompile C4996 is separate | **Confirmed** |
 
-**Final:** Do **not** treat `source: clang` as build failure. For UE C++ IntelliSense accuracy, prefer **Rider**.
+**Final:** Do **not** treat `source: clang` as build failure. For full UE IntelliSense / UObject semantics, many teams use **Rider or Visual Studio** for that layer; **Cursor remains strong for AI, MCP, and automation** — the split is complementary, not either/or.
 
 ---
 

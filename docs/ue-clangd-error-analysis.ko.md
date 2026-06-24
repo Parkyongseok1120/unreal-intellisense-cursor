@@ -38,7 +38,7 @@ flowchart LR
     MSVC --> UHT
   end
 
-  subgraph ide [Cursor IDE — 근사]
+  subgraph ide [에디터 LSP — clangd + compile_commands]
     CC[compile_commands.json]
     Clangd[clangd 19.1]
     Stubs[UHTIDEStubs.h]
@@ -156,7 +156,7 @@ flowchart TD
 | `no_member` / `fatal_too_many_errors` suppress | clangdConfig.ts | 노이즈 감소 (근본 해결 아님) |
 | 고아 헤더 UI 안내 | extension UI | 사용자 혼란 방지 |
 
-실험 종료 판단: suppress·fallback만으로는 **Rider급 fidelity** 기대 어려움 → UE C++ IDE는 **JetBrains Rider** 권장.
+실험 종료 판단: suppress·fallback만으로는 **Rider급 fidelity** 기대 어려움. **Cursor/VS Code 자체 문제가 아니라** UE(MSVC/UHT/PCH)와 범용 clangd 사이 간극. full UObject/리플렉션 IDE가 필요하면 **Rider 또는 Visual Studio**를 함께 쓰는 팀이 많음.
 
 ---
 
@@ -256,7 +256,7 @@ flowchart TD
 | 빌드 성공 + IDE error 공존 | **확인** |
 | msCompile C4996 = 별개 | **확인** |
 
-**최종:** `source: clang` 진단을 **빌드 실패 지표로 쓰면 안 됨**. UE C++ IntelliSense 정확도 우선 시 **Rider** 사용 권장.
+**최종:** `source: clang` 진단을 **빌드 실패 지표로 쓰면 안 됨**. full UE IntelliSense/UObject 의미 분석이 우선이면 **Rider 또는 Visual Studio**를 쓰는 팀이 많고, **Cursor는 AI·MCP·자동화** 쪽과 잘 맞음 — 상호 배타가 아님.
 
 ---
 
