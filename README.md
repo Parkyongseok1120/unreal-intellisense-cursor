@@ -112,6 +112,46 @@ Experimental Unreal Engine 5.8 C++ workflow for Cursor (v6.x).
 
 ---
 
+### 후속 개발자에게
+
+이 실험을 **이어가고 싶은 분**께 남기는 말입니다.
+
+**먼저 읽을 것**
+
+1. [docs/ue-clangd-error-analysis.ko.md](docs/ue-clangd-error-analysis.ko.md) — 왜 clangd만으로 Rider급이 안 됐는지
+2. [docs/uobject-lsp-research.md](docs/uobject-lsp-research.md) — fork clangd / 별도 LSP는 비추천이라 적어 둔 이유
+3. `src/cursor/bootstrapProject.ts`, `compileDatabaseFromRsp.ts` — 실제로 돌아가던 compile DB 파이프라인
+
+**우리가 멈춘 이유를 다시 밟지 마세요**
+
+- `compile_commands`가 Ready인데도 clang error가 남는 건 **설정 버그만이 아닙니다.** MSVC PCH + UHT + clangd 근사라는 구조 문제입니다.
+- diagnostic suppress만 늘리면 Problems는 조용해지지만 **IntelliSense 품질은 거의 안 오릅니다.**
+- “Rider급”을 목표로 clangd 설정만 튜닝하는 루프는 **수익 체감이 급격히 줄어듭니다.**
+
+**그래도 가치 있는 방향**
+
+| 방향 | 이유 |
+|------|------|
+| **MCP · 에셋 · Content Browser** | Cursor + 실행 중 에디터 연동은 여전히 차별점. Rider가 대체하기 어렵습니다. |
+| **compile_commands 자동화** | clangd뿐 아니라 다른 분석기·CI·AI 컨텍스트에 쓸 수 있습니다. |
+| **reflection-index / CodeLens 보강** | clangd를 대체하지 않고 **옆에서** UE semantics를 보완하는 쪽이 현실적입니다. |
+| **SharedPCH 제거 실험** | `compileDatabaseFromRsp.ts`에서 MSVC PCH `-include` strip 후 **전 모듈 `clangd --check` before/after** — 우리는 대규모 실험 전에 중단했습니다. 여기서부터 재개해도 됩니다. |
+| **Epic 공식 UE-aware LSP** | 나오면 그때 Cursor 어댑터만 얹는 편이 fork보다 낫습니다. |
+
+**실험 재개 시 최소 체크리스트**
+
+1. UE 5.8 게임 `.uproject` 루트를 workspace로 연다.
+2. `npm test` + `clangd --check`를 **여러 모듈**에 돌려 before/after를 숫자로 남긴다.
+3. 성공 기준을 미리 정한다 — 예: “Problems 0개”가 아니라 “엔진 `StaticClass` 오류 N% 감소” 또는 “MCP asset index 안정화”.
+4. **빌드 실패는 msCompile만** 본다.
+
+**혼자서 모든 걸 Cursor 주력 IDE로 만들 필요는 없습니다.**  
+Rider로 C++ · Cursor로 AI/MCP를 나누는 것도 합리적인 종착점입니다. 이 repo는 그 판단을 내리기 전까지의 **로그와 부품 창고**로 두었습니다.
+
+Pull request, issue, fork 모두 환영합니다. 다만 “clangd 설정 한 줄 바꿨는데 Rider 됐다” 식의 PR보다, **측정 가능한 before/after**가 있는 기여가 훨씬 도움이 됩니다.
+
+---
+
 ## English
 
 ### Project Status
@@ -219,13 +259,54 @@ This repo is an **archive** of what worked, what failed, and reusable code (MCP,
 
 ---
 
+### To those who continue this work
+
+A note for anyone who wants to **pick this experiment back up**.
+
+**Read these first**
+
+1. [docs/ue-clangd-error-analysis.en.md](docs/ue-clangd-error-analysis.en.md) — why clangd alone did not reach Rider level
+2. [docs/uobject-lsp-research.md](docs/uobject-lsp-research.md) — why we did not recommend forking clangd or building a separate UE LSP
+3. `src/cursor/bootstrapProject.ts`, `compileDatabaseFromRsp.ts` — the compile DB pipeline that actually worked
+
+**Do not repeat our dead ends**
+
+- Clang errors with a **Ready** `compile_commands.json` are not **config bugs only**. They come from MSVC PCH + UHT + clangd approximation.
+- Adding diagnostic suppress makes Problems quieter but **barely improves IntelliSense quality**.
+- A loop of “tweak clangd flags until Rider-level” has **sharply diminishing returns**.
+
+**Still worth pursuing**
+
+| Direction | Why |
+|-----------|-----|
+| **MCP · assets · Content Browser** | Cursor + live editor integration remains a differentiator Rider does not replace easily. |
+| **compile_commands automation** | Useful beyond clangd — CI, other analyzers, AI context. |
+| **reflection-index / CodeLens** | Supplement UE semantics **beside** clangd instead of replacing it. |
+| **SharedPCH strip experiment** | Strip MSVC PCH `-include` in `compileDatabaseFromRsp.ts`, then run **full-module `clangd --check` before/after** — we stopped before doing this at scale. A good restart point. |
+| **Official Epic UE-aware LSP** | If it ships, adapt Cursor to it rather than maintaining a fork. |
+
+**Minimum checklist if you restart**
+
+1. Open a UE 5.8 game `.uproject` root as the workspace.
+2. Run `npm test` + `clangd --check` on **many modules** and record before/after numbers.
+3. Define success upfront — e.g. not “zero Problems” but “engine `StaticClass` errors down by N%” or “stable MCP asset index”.
+4. Treat **msCompile only** as build failure.
+
+**You do not have to make Cursor the only IDE for everything.**  
+Rider for C++ · Cursor for AI/MCP is a valid end state. This repo is a **log and parts warehouse** until you choose your own landing point.
+
+Pull requests, issues, and forks are welcome. Contributions with **measurable before/after** help far more than “one-line clangd tweak = Rider now” PRs.
+
+---
+
 ## References · 참고
 
 | Document | Description |
 |----------|-------------|
+| [docs/ue-clangd-error-analysis.ko.md](docs/ue-clangd-error-analysis.ko.md) | clangd vs MSVC 빌드 분석 (한국어) |
+| [docs/ue-clangd-error-analysis.en.md](docs/ue-clangd-error-analysis.en.md) | clangd vs MSVC build analysis (English) |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
 | [docs/uobject-lsp-research.md](docs/uobject-lsp-research.md) | UObject / clangd vs Rider research |
-| [docs/PROJECT_MJS_VERIFICATION.md](docs/PROJECT_MJS_VERIFICATION.md) | Project_MJS verification checklist |
 
 ---
 
