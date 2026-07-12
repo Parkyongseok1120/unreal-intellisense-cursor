@@ -4,7 +4,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { loadTsModule } from './helpers/loadTsModule.mjs';
 
-const protocol = loadTsModule('src/editorBridge/bridgeProtocol.ts');
+const generated = loadTsModule('src/editorBridge/bridgeProtocol.generated.ts');
+const protocol = loadTsModule('src/editorBridge/bridgeProtocol.ts', {
+  './bridgeProtocol.generated': () => generated,
+});
 
 function extractCppMethods(cppSource) {
   const methods = new Set();

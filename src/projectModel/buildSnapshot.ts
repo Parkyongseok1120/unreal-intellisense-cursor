@@ -5,7 +5,7 @@ import type { CompileAction } from '../projectModel/projectModelService';
 import { collectCompileActionsFromProject, compareActionHashes } from '../projectModel/projectModelService';
 import { fileExists } from '../platform/paths';
 
-export const BUILD_SNAPSHOT_VERSION = 2;
+export const BUILD_SNAPSHOT_VERSION = 3;
 const SNAPSHOT_FILE = 'build-snapshot.json';
 
 export type CompileDbProvenance = 'ubt-clang-db' | 'ubt-rsp' | 'synthetic-buildcs' | 'unknown';
@@ -28,6 +28,7 @@ export interface BuildSnapshot {
   target?: string;
   platform?: string;
   configuration?: string;
+  architecture?: string;
   engineId?: string;
   synthetic: boolean;
   syntheticReason?: string;
@@ -179,18 +180,49 @@ async function collectInputFingerprints(projectRoot: string): Promise<InputFinge
   const compileDb = await fingerprintFile(path.join(projectRoot, 'compile_commands.json'));
   if (compileDb) inputs.push(compileDb);
 
-  const sourceDir = path.join(projectRoot, 'Source');
-  await walkFingerprint(sourceDir, /\.(Build|Target)\.cs$/i, inputs, 0);
+  const buildConfig = await fingerprintFile(path.join(projectRoot, 'Config', 'BuildConfiguration.xml'));
+  if (buildConfig) inputs.push(buildConfig);
+
+  await walkFingerprint(projectRoot, /\.(Build|Target)\.cs$/i, inputs, 0);
+  await walkFingerprint(projectRoot, /\.uplugin$/i, inputs, 0);
+
   const rspPaths = await collectRspPaths(projectRoot);
-  for (const rsp of rspPaths.slice(0, 32)) {
+  const rspHashes: string[] = [];
+  for (const rsp of rspPaths.sort()) {
     const fp = await fingerprintFile(rsp);
-    if (fp) inputs.push(fp);
+    if (fp) rspHashes.push(fp.sha256);
   }
+  if (rspHashes.length > 0) {
+    inputs.push({
+      path: '__rsp_merkle__',
+      sha256: crypto.createHash('sha256').update(rspHashes.join('\n')).digest('hex'),
+    });
+  }
+  const inventory = inputs
+    .filter((input) => !input.path.startsWith('__'))
+    .map((input) => `${path.relative(projectRoot, input.path).replace(/\\/g, '/')}\0${input.sha256}`)
+    .sort()
+    .join('\n');
+  inputs.push({
+    path: '__project_input_inventory__',
+    sha256: crypto.createHash('sha256').update(inventory).digest('hex'),
+  });
   return inputs;
 }
 
+const FINGERPRINT_SKIP_DIRS = new Set([
+  '.git',
+  '.ue5_8cursor',
+  '.ue58rider',
+  'Binaries',
+  'DerivedDataCache',
+  'Intermediate',
+  'Saved',
+  'node_modules',
+]);
+
 async function walkFingerprint(dir: string, pattern: RegExp, out: InputFingerprint[], depth: number): Promise<void> {
-  if (depth > 8) return;
+  if (depth > 10) return;
   let entries: fs.Dirent[];
   try {
     entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -200,6 +232,7 @@ async function walkFingerprint(dir: string, pattern: RegExp, out: InputFingerpri
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (FINGERPRINT_SKIP_DIRS.has(entry.name)) continue;
       await walkFingerprint(full, pattern, out, depth + 1);
     } else if (pattern.test(entry.name)) {
       const fp = await fingerprintFile(full);
@@ -260,6 +293,7 @@ export async function buildCompileSnapshot(project: {
     target: project.target,
     platform: project.platform,
     configuration: project.configuration,
+    architecture: process.arch,
     synthetic,
     syntheticReason,
     provenance,
@@ -281,15 +315,46 @@ export async function saveBuildSnapshot(projectRoot: string, snapshot: BuildSnap
   return filePath;
 }
 
+export async function inputsStillValid(snapshot: BuildSnapshot): Promise<boolean> {
+  for (const input of snapshot.inputs) {
+    if (input.path === '__project_input_inventory__') {
+      const current = await collectInputFingerprints(snapshot.projectRoot);
+      const inventory = current.find((candidate) => candidate.path === '__project_input_inventory__');
+      if (!inventory || inventory.sha256 !== input.sha256) return false;
+      continue;
+    }
+    if (input.path === '__rsp_merkle__') {
+      const rspPaths = await collectRspPaths(snapshot.projectRoot);
+      const rspHashes: string[] = [];
+      for (const rsp of rspPaths.sort()) {
+        const fp = await fingerprintFile(rsp);
+        if (fp) rspHashes.push(fp.sha256);
+      }
+      const merkle = crypto.createHash('sha256').update(rspHashes.join('\n')).digest('hex');
+      if (merkle !== input.sha256) return false;
+      continue;
+    }
+    const fp = await fingerprintFile(input.path);
+    if (!fp || fp.sha256 !== input.sha256) return false;
+  }
+  return true;
+}
+
 export async function loadBuildSnapshot(projectRoot: string): Promise<BuildSnapshot | undefined> {
   for (const sub of ['.ue5_8cursor', '.ue58rider']) {
     try {
       const raw = await fs.promises.readFile(path.join(projectRoot, sub, SNAPSHOT_FILE), 'utf-8');
       const snap = JSON.parse(raw) as BuildSnapshot;
-      if (snap.snapshotVersion === BUILD_SNAPSHOT_VERSION || snap.version === 1) {
+      const version = snap.snapshotVersion ?? snap.version ?? 0;
+      if (version >= 2 && version <= BUILD_SNAPSHOT_VERSION) {
         if (!snap.ideActions && snap.compileActions) snap.ideActions = snap.compileActions;
         if (!snap.authoritativeActions) snap.authoritativeActions = snap.compileActions ?? [];
         if (!snap.parity) snap.parity = { matched: 0, total: 0, parity: 0 };
+        if (version < BUILD_SNAPSHOT_VERSION) snap.snapshotVersion = BUILD_SNAPSHOT_VERSION;
+        if (snap.inputs?.length && !(await inputsStillValid(snap))) {
+          snap.synthetic = true;
+          snap.syntheticReason = 'input fingerprints stale on load';
+        }
         return snap;
       }
     } catch {

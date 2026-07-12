@@ -2,12 +2,10 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { UEProject } from '../types';
-import type { EditorBridgeClient } from '../editorBridge/editorBridgeClient';
 import { parseUnrealLogLine } from '../hlsl/hlslProviders';
 
 const LOG_CHANNEL = 'UE5_8 Unreal Log';
-const BRIDGE_TAIL_LINES = 200;
-const BRIDGE_POLL_MS = 2000;
+const MAX_READ_BYTES = 1024 * 1024;
 
 export class UnrealLogViewer implements vscode.Disposable {
   private channel: vscode.OutputChannel;
@@ -17,30 +15,13 @@ export class UnrealLogViewer implements vscode.Disposable {
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private follow = true;
   private categoryFilter: string | undefined;
-  private bridge: EditorBridgeClient | undefined;
-  private lastBridgeLine = '';
 
   constructor() {
     this.channel = vscode.window.createOutputChannel(LOG_CHANNEL, { log: true });
   }
 
-  async start(project: UEProject, bridge?: EditorBridgeClient): Promise<void> {
+  async start(project: UEProject): Promise<void> {
     this.stop();
-    this.bridge = bridge;
-
-    if (bridge) {
-      await bridge.connect(project.projectRoot);
-      const lines = await bridge.tailLogs(BRIDGE_TAIL_LINES);
-      if (lines.length > 0) {
-        this.channel.clear();
-        this.channel.show(true);
-        this.channel.appendLine('[UE5_8 Cursor] Bridge logs.tail (primary)');
-        for (const line of lines) this.appendLine(line);
-        this.lastBridgeLine = lines[lines.length - 1] ?? '';
-        this.pollTimer = setInterval(() => void this.pollBridgeLogs(), BRIDGE_POLL_MS);
-        return;
-      }
-    }
 
     const logs = await listLogFiles(project.projectRoot);
     if (logs.length === 0) {
@@ -91,22 +72,6 @@ export class UnrealLogViewer implements vscode.Disposable {
     this.pollTimer = undefined;
     this.filePath = undefined;
     this.offset = 0;
-    this.bridge = undefined;
-    this.lastBridgeLine = '';
-  }
-
-  private async pollBridgeLogs(): Promise<void> {
-    if (!this.follow || !this.bridge) return;
-    const lines = await this.bridge.tailLogs(100);
-    let started = this.lastBridgeLine.length === 0;
-    for (const line of lines) {
-      if (!started) {
-        if (line === this.lastBridgeLine) started = true;
-        continue;
-      }
-      if (line.length > 0) this.appendLine(line);
-    }
-    if (lines.length > 0) this.lastBridgeLine = lines[lines.length - 1] ?? this.lastBridgeLine;
   }
 
   private appendLine(line: string): void {
@@ -121,6 +86,12 @@ export class UnrealLogViewer implements vscode.Disposable {
       const stat = await fs.promises.stat(this.filePath);
       if (stat.size < this.offset) this.offset = 0;
       if (stat.size <= this.offset) return;
+      // Bound memory after a stalled watcher or a very busy Editor. Keeping the
+      // newest chunk is preferable to allocating an unbounded buffer.
+      if (stat.size - this.offset > MAX_READ_BYTES) {
+        this.offset = Math.max(0, stat.size - MAX_READ_BYTES);
+        this.channel.appendLine('[UE5_8 Cursor] Log backlog truncated to latest 1 MiB.');
+      }
 
       const fd = await fs.promises.open(this.filePath, 'r');
       try {

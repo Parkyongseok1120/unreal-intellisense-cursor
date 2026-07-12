@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { UE5_8CursorContext } from '../types';
 import type { ProjectSession } from '../session/projectSession';
 import type { UE5_8CursorSettings } from '../config/settings';
-import { runUhtOnHeader } from './uhtRunner';
+import { runUhtOnHeader, type UhtDiagnostic } from './uhtRunner';
 import { publishUhtDiagnostics, clearUhtDiagnostics } from './uhtDiagnostics';
 import { inspectionsToDiagnostics, runUeInspections } from './ueInspections';
 
@@ -10,7 +10,10 @@ const pendingHeaders = new Set<string>();
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 let activeHeader: string | undefined;
 let activeGeneration = -1;
-const resultCache = new Map<string, { fingerprint: string; at: number }>();
+const resultCache = new Map<
+  string,
+  { fingerprint: string; at: number; uhtDiagnostics: UhtDiagnostic[]; inspectionDiagnostics: vscode.Diagnostic[] }
+>();
 
 export function scheduleUhtValidation(
   ctx: UE5_8CursorContext,
@@ -71,19 +74,29 @@ export async function validateHeaderNow(
     const inspectionResult = runUeInspections(content, inspectionsOn);
     const cacheKey = headerPath.toLowerCase();
     const cached = resultCache.get(cacheKey);
-    if (cached?.fingerprint === inspectionResult.fingerprint && Date.now() - cached.at < 30_000 && inspectionsOn) {
-      publishUhtDiagnostics(ctx, vscode.Uri.file(headerPath), inspectionsToDiagnostics(vscode.Uri.file(headerPath), inspectionResult));
+    if (cached?.fingerprint === inspectionResult.fingerprint && Date.now() - cached.at < 30_000) {
+      const uri = vscode.Uri.file(headerPath);
+      // Disabled inspections must never be restored from a previous enabled
+      // cache entry. UHT diagnostics remain authoritative and are retained.
+      const inspectionDiags = inspectionsOn ? inspectionsToDiagnostics(uri, inspectionResult) : [];
+      publishUhtDiagnostics(ctx, uri, [...inspectionDiags, ...cached.uhtDiagnostics]);
       return;
     }
 
     const result = await runUhtOnHeader(ctx.project!, ctx.engine!, headerPath, activeToken);
     if (projectSession.isStale(gen) || activeToken.isCancellationRequested) return;
 
-    resultCache.set(cacheKey, { fingerprint: inspectionResult.fingerprint, at: Date.now() });
-
     const uri = vscode.Uri.file(headerPath);
     const inspectionDiags = inspectionsOn ? inspectionsToDiagnostics(uri, inspectionResult) : [];
-    const all = [...inspectionDiags, ...result.diagnostics];
+    const uhtDiags = result.diagnostics;
+    resultCache.set(cacheKey, {
+      fingerprint: inspectionResult.fingerprint,
+      at: Date.now(),
+      uhtDiagnostics: uhtDiags,
+      inspectionDiagnostics: inspectionDiags,
+    });
+
+    const all = [...inspectionDiags, ...uhtDiags];
     if (all.length > 0) {
       publishUhtDiagnostics(ctx, uri, all);
     } else if (!result.ok) {

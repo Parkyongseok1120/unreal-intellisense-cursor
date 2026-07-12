@@ -10,6 +10,11 @@ export interface AutomationTestEntry {
   path?: string;
 }
 
+function automationTestUri(test: AutomationTestEntry): vscode.Uri {
+  if (test.path) return vscode.Uri.file(test.path);
+  return vscode.Uri.parse(`ue-automation:${encodeURIComponent(`${test.source}:${test.name}`)}`);
+}
+
 export class UnrealTestExplorer implements vscode.Disposable {
   private controller: vscode.TestController;
   private readonly emitter = new vscode.EventEmitter<void>();
@@ -60,7 +65,11 @@ export class UnrealTestExplorer implements vscode.Disposable {
     if (this.bridge?.hasCapability('automationTests')) {
       try {
         const remote = await this.bridge.listAutomationTests();
-        this.tests = remote.map((t) => ({ name: t.name, source: t.source }));
+        this.tests = remote.map((t) => ({
+          name: t.name,
+          source: t.source,
+          path: typeof t.path === 'string' ? t.path : undefined,
+        }));
         this.offlineMessage = '';
         this.rebuildTree();
         this.emitter.fire();
@@ -81,7 +90,11 @@ export class UnrealTestExplorer implements vscode.Disposable {
     if (this.bridge?.hasCapability('automationTests')) {
       try {
         const remote = await this.bridge.listAutomationTests();
-        this.tests = remote.map((t) => ({ name: t.name, source: t.source }));
+        this.tests = remote.map((t) => ({
+          name: t.name,
+          source: t.source,
+          path: typeof t.path === 'string' ? t.path : undefined,
+        }));
         this.rebuildTree();
       } catch {
         // keep cached
@@ -93,7 +106,7 @@ export class UnrealTestExplorer implements vscode.Disposable {
     const items = new Map<string, vscode.TestItem>();
     for (const test of this.tests) {
       const id = `${test.source}:${test.name}`;
-      const item = this.controller.createTestItem(id, test.name, vscode.Uri.parse('untitled:ue-test'));
+      const item = this.controller.createTestItem(id, test.name, automationTestUri(test));
       item.description = test.source;
       items.set(id, item);
     }

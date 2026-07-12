@@ -19,6 +19,12 @@ export async function natvisExists(engineRoot: string): Promise<boolean> {
   return fileExists(resolveNatvisPath(engineRoot));
 }
 
+export function resolveServerExecutable(project: UEProject): string {
+  const platDir = resolveBinariesPlatformDir();
+  const ext = getHostPlatform() === 'win32' ? '.exe' : '';
+  return path.join(project.projectRoot, 'Binaries', platDir, `${project.name}Server${ext}`);
+}
+
 export function resolveGameExecutable(project: UEProject): string {
   const platDir = resolveBinariesPlatformDir();
   const ext = getHostPlatform() === 'win32' ? '.exe' : '';

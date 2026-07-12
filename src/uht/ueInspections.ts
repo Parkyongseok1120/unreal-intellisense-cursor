@@ -40,6 +40,62 @@ function collectUfunctionBlocks(content: string): Array<{ text: string; line: nu
   return blocks;
 }
 
+function scanClassBody(content: string): string | undefined {
+  const match = /UCLASS\s*\([^)]*\)\s*class[^;{]*\{/i.exec(content);
+  if (!match || match.index === undefined) return undefined;
+  let i = match.index + match[0].length;
+  let depth = 1;
+  let inString = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  while (i < content.length && depth > 0) {
+    const ch = content[i];
+    const next = content[i + 1];
+    if (inLineComment) {
+      if (ch === '\n') inLineComment = false;
+      i++;
+      continue;
+    }
+    if (inBlockComment) {
+      if (ch === '*' && next === '/') {
+        inBlockComment = false;
+        i += 2;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    if (inString) {
+      if (ch === '\\') {
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      i++;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      inLineComment = true;
+      i += 2;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      inBlockComment = true;
+      i += 2;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      i++;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    i++;
+  }
+  return content.slice(match.index + match[0].length, i - 1);
+}
+
 const RULES: FileRule[] = [
   {
     id: 'ue.generated-include-order',
@@ -94,9 +150,9 @@ const RULES: FileRule[] = [
     enabled: true,
     run: (content) => {
       if (!/UCLASS\s*\(/i.test(content)) return [];
-      const classBody = content.match(/UCLASS\s*\([^)]*\)\s*class[^;{]*\{([^}]*)/s);
+      const classBody = scanClassBody(content);
       if (!classBody) return [];
-      if (/GENERATED_BODY\s*\(\s*\)/.test(classBody[1])) return [];
+      if (/GENERATED_BODY\s*\(\s*\)/.test(classBody)) return [];
       const line = content.split(/\r?\n/).findIndex((l) => /UCLASS\s*\(/i.test(l));
       return [
         {

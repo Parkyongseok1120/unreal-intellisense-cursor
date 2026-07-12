@@ -37,13 +37,18 @@ const args = [
   '-Rocket',
 ];
 
-const cmdLine = [runUat, ...args].map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ');
+// cmd.exe's /s /c quote stripping treats a quoted batch path as a literal
+// command in some shells. `call` keeps the batch invocation and each argument
+// in the same cmd parsing context.
+const quoteCmdArg = (value) => `"${value.replaceAll('"', '""')}"`;
+const cmdLine = `call ${quoteCmdArg(runUat)} ${args.map(quoteCmdArg).join(' ')}`;
 console.log(`[build-ue-plugin] ${cmdLine}`);
 
 const result = spawnSync('cmd.exe', ['/d', '/s', '/c', cmdLine], {
   cwd: root,
   stdio: 'pipe',
   encoding: 'utf-8',
+  windowsVerbatimArguments: true,
 });
 
 const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;

@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface StructuredLogEntry {
   timestamp: string;
@@ -36,7 +38,26 @@ export function toDiagnostic(entry: StructuredLogEntry, line: number): vscode.Di
   return diag;
 }
 
-/** Experimental HLSL — keyword/hover only; no fake #include directory paths (Gate 0). */
+function discoverShaderIncludes(workspaceRoot?: string, engineRoot?: string): string[] {
+  const names = new Set<string>();
+  const roots = [
+    engineRoot ? path.join(engineRoot, 'Engine', 'Shaders') : undefined,
+    workspaceRoot ? path.join(workspaceRoot, 'Shaders') : undefined,
+  ].filter((r): r is string => !!r);
+
+  for (const root of roots) {
+    try {
+      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+        if (entry.isFile() && /\.(ush|usf|hlsl)$/i.test(entry.name)) names.add(entry.name);
+      }
+    } catch {
+      // optional roots
+    }
+  }
+  return [...names].sort().slice(0, 200);
+}
+
+/** Experimental HLSL — UE overlay on external language server; include completion from discovered paths. */
 export function registerHLSLProviders(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
@@ -46,10 +67,12 @@ export function registerHLSLProviders(context: vscode.ExtensionContext): void {
           const line = document.lineAt(position.line).text.slice(0, position.character);
           if (!line.includes('#include')) return [];
 
-          return [
-            new vscode.CompletionItem('Common.ush', vscode.CompletionItemKind.File),
-            new vscode.CompletionItem('SceneTextures.ush', vscode.CompletionItemKind.File),
-          ];
+          const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+          const engineRoot = vscode.workspace.getConfiguration('ue58rider').get<string>('engineRoot');
+          const includes = discoverShaderIncludes(folder?.uri.fsPath, engineRoot);
+          return includes.map(
+            (name) => new vscode.CompletionItem(name, vscode.CompletionItemKind.File),
+          );
         },
       },
       '"',
@@ -57,8 +80,10 @@ export function registerHLSLProviders(context: vscode.ExtensionContext): void {
     vscode.languages.registerHoverProvider(
       { language: 'hlsl', scheme: 'file' },
       {
-        provideHover(_document, position) {
-          return new vscode.Hover('UE shader IntelliSense is experimental. Use engine shader paths via project setup.');
+        provideHover() {
+          return new vscode.Hover(
+            'UE shader overlay: pair with a HLSL language server extension for diagnostics and go-to-definition.',
+          );
         },
       },
     ),

@@ -41,6 +41,18 @@ describe('ueInspections', () => {
     assert.ok(result.inspections.some((i) => i.id === 'ue.rpc-reliability'));
   });
 
+  it('does not false-positive GENERATED_BODY with nested struct in UCLASS', () => {
+    const header = `#pragma once
+UCLASS()
+class AMyActor : public AActor
+{
+  struct FInner { int X; };
+  GENERATED_BODY()
+};`;
+    const result = inspections.runUeInspections(header, true);
+    assert.ok(!result.inspections.some((i) => i.id === 'ue.generated-body-present'));
+  });
+
   it('no error false-positives on 200-header synthetic corpus', () => {
     const headers = [...NORMAL_HEADERS];
     for (let i = 0; i < 196; i++) {

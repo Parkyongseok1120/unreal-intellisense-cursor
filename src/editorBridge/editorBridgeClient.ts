@@ -56,6 +56,7 @@ export interface AutomationStatus {
 export interface BridgeAutomationTest {
   name: string;
   source: 'automation' | 'spec';
+  path?: string;
 }
 
 const CAPABILITY_MAP: Record<string, EditorBridgeCapability> = {

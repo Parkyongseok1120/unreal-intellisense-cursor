@@ -60,10 +60,13 @@ export class UeSemanticDefinitionProvider implements vscode.DefinitionProvider {
         const pos = findWordPosition(target, word);
         if (pos) return new vscode.Location(uri, pos);
       } catch {
-        return undefined;
+        // fall through to clangd
       }
     }
 
+    // Do not invoke vscode.executeDefinitionProvider here. That command invokes
+    // all matching providers, including this one, and can recurse indefinitely.
+    // Returning undefined lets VS Code collect clangd/cpptools results.
     return undefined;
   }
 }

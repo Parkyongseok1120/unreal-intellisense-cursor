@@ -19,8 +19,12 @@ export interface EditorBridgeDescriptor {
   pid: number;
   token: string;
   protocolVersion: number;
+  capabilityVersion?: number;
   capabilities: string[];
   transport: 'http' | 'websocket';
+  projectId?: string;
+  engineBuildId?: string;
+  processStartTime?: number;
   issuedAt?: string;
   tokenExpiresAt?: string;
 }
@@ -74,7 +78,9 @@ export async function readEditorBridgeDescriptor(projectRoot: string): Promise<E
   for (const sub of ['.ue5_8cursor', '.ue58rider']) {
     try {
       const raw = await fs.promises.readFile(path.join(projectRoot, sub, BRIDGE_FILE), 'utf-8');
-      return JSON.parse(raw) as EditorBridgeDescriptor;
+      const parsed = JSON.parse(raw) as EditorBridgeDescriptor;
+      if (!validateDescriptor(parsed, projectRoot)) return undefined;
+      return parsed;
     } catch {
       // try next
     }
@@ -82,12 +88,24 @@ export async function readEditorBridgeDescriptor(projectRoot: string): Promise<E
   return undefined;
 }
 
+function validateDescriptor(descriptor: EditorBridgeDescriptor, projectRoot: string): boolean {
+  if (!descriptor.port || !descriptor.token || !descriptor.pid) return false;
+  if (descriptor.protocolVersion !== 1) return false;
+  const projectId = path.basename(projectRoot);
+  if (descriptor.projectId && descriptor.projectId !== projectId) return false;
+  return true;
+}
+
 export async function writeEditorBridgeDescriptor(
   projectRoot: string,
   info: EditorBridgeDescriptor,
 ): Promise<void> {
   const dir = await ensureDataDir(projectRoot);
-  await fs.promises.writeFile(path.join(dir, BRIDGE_FILE), JSON.stringify(info, null, 2) + '\n', 'utf-8');
+  const finalPath = path.join(dir, BRIDGE_FILE);
+  const tempPath = `${finalPath}.tmp`;
+  const payload = JSON.stringify(info, null, 2) + '\n';
+  await fs.promises.writeFile(tempPath, payload, 'utf-8');
+  await fs.promises.rename(tempPath, finalPath);
 }
 
 export function editorBridgePortRange(): { base: number; range: number } {

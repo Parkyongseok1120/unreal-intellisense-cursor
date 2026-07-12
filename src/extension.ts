@@ -20,7 +20,7 @@ import { CommandBridge } from './mcp/commandBridge';
 import { configureMcpBridge } from './blueprint/mcpBlueprintBridge';
 import { parseBuildProgress } from './parsers/buildProgressParser';
 import { ProjectSession } from './session/projectSession';
-import { getWorkspaceProjectRegistry, disposeWorkspaceProjectRegistry } from './session/workspaceProjectRegistry';
+import { getWorkspaceProjectRegistry, disposeWorkspaceProjectRegistry, type ProjectRuntime } from './session/workspaceProjectRegistry';
 import { getExtensionVersion } from './version';
 import { refreshSemanticGraph, computeCompileParity, invalidateSemanticGraph } from './semantic/semanticService';
 import { registerSemanticNavigation } from './semantic/semanticNavigation';
@@ -51,6 +51,25 @@ let mcpDiagnostics: import('./mcp/mcpDiagnosticsProvider').McpDiagnosticsProvide
 let extensionPath = '';
 let extensionContext: vscode.ExtensionContext | undefined;
 
+function projectRegistry() {
+  return getWorkspaceProjectRegistry();
+}
+
+function resolveRuntime(uri?: vscode.Uri): ProjectRuntime | undefined {
+  const reg = projectRegistry();
+  if (uri) return reg.getByUri(uri);
+  const activeUri = vscode.window.activeTextEditor?.document.uri;
+  if (activeUri) {
+    const byUri = reg.getByUri(activeUri);
+    if (byUri) return byUri;
+  }
+  return reg.getActive();
+}
+
+function resolveProjectRoot(uri?: vscode.Uri): string | undefined {
+  return resolveRuntime(uri)?.project.projectRoot ?? ctx?.project?.projectRoot;
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   extensionContext = context;
   extensionPath = context.extensionPath;
@@ -74,7 +93,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (editorBridge) extensionContext.subscriptions.push(editorBridge);
   if (testExplorer) extensionContext.subscriptions.push(testExplorer);
 
-  registerSemanticNavigation(extensionContext, () => ctx.project, settings);
+  registerSemanticNavigation(extensionContext, () => resolveRuntime()?.project, settings);
 
   if (settings.experimentalHlsl) {
     registerHLSLProviders(extensionContext);
@@ -88,7 +107,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   contentBrowser = registerContentBrowser(extensionContext);
 
   const { registerMcpDiagnostics } = await import('./mcp/mcpDiagnosticsProvider');
-  mcpDiagnostics = registerMcpDiagnostics(extensionContext, () => ctx.project?.projectRoot);
+  mcpDiagnostics = registerMcpDiagnostics(extensionContext, () => resolveProjectRoot());
 
   const {
     AssetPathDocumentLinkProvider,
@@ -105,11 +124,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.languages.registerCodeLensProvider(
       { language: 'cpp', scheme: 'file' },
-      new UFunctionCodeLensProvider(() => ctx.project?.projectRoot),
+      new UFunctionCodeLensProvider(() => resolveProjectRoot()),
     ),
     vscode.languages.registerDefinitionProvider(
       { language: 'cpp', scheme: 'file' },
-      new GeneratedHeaderDefinitionProvider(() => ctx.project?.projectRoot),
+      new GeneratedHeaderDefinitionProvider(() => resolveProjectRoot()),
     ),
     vscode.languages.registerDocumentLinkProvider(
       { language: 'cpp', scheme: 'file' },
@@ -117,11 +136,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.languages.registerDefinitionProvider(
       { language: 'cpp', scheme: 'file' },
-      new AssetPathDefinitionProvider(() => ctx.project?.projectRoot),
+      new AssetPathDefinitionProvider(() => resolveProjectRoot()),
     ),
     vscode.languages.registerReferenceProvider(
       { language: 'cpp', scheme: 'file' },
-      new AssetReferenceProvider(() => ctx.project?.projectRoot),
+      new AssetReferenceProvider(() => resolveProjectRoot()),
     ),
     vscode.languages.registerCodeLensProvider(
       { language: 'cpp', scheme: 'file' },
@@ -129,11 +148,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.languages.registerCodeLensProvider(
       { language: 'cpp', scheme: 'file' },
-      new UPropertyCodeLensProvider(() => ctx.project?.projectRoot),
+      new UPropertyCodeLensProvider(() => resolveProjectRoot()),
     ),
     vscode.languages.registerHoverProvider(
       { language: 'cpp', scheme: 'file' },
-      new GeneratedSymbolHoverProvider(() => ctx.project?.projectRoot),
+      new GeneratedSymbolHoverProvider(() => resolveProjectRoot()),
     ),
     vscode.languages.registerCodeActionsProvider(
       { language: 'cpp', scheme: 'file' },
@@ -188,6 +207,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const { showWelcomePanel } = await import('./ui/welcomePanel');
     void showWelcomePanel(settings);
   }
+
+  extensionContext.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders((e) => {
+      for (const folder of e.removed) {
+        for (const projRoot of projectRegistry().listRoots()) {
+          if (folder.uri.fsPath.startsWith(projRoot) || projRoot.startsWith(folder.uri.fsPath)) {
+            projectRegistry().disposeProject(projRoot);
+          }
+        }
+      }
+    }),
+  );
 
   extensionContext.subscriptions.push(watchForProjectChanges(() => runDetectionPipeline()));
   extensionContext.subscriptions.push(
@@ -363,6 +394,28 @@ async function executeDetectionPipeline(
   configureMcpBridge(ctx.project.projectRoot, extensionPath);
   contentBrowser?.setProjectRoot(ctx.project.projectRoot);
 
+  if (settings.engineRoot) {
+    ctx.engine = (await createManualInstallation(settings.engineRoot)) ?? undefined;
+  } else {
+    const engines = await discoverEngines();
+    ctx.outputChannel.appendLine(`[UE5_8 Cursor] Found ${engines.length} UE 5.8 engine(s).`);
+    ctx.engine = await findMatchingEngine(ctx.project, engines);
+    if (!ctx.engine && engines.length === 1) {
+      ctx.engine = engines[0];
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Engine auto-selected: ${ctx.engine.root}`);
+    } else if (!ctx.engine && engines.length > 1) {
+      ctx.engine = await promptSelectEngine(engines);
+    }
+  }
+
+  const runtime = projectRegistry().ensure(ctx.project, ctx.engine, extensionContext);
+  projectRegistry().setActive(ctx.project.projectRoot);
+  // This pipeline was started by the current global session. Replacing it while
+  // the run is in flight makes later generation checks compare against a fresh
+  // session and abort first activation as stale. Gate 2 routes whole pipelines
+  // through ProjectRuntime; retain the owning session for this run until then.
+  editorBridge = runtime.editorBridge;
+
   if (editorBridge) {
     const bridgeInfo = await withBridgeTimeout(editorBridge.connect(ctx.project.projectRoot), 5000);
     if (bridgeInfo) {
@@ -385,7 +438,6 @@ async function executeDetectionPipeline(
   void testExplorer?.refresh(ctx);
 
   if (ctx.project) {
-    getWorkspaceProjectRegistry().ensure(ctx.project, ctx.engine, extensionContext);
     const graph = await refreshSemanticGraph(ctx.project);
     ctx.outputChannel.appendLine(
       `[UE5_8 Cursor] Semantic graph: ${graph.modules.length} module(s), ${graph.reflection.length} class(es), ${graph.plugins.length} plugin(s)`,
@@ -399,20 +451,6 @@ async function executeDetectionPipeline(
       ctx.outputChannel.appendLine(
         `[UE5_8 Cursor] Compile action parity: ${Math.round(parity.parity * 100)}% (synthetic DB)`,
       );
-    }
-  }
-
-  if (settings.engineRoot) {
-    ctx.engine = (await createManualInstallation(settings.engineRoot)) ?? undefined;
-  } else {
-    const engines = await discoverEngines();
-    ctx.outputChannel.appendLine(`[UE5_8 Cursor] Found ${engines.length} UE 5.8 engine(s).`);
-    ctx.engine = await findMatchingEngine(ctx.project, engines);
-    if (!ctx.engine && engines.length === 1) {
-      ctx.engine = engines[0];
-      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Engine auto-selected: ${ctx.engine.root}`);
-    } else if (!ctx.engine && engines.length > 1) {
-      ctx.engine = await promptSelectEngine(engines);
     }
   }
 

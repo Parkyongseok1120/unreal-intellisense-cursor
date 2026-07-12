@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "UE58Rider Quality Metrics v1",
+  "type": "object",
+  "required": ["version", "generatedAt", "areas"],
+  "properties": {
+    "version": { "const": 1 },
+    "generatedAt": { "type": "string" },
+    "source": { "enum": ["unit-tests", "ue-editor-e2e", "manual", "ci-merge"] },
+    "areas": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "accuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+          "completeness": { "type": "number", "minimum": 0, "maximum": 1 },
+          "resilience": { "type": "number", "minimum": 0, "maximum": 1 },
+          "performance": { "type": "number", "minimum": 0, "maximum": 1 },
+          "verification": { "type": "number", "minimum": 0, "maximum": 1 },
+          "e2ePassed": { "type": "boolean" },
+          "capReason": { "type": "string" },
+          "details": { "type": "object" }
+        }
+      }
+    }
+  }
+}

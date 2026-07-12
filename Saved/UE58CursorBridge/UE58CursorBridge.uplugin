@@ -1,0 +1,23 @@
+{
+	"FileVersion": 3,
+	"Version": 0,
+	"VersionName": "",
+	"FriendlyName": "",
+	"Description": "Authenticated IPC bridge between UE5_8 Cursor VSIX and the Unreal Editor.",
+	"Category": "Developer Tools",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EngineVersion": "5.8.0",
+	"CanContainContent": false,
+	"Installed": true,
+	"Modules": [
+		{
+			"Name": "UE58CursorBridge",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

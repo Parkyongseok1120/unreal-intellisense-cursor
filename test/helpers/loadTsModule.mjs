@@ -25,6 +25,15 @@ function loadTsModule(relativePath, extraRequires = {}) {
     module,
     require: (id) => {
       if (extraRequires[id]) return extraRequires[id]();
+      if (id.startsWith('.')) {
+        const resolved = path.resolve(path.dirname(sourcePath), id);
+        const candidates = [`${resolved}.ts`, `${resolved}.js`, resolved];
+        for (const candidate of candidates) {
+          if (fs.existsSync(candidate)) {
+            return loadTsModule(path.relative(process.cwd(), candidate), extraRequires);
+          }
+        }
+      }
       if (id === 'fs' || id === 'path' || id === 'crypto' || id === 'http') return require(id);
       return require(id);
     },

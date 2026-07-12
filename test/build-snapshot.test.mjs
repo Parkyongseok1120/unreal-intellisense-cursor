@@ -54,7 +54,7 @@ describe('buildSnapshot', () => {
       engineAssociation: '5.8',
     });
 
-    assert.equal(snap.snapshotVersion ?? snap.version, 2);
+    assert.equal(snap.snapshotVersion, 3);
     assert.equal(snap.synthetic, true);
     assert.equal(snap.provenance, 'synthetic-buildcs');
     assert.ok(snap.fingerprint.length > 0);
@@ -72,7 +72,7 @@ describe('buildSnapshot', () => {
   it('reports partial freshness for synthetic snapshot', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ue58-snap-fresh-'));
     const snap = {
-      snapshotVersion: 2,
+      snapshotVersion: 3,
       projectRoot: root,
       synthetic: true,
       provenance: 'synthetic-buildcs',
@@ -87,5 +87,20 @@ describe('buildSnapshot', () => {
     await buildSnapshot.saveBuildSnapshot(root, snap);
     const status = await buildSnapshot.snapshotFreshness(root);
     assert.equal(status, 'partial');
+  });
+
+  it('invalidates a snapshot when a new Build.cs input is added', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ue58-snap-inventory-'));
+    fs.mkdirSync(path.join(root, 'Source', 'One'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'Source', 'One', 'One.Build.cs'), 'public class One {}\n');
+    fs.writeFileSync(path.join(root, 'compile_commands.json'), '[]');
+
+    const snap = await buildSnapshot.buildCompileSnapshot({ projectRoot: root });
+    assert.equal(await buildSnapshot.inputsStillValid(snap), true);
+
+    fs.mkdirSync(path.join(root, 'Plugins', 'Two', 'Source', 'Two'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'Plugins', 'Two', 'Two.uplugin'), '{}\n');
+    fs.writeFileSync(path.join(root, 'Plugins', 'Two', 'Source', 'Two', 'Two.Build.cs'), 'public class Two {}\n');
+    assert.equal(await buildSnapshot.inputsStillValid(snap), false);
   });
 });

@@ -23,6 +23,17 @@ jobs:
           node-version: '20'
       - run: npm ci
       - run: npm run build:ue-plugin
+      - run: npm run test:ue-e2e
+        env:
+          REQUIRE_UE_E2E: '1'
+          UE_ROOT: ${{ env.UE_ROOT }}
+          UE_E2E_METRICS_PATH: Saved/quality-metrics/ue-e2e.json
+      - name: Upload UE E2E metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: ue58-quality-e2e
+          path: Saved/quality-metrics/ue-e2e.json
+          if-no-files-found: error
       - name: Upload plugin build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -32,7 +43,6 @@ jobs:
 
   build:
     runs-on: windows-latest
-    needs: plugin-build
     steps:
       - uses: actions/checkout@v4
       - name: Whitespace check
@@ -47,7 +57,49 @@ jobs:
       - run: node -e "const fs=require('fs'); fs.mkdirSync('dist-test/parsers',{recursive:true}); fs.copyFileSync('src/parsers/buildProgressParser.ts','dist-test/parsers/buildProgressParser.ts')"
       - run: npx esbuild src/parsers/buildProgressParser.ts --outfile=dist-test/parsers/buildProgressParser.js --format=esm --platform=node
       - run: npm test
+      - run: npm run collect:quality-metrics
+        env:
+          QUALITY_METRICS_PATH: Saved/quality-metrics/unit.json
+      - name: Upload unit quality metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: ue58-quality-unit
+          path: Saved/quality-metrics/unit.json
+          if-no-files-found: error
+      - run: npm run check:bridge-protocol
+      - run: npm run verify:structure
+      - run: npm run fault-injection
       - run: npm run verify:rider-workflow
       - run: npm run release:scorecard
+        env:
+          SCORECARD_MODE: progress
       - run: npm run test:ext-host
-      - run: npm run test:ue-e2e
+
+  release-gate:
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    needs: [plugin-build, build]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: ue58-quality-unit
+          path: Saved/quality-metrics
+      - uses: actions/download-artifact@v4
+        with:
+          name: ue58-quality-e2e
+          path: Saved/quality-metrics
+      - name: Merge measured quality artifacts
+        run: npm run collect:quality-metrics
+        env:
+          QUALITY_METRICS_PATH: Saved/quality-metrics/release.json
+          UE_E2E_METRICS_PATH: Saved/quality-metrics/ue-e2e.json
+      - name: Enforce release scorecard
+        run: npm run release:scorecard
+        env:
+          SCORECARD_MODE: release
+          QUALITY_METRICS_PATH: Saved/quality-metrics/release.json

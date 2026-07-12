@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
-import { baseCppDebuggerOptions } from '../platform/debug';
+import { baseCppDebuggerOptions, resolveServerExecutable } from '../platform/debug';
 
 export interface MultiplayerRunOptions {
   players: number;
@@ -39,9 +39,10 @@ export async function launchMultiplayerDebug(
     const buildOnly = async () => {
       const { buildCommandLine } = await import('../build/ubt');
       const { spawnAsync } = await import('../platform/process');
+      const targetType = options.dedicatedServer ? 'Server' : 'Editor';
       const cmd = buildCommandLine(ctx.engine!, ctx.project!, {
         configuration: settings.debugBuildConfiguration,
-        targetType: 'Editor',
+        targetType,
         platform: settings.platform,
       });
       const result = await spawnAsync(cmd.executable, cmd.args);
@@ -61,13 +62,14 @@ export async function launchMultiplayerDebug(
   const sessions: Thenable<boolean>[] = [];
 
   if (options.dedicatedServer) {
+    const serverExe = resolveServerExecutable(ctx.project);
     sessions.push(
       vscode.debug.startDebugging(folder, {
         ...base,
         name: `UE5_8: Dedicated Server (${ctx.project.name})`,
         request: 'launch',
-        program: ctx.engine.editorPath,
-        args: [ctx.project.uprojectPath, '-server', '-log'],
+        program: serverExe,
+        args: [ctx.project.uprojectPath, '-log'],
         cwd: ctx.project.projectRoot,
       }),
     );

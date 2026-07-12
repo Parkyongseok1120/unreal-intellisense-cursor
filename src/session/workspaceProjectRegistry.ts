@@ -20,13 +20,11 @@ export class WorkspaceProjectRegistry {
   }
 
   getByUri(uri: vscode.Uri): ProjectRuntime | undefined {
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (!folder) return this.getActive();
-    for (const runtime of this.runtimes.values()) {
-      const root = path.normalize(runtime.project.projectRoot);
-      if (uri.fsPath.startsWith(root)) return runtime;
-    }
-    return undefined;
+    const candidate = this.canonical(uri.fsPath);
+    const matches = [...this.runtimes.entries()]
+      .filter(([root]) => candidate === root || candidate.startsWith(`${root}${path.sep}`))
+      .sort(([a], [b]) => b.length - a.length);
+    return matches[0]?.[1];
   }
 
   getActive(): ProjectRuntime | undefined {

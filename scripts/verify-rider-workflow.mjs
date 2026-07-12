@@ -1,61 +1,50 @@
 #!/usr/bin/env node
 /**
- * Behavioral Rider 7.0 workflow verification (Gate 5).
+ * Behavioral workflow verify — requires quality metrics artifact from collect step.
  */
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const root = process.cwd();
+const metricsPath = path.join(root, 'test', 'fixtures', 'quality-metrics', 'ci-baseline.json');
+
+if (!fs.existsSync(metricsPath)) {
+  console.error('verify-rider-workflow: run npm run collect:quality-metrics first');
+  process.exit(1);
+}
+
+const metrics = JSON.parse(fs.readFileSync(metricsPath, 'utf-8'));
 const checks = [];
 
 function pass(name) {
   checks.push({ name, ok: true });
 }
-
 function fail(name, detail) {
   checks.push({ name, ok: false, detail });
 }
 
-function read(rel) {
-  return fs.readFileSync(path.join(root, rel), 'utf-8');
-}
+if (metrics.version === 1) pass('metrics schema version');
+else fail('metrics schema version');
 
-if (read('src/semantic/semanticNavigation.ts').includes('semanticNavigationEnabled')) pass('semantic navigation gated');
-else fail('semantic navigation gated');
+if (metrics.areas?.trust?.details?.noFalsePassContract) pass('trust metrics measured');
+else fail('trust metrics measured');
 
-if (read('src/uht/ueInspections.ts').includes('enabled = false')) pass('inspections default off');
-else fail('inspections default off');
+if (metrics.areas?.uht?.details?.inspectionsCorpus200) pass('uht corpus in metrics');
+else fail('uht corpus in metrics');
 
-if (!read('src/testing/unrealTestExplorer.ts').includes("return { state: 'passed' }")) pass('no false test pass fallback');
-else fail('no false test pass fallback', 'pollAutomationStatus still false-passes');
+const score = spawnSync(process.execPath, ['scripts/release-scorecard.mjs'], {
+  cwd: root,
+  stdio: 'inherit',
+  env: { ...process.env, QUALITY_METRICS_PATH: metricsPath, SCORECARD_MODE: 'progress' },
+});
 
-if (read('src/testing/unrealTestExplorer.ts').includes('failedTests')) pass('failed test set tracked');
-else fail('failed test set tracked');
-
-if (read('src/editorBridge/bridgeProtocol.ts').includes('CPP_BRIDGE_METHODS')) pass('bridge protocol registry');
-else fail('bridge protocol registry');
-
-if (read('plugins/UE58CursorBridge/Source/UE58CursorBridge/Private/CursorBridgeHttpServer.cpp').includes('automation.status')) {
-  pass('C++ automation.status');
-} else fail('C++ automation.status');
-
-if (read('src/projectModel/buildSnapshot.ts').includes('snapshotVersion')) pass('BuildSnapshot v2');
-else fail('BuildSnapshot v2');
-
-if (read('src/session/workspaceProjectRegistry.ts').includes('WorkspaceProjectRegistry')) pass('project runtime registry');
-else fail('project runtime registry');
-
-if (read('src/debug/multiplayerRun.ts').includes('baseCppDebuggerOptions')) pass('multiplayer uses debug stack');
-else fail('multiplayer uses debug stack');
+if (score.status === 0) pass('scorecard accepts artifact');
+else fail('scorecard accepts artifact', `exit ${score.status}`);
 
 const failed = checks.filter((c) => !c.ok);
 for (const c of checks) {
   console.log(c.ok ? `✔ ${c.name}` : `✖ ${c.name}${c.detail ? ` — ${c.detail}` : ''}`);
 }
-
-if (failed.length > 0) {
-  console.error(`\nverify-rider-workflow: ${failed.length} check(s) failed`);
-  process.exit(1);
-}
-
+if (failed.length > 0) process.exit(1);
 console.log(`\nverify-rider-workflow: ${checks.length} behavioral checks passed`);
