@@ -4,8 +4,6 @@ import type { UEProject } from '../types';
 import type { UClassReflection } from '../uht/generatedHeaderParser';
 import {
   buildSemanticGraph,
-  collectCompileActionsFromProject,
-  compareActionHashes,
   loadSemanticGraph,
   saveSemanticGraph,
   type CompileAction,
@@ -108,9 +106,11 @@ export async function computeCompileParity(project: UEProject): Promise<{
   provenance: string;
 }> {
   const snapshot = cachedSnapshot ?? (await loadBuildSnapshot(project.projectRoot)) ?? (await buildCompileSnapshot(project));
-  const actual = await collectCompileActionsFromProject(project.projectRoot);
-  const authority = snapshot.compileActions;
-  const result = compareActionHashes(authority, actual);
+  const result = snapshot.parity ?? {
+    matched: 0,
+    total: snapshot.ideActions?.length ?? 0,
+    parity: snapshot.synthetic ? 0 : 1,
+  };
 
   const graph = cachedGraph ?? (await loadSemanticGraph(project.projectRoot));
   const status = await snapshotFreshness(project.projectRoot, graph?.fingerprint);

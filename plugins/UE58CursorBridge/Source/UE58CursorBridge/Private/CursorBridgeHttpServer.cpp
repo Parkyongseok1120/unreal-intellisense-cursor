@@ -21,6 +21,9 @@ static constexpr uint16 BRIDGE_PORT_RANGE = 20;
 static constexpr int32 DEFAULT_ASSET_PAGE_SIZE = 500;
 static constexpr int32 MAX_ASSET_PAGE_SIZE = 2000;
 
+/** Test name -> running | passed | failed | cancelled */
+static TMap<FString, FString> GAutomationTestStates;
+
 static FString MakeBridgeToken()
 {
 	return FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens) + FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
@@ -191,7 +194,8 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetArrayField(TEXT("assets"), Assets);
 		Result->SetNumberField(TEXT("total"), Total);
-		Result->SetBoolField(TEXT("hasMore"), Offset + Assets.Num() < Total);
+		Result->SetNumberField(TEXT("hasMore"), Offset + Assets.Num() < Total);
+		Result->SetNumberField(TEXT("offset"), Offset);
 		return Result;
 	}
 
@@ -269,7 +273,108 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 		}
 
 		FAutomationTestFramework::Get().StartTestByName(TestName, 0);
+		GAutomationTestStates.Add(TestName, TEXT("running"));
 		Result->SetBoolField(TEXT("ok"), true);
+		Result->SetStringField(TEXT("message"), TEXT("started"));
+		return Result;
+	}
+
+	if (Method == TEXT("automation.status"))
+	{
+		FString TestName;
+		if (!Params.IsValid() || !Params->TryGetStringField(TEXT("name"), TestName))
+		{
+			return nullptr;
+		}
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		const FString* State = GAutomationTestStates.Find(TestName);
+		if (!State)
+		{
+			Result->SetStringField(TEXT("state"), TEXT("unknown"));
+			Result->SetStringField(TEXT("message"), TEXT("No execution record for test"));
+			return Result;
+		}
+
+		Result->SetStringField(TEXT("state"), *State);
+		return Result;
+	}
+
+	if (Method == TEXT("automation.cancel"))
+	{
+		FString TestName;
+		if (!Params.IsValid() || !Params->TryGetStringField(TEXT("name"), TestName))
+		{
+			return nullptr;
+		}
+
+		GAutomationTestStates.Add(TestName, TEXT("cancelled"));
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetBoolField(TEXT("ok"), true);
+		return Result;
+	}
+
+	if (Method == TEXT("blueprint.listDerived"))
+	{
+		FString ClassPath;
+		if (!Params.IsValid() || !Params->TryGetStringField(TEXT("classPath"), ClassPath))
+		{
+			return nullptr;
+		}
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("derived"), TArray<TSharedPtr<FJsonValue>>());
+		Result->SetNumberField(TEXT("total"), 0);
+		return Result;
+	}
+
+	if (Method == TEXT("logs.tail"))
+	{
+		int32 Lines = 100;
+		if (Params.IsValid())
+		{
+			double LinesNum = 0;
+			if (Params->TryGetNumberField(TEXT("lines"), LinesNum))
+			{
+				Lines = FMath::Clamp(static_cast<int32>(LinesNum), 1, 5000);
+			}
+		}
+
+		const FString LogDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Logs"));
+		TArray<FString> LogFiles;
+		IFileManager::Get().FindFiles(LogFiles, *LogDir, TEXT("*.log"));
+
+		TArray<TSharedPtr<FJsonValue>> Chunk;
+		if (LogFiles.Num() > 0)
+		{
+			LogFiles.Sort();
+			const FString Latest = FPaths::Combine(LogDir, LogFiles.Last());
+			FString Content;
+			if (FFileHelper::LoadFileToString(Content, *Latest))
+			{
+				TArray<FString> Split;
+				Content.ParseIntoArrayLines(Split);
+				const int32 Start = FMath::Max(0, Split.Num() - Lines);
+				for (int32 i = Start; i < Split.Num(); ++i)
+				{
+					TSharedPtr<FJsonObject> LineObj = MakeShared<FJsonObject>();
+					LineObj->SetStringField(TEXT("text"), Split[i]);
+					Chunk.Add(MakeShared<FJsonValueObject>(LineObj));
+				}
+			}
+		}
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("lines"), Chunk);
+		Result->SetNumberField(TEXT("count"), Chunk.Num());
+		return Result;
+	}
+
+	if (Method == TEXT("pie.getState"))
+	{
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetBoolField(TEXT("isPlaying"), false);
+		Result->SetStringField(TEXT("mode"), TEXT("stopped"));
 		return Result;
 	}
 #else

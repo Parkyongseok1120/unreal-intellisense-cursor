@@ -17,6 +17,10 @@ const projectModel = loadTsModule('src/projectModel/projectModelService.ts', {
   '../uht/reflectionIndex': () => ({
     buildReflectionIndex: async () => [],
   }),
+  '../uht/uhtRunner': () => ({
+    findUhtManifest: async () => undefined,
+    parseUhtManifestInputFiles: async () => [],
+  }),
   '../platform/dataDir': () => ({
     ensureDataDir: async (root) => path.join(root, '.ue5_8cursor'),
   }),

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "transport": "http",
+  "methods": {
+    "handshake": { "params": { "client": "string", "version": "number" }, "result": { "ok": "boolean", "capabilities": "string[]" } },
+    "ping": { "params": {}, "result": { "pong": "boolean" } },
+    "assetRegistry.list": {
+      "params": { "path": "string?", "class": "string?", "limit": "number?", "offset": "number?" },
+      "result": { "assets": "object[]", "total": "number", "hasMore": "boolean", "offset": "number?" }
+    },
+    "assetRegistry.get": { "params": { "path": "string" }, "result": { "asset": "object" } },
+    "blueprint.listDerived": { "params": { "classPath": "string" }, "result": { "derived": "object[]", "total": "number" } },
+    "automation.list": { "params": {}, "result": { "tests": "object[]" } },
+    "automation.run": { "params": { "name": "string" }, "result": { "ok": "boolean", "message": "string?" } },
+    "automation.status": { "params": { "name": "string" }, "result": { "state": "string", "message": "string?" } },
+    "automation.cancel": { "params": { "name": "string" }, "result": { "ok": "boolean" } },
+    "logs.tail": { "params": { "lines": "number?" }, "result": { "lines": "object[]", "count": "number" } },
+    "pie.getState": { "params": {}, "result": { "isPlaying": "boolean", "mode": "string" } }
+  },
+  "capabilities": ["assetRegistry", "automationTests", "blueprintGraph", "pieState", "unrealLogs"]
+}

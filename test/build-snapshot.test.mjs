@@ -17,6 +17,11 @@ const buildSnapshot = loadTsModule('src/projectModel/buildSnapshot.ts', {
         hash: 'abc',
       }));
     },
+    compareActionHashes: (expected, actual) => ({
+      matched: Math.min(expected.length, actual.length),
+      total: Math.max(expected.length, actual.length),
+      parity: expected.length && actual.length ? 1 : 0,
+    }),
   }),
   '../platform/paths': () => ({
     fileExists: async (p) => {
@@ -49,9 +54,13 @@ describe('buildSnapshot', () => {
       engineAssociation: '5.8',
     });
 
+    assert.equal(snap.snapshotVersion ?? snap.version, 2);
     assert.equal(snap.synthetic, true);
-    assert.equal(snap.provenance, 'buildcs');
+    assert.equal(snap.provenance, 'synthetic-buildcs');
     assert.ok(snap.fingerprint.length > 0);
+    assert.ok(Array.isArray(snap.ideActions));
+    assert.ok(Array.isArray(snap.authoritativeActions));
+    assert.ok(snap.parity);
 
     const saved = await buildSnapshot.saveBuildSnapshot(root, snap);
     assert.ok(fs.existsSync(saved));
@@ -63,14 +72,17 @@ describe('buildSnapshot', () => {
   it('reports partial freshness for synthetic snapshot', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ue58-snap-fresh-'));
     const snap = {
-      version: 1,
+      snapshotVersion: 2,
       projectRoot: root,
       synthetic: true,
-      provenance: 'buildcs',
+      provenance: 'synthetic-buildcs',
       fingerprint: 'deadbeef',
       updatedAt: new Date().toISOString(),
-      compileActions: [],
+      authoritativeActions: [],
+      ideActions: [],
       rspPaths: [],
+      inputs: [],
+      parity: { matched: 0, total: 0, parity: 0 },
     };
     await buildSnapshot.saveBuildSnapshot(root, snap);
     const status = await buildSnapshot.snapshotFreshness(root);

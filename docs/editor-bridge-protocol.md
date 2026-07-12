@@ -2,6 +2,9 @@
 
 UE58CursorBridge exposes authoritative Unreal Editor state to the VSIX over localhost JSON-RPC.
 
+Schema: `schemas/editor-bridge-v1.json`  
+TS registry: `src/editorBridge/bridgeProtocol.ts`
+
 ## Transport
 
 - **Primary (v1):** HTTP `POST http://127.0.0.1:{port}/rpc`
@@ -9,7 +12,7 @@ UE58CursorBridge exposes authoritative Unreal Editor state to the VSIX over loca
 
 ## Discovery
 
-The editor plugin writes `.ue5_8cursor/editor-bridge.json` (gitignored — do not commit):
+The editor plugin writes `.ue5_8cursor/editor-bridge.json` (gitignored):
 
 ```json
 {
@@ -24,37 +27,39 @@ The editor plugin writes `.ue5_8cursor/editor-bridge.json` (gitignored — do no
 }
 ```
 
-The VSIX caches the token in workspace secrets after a successful handshake. Tokens are localhost-only and valid until the editor process exits.
+The VSIX caches the token in workspace secrets after a successful handshake.
 
 ## Authentication
 
 `Authorization: Bearer <token>` on every request. Localhost-only bind (`127.0.0.1`).
 
-## JSON-RPC 2.0 Methods
+## Implemented methods (7.0)
 
 | Method | Params | Result |
 |--------|--------|--------|
-| `handshake` | `{ client: "ue58rider", version: 1 }` | `{ ok: true, capabilities: string[] }` |
-| `ping` | `{}` | `{ pong: true }` |
-| `assetRegistry.list` | `{ path?: string, class?: string, limit?: number, offset?: number }` | `{ assets: AssetEntry[], total: number, hasMore: boolean }` |
-| `assetRegistry.get` | `{ path: string }` | `{ asset: AssetEntry }` |
-| `automation.list` | `{}` | `{ tests: AutomationTestEntry[] }` |
-| `automation.run` | `{ name: string }` | `{ ok: boolean, message?: string }` |
+| `handshake` | `{ client, version }` | `{ ok, capabilities }` |
+| `ping` | `{}` | `{ pong }` |
+| `assetRegistry.list` | `{ path?, class?, limit?, offset? }` | `{ assets, total, hasMore, offset }` |
+| `assetRegistry.get` | `{ path }` | `{ asset }` |
+| `blueprint.listDerived` | `{ classPath }` | `{ derived, total }` |
+| `automation.list` | `{}` | `{ tests }` |
+| `automation.run` | `{ name }` | `{ ok, message? }` |
+| `automation.status` | `{ name }` | `{ state, message? }` |
+| `automation.cancel` | `{ name }` | `{ ok }` |
+| `logs.tail` | `{ lines? }` | `{ lines, count }` |
+| `pie.getState` | `{}` | `{ isPlaying, mode }` |
 
-### Planned (v1.1)
+### Planned
 
-- `blueprint.getGraph`
-- `pie.getState`
-- `logs.subscribe`
+- `blueprint.findImplementations`, `blueprint.propertyOverrides`, `blueprint.interfaceImplementers`
+- `assetRegistry.referencers`, `assetRegistry.dependencies`
 
 ## VSIX Client
 
-`src/editorBridge/editorBridgeClient.ts` reads the descriptor, calls `handshake`, and exposes typed helpers.
+`src/editorBridge/editorBridgeClient.ts` checks `isMethodImplemented()` before RPC calls.
 
 When offline, consumers fall back to Epic MCP (provisional) or disk indexes.
 
 ## UE Plugin
 
-`plugins/UE58CursorBridge/` — Editor module started with the Unreal Editor when the plugin is enabled in `.uproject`.
-
-Install via command **Install Editor Bridge Plugin** (consent-gated copy into `<Project>/Plugins/`). Build with `npm run build:ue-plugin` (requires `UE_ROOT`).
+`plugins/UE58CursorBridge/` — build with `npm run build:ue-plugin` (requires `UE_ROOT`).

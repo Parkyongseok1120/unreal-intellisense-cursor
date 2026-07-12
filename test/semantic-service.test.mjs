@@ -37,6 +37,10 @@ const projectModel = loadTsModule('src/projectModel/projectModelService.ts', {
       { className: 'AMyActor', filePath: 'C:/P/Source/Game/Public/MyActor.h', properties: [], functions: [] },
     ],
   }),
+  '../uht/uhtRunner': () => ({
+    findUhtManifest: async () => undefined,
+    parseUhtManifestInputFiles: async () => [],
+  }),
   '../platform/dataDir': mockEnsureDataDir,
 });
 
@@ -78,6 +82,10 @@ describe('semantic graph', () => {
           { className: 'AMyActor', filePath: path.join(publicDir, 'MyActor.h'), properties: [], functions: [] },
         ],
       }),
+      '../uht/uhtRunner': () => ({
+        findUhtManifest: async () => undefined,
+        parseUhtManifestInputFiles: async () => [],
+      }),
       '../platform/dataDir': mockEnsureDataDir,
     });
 
@@ -90,9 +98,10 @@ describe('semantic graph', () => {
     };
 
     const graph = await projectModelLocal.buildSemanticGraph(project);
-    assert.equal(graph.version, 1);
+    assert.equal(graph.version, 2);
     assert.equal(graph.modules.length, 1);
     assert.equal(graph.reflection.length, 1);
+    assert.ok(Array.isArray(graph.symbols));
 
     const saved = await projectModelLocal.saveSemanticGraph(root, graph);
     assert.ok(fs.existsSync(saved));

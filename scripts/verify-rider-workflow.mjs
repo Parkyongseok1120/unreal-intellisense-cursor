@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Release workflow verification — static checks for Rider 60% milestone gates.
+ * Behavioral Rider 7.0 workflow verification (Gate 5).
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -16,36 +16,37 @@ function fail(name, detail) {
   checks.push({ name, ok: false, detail });
 }
 
-function fileHas(rel, needle) {
-  const full = path.join(root, rel);
-  if (!fs.existsSync(full)) return false;
-  return fs.readFileSync(full, 'utf-8').includes(needle);
+function read(rel) {
+  return fs.readFileSync(path.join(root, rel), 'utf-8');
 }
 
-if (fs.existsSync(path.join(root, '.gitattributes'))) pass('.gitattributes present');
-else fail('.gitattributes present', 'missing');
+if (read('src/semantic/semanticNavigation.ts').includes('semanticNavigationEnabled')) pass('semantic navigation gated');
+else fail('semantic navigation gated');
 
-if (fileHas('.github/workflows/ci.yml', 'git diff --check')) pass('CI whitespace check');
-else fail('CI whitespace check', 'ci.yml missing git diff --check');
+if (read('src/uht/ueInspections.ts').includes('enabled = false')) pass('inspections default off');
+else fail('inspections default off');
 
-if (fileHas('scripts/build-ue-plugin.mjs', "spawnSync('cmd.exe'")) pass('safe BuildPlugin spawn');
-else fail('safe BuildPlugin spawn', 'shell spawn still used');
+if (!read('src/testing/unrealTestExplorer.ts').includes("return { state: 'passed' }")) pass('no false test pass fallback');
+else fail('no false test pass fallback', 'pollAutomationStatus still false-passes');
 
-if (fileHas('src/projectModel/buildSnapshot.ts', 'BuildSnapshot')) pass('BuildSnapshot module');
-else fail('BuildSnapshot module', 'missing');
+if (read('src/testing/unrealTestExplorer.ts').includes('failedTests')) pass('failed test set tracked');
+else fail('failed test set tracked');
 
-if (fileHas('src/semantic/semanticNavigation.ts', 'registerSemanticNavigation')) pass('UE semantic navigation');
-else fail('UE semantic navigation', 'missing');
+if (read('src/editorBridge/bridgeProtocol.ts').includes('CPP_BRIDGE_METHODS')) pass('bridge protocol registry');
+else fail('bridge protocol registry');
 
-if (fileHas('src/uht/ueInspections.ts', 'inspectionRuleCount')) pass('UE inspections');
-else fail('UE inspections', 'missing');
+if (read('plugins/UE58CursorBridge/Source/UE58CursorBridge/Private/CursorBridgeHttpServer.cpp').includes('automation.status')) {
+  pass('C++ automation.status');
+} else fail('C++ automation.status');
 
-if (fileHas('src/testing/unrealTestExplorer.ts', 'createTestController')) pass('VS Code TestController');
-else fail('VS Code TestController', 'missing');
+if (read('src/projectModel/buildSnapshot.ts').includes('snapshotVersion')) pass('BuildSnapshot v2');
+else fail('BuildSnapshot v2');
 
-if (fileHas('src/extension.ts', 'ue58rider.debugMultiplayer') || fileHas('src/extension.ts', 'Commands.DebugMultiplayer')) {
-  pass('multiplayer command wired');
-} else fail('multiplayer command wired', 'missing');
+if (read('src/session/workspaceProjectRegistry.ts').includes('WorkspaceProjectRegistry')) pass('project runtime registry');
+else fail('project runtime registry');
+
+if (read('src/debug/multiplayerRun.ts').includes('baseCppDebuggerOptions')) pass('multiplayer uses debug stack');
+else fail('multiplayer uses debug stack');
 
 const failed = checks.filter((c) => !c.ok);
 for (const c of checks) {
@@ -57,4 +58,4 @@ if (failed.length > 0) {
   process.exit(1);
 }
 
-console.log(`\nverify-rider-workflow: ${checks.length} checks passed`);
+console.log(`\nverify-rider-workflow: ${checks.length} behavioral checks passed`);

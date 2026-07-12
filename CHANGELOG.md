@@ -1,5 +1,14 @@
 # Changelog
 
+## 7.0.0 — Rider 60% UE Workflow Release (Trust Reset)
+
+- **Gate 0 Trust Reset:** Inaccurate TypeHierarchy/Reference/DocumentSymbol providers gated off by default; UE inspections default off (5 safe rules when enabled); TestController no false-pass; failed-test set; capability-gated Bridge client
+- **Gate 1 Schemas:** `schemas/editor-bridge-v1.json`, `bridgeProtocol.ts` TS/C++ method registry, BuildSnapshot v2 (`authoritativeActions`/`ideActions`/`parity`), `WorkspaceProjectRegistry`
+- **Gate 2 Collectors:** C++ `automation.status`/`automation.cancel`; asset list `offset`; RSP importer improvements (no full DB replacement); input fingerprints
+- **Gate 3+:** Semantic/UHT re-enable via `ue58rider.semantic.navigation.enabled` and `ue58rider.uht.inspections.enabled` settings
+- **Gate 4:** Multiplayer debug aligned with `baseCppDebuggerOptions` + multi-client launch; HLSL without fake directory completions
+- **Gate 5:** Behavioral `verify:rider-workflow`, `release:scorecard`, CI integration, `test:ue-e2e` placeholder for self-hosted Editor
+
 ## 7.0.0 — Rider 60% UE Workflow Release
 
 - **6.6.2 Release Gate:** `.gitattributes` + CI `git diff --check`; safe `BuildPlugin` spawn; fork PR plugin-build policy; dead `bridge.autoInstallPlugin` removed; Class Wizard transaction + UserWidget UMG consent; fixture temp-copy helper; bridge protocol contract tests; expanded extension-host E2E

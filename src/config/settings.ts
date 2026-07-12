@@ -118,6 +118,16 @@ export class UE5_8CursorSettings {
     return this.cfg.get<boolean>('experimental.hlsl', false);
   }
 
+  /** UE semantic navigation providers (definition/reference/hierarchy). Default off until Gate 3 corpus passes. */
+  get semanticNavigationEnabled(): boolean {
+    return this.cfg.get<boolean>('semantic.navigation.enabled', false);
+  }
+
+  /** UE heuristic inspections layered on UHT. Default off until safe rule corpus passes. */
+  get uhtInspectionsEnabled(): boolean {
+    return this.cfg.get<boolean>('uht.inspections.enabled', false);
+  }
+
   private get cfg(): vscode.WorkspaceConfiguration {
     return vscode.workspace.getConfiguration(EXTENSION_ID);
   }

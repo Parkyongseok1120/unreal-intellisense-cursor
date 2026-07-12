@@ -12,6 +12,26 @@ export interface AssetIndexEntry {
   packageClass?: string;
   thumbnailUri?: string;
   mtimeMs?: number;
+  source?: 'content-scan' | 'bridge' | 'mcp';
+  confidence?: 'authoritative' | 'derived' | 'heuristic';
+}
+
+export interface AssetPageResult {
+  entries: AssetIndexEntry[];
+  total: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+export function getAssetPage(entries: AssetIndexEntry[], offset = 0, limit = 500): AssetPageResult {
+  const total = entries.length;
+  const slice = entries.slice(offset, offset + limit);
+  return {
+    entries: slice,
+    total,
+    offset,
+    hasMore: offset + slice.length < total,
+  };
 }
 
 export interface AssetIndexCache {
@@ -89,6 +109,8 @@ function entryFromFile(contentDir: string, filePath: string, mtimeMs: number): A
     assetName,
     inferredClass: inferClassFromName(assetName),
     mtimeMs,
+    source: 'content-scan',
+    confidence: 'derived',
   };
 }
 

@@ -8,6 +8,12 @@ import {
   type EditorBridgeDescriptor,
   type EditorBridgeRpcOptions,
 } from './editorBridgeRpc';
+import {
+  BRIDGE_CAPABILITIES,
+  isMethodImplemented,
+  type BridgeCapability,
+  type BridgeMethod,
+} from './bridgeProtocol';
 
 export type EditorBridgeCapability =
   | 'assetRegistry'
@@ -43,7 +49,7 @@ export interface BridgeBlueprintEntry {
 }
 
 export interface AutomationStatus {
-  state: 'running' | 'passed' | 'failed' | 'unknown';
+  state: 'running' | 'passed' | 'failed' | 'unknown' | 'cancelled';
   message?: string;
 }
 
@@ -132,6 +138,20 @@ export class EditorBridgeClient implements vscode.Disposable {
     return this.info.connected;
   }
 
+  hasCapability(cap: BridgeCapability): boolean {
+    return this.info.capabilities.includes(cap as EditorBridgeCapability);
+  }
+
+  private canCall(method: BridgeMethod): boolean {
+    if (!this.descriptor || !this.isAuthoritative()) return false;
+    if (!isMethodImplemented(method)) return false;
+    const cap = Object.entries(BRIDGE_CAPABILITIES).find(([, methods]) =>
+      (methods as readonly BridgeMethod[]).includes(method),
+    )?.[0] as BridgeCapability | undefined;
+    if (!cap) return true;
+    return this.hasCapability(cap);
+  }
+
   async queryAssets(options?: {
     path?: string;
     class?: string;
@@ -139,10 +159,11 @@ export class EditorBridgeClient implements vscode.Disposable {
     offset?: number;
     filter?: string;
   }): Promise<BridgeAssetListResult> {
-    if (!this.descriptor || !this.isAuthoritative()) return { assets: [] };
+    const descriptor = this.descriptor;
+    if (!this.canCall('assetRegistry.list') || !descriptor) return { assets: [] };
     try {
       const result = (await editorBridgeRpc(
-        this.descriptor,
+        descriptor,
         'assetRegistry.list',
         { limit: 500, offset: 0, ...options },
         this.rpcOptions,
@@ -159,25 +180,54 @@ export class EditorBridgeClient implements vscode.Disposable {
   }
 
   async listDerivedBlueprints(parentClass: string): Promise<BridgeBlueprintEntry[]> {
-    if (!this.descriptor || !this.isAuthoritative()) return [];
+    const descriptor = this.descriptor;
+    if (!this.canCall('blueprint.listDerived') || !descriptor) return [];
     try {
       const result = (await editorBridgeRpc(
-        this.descriptor,
+        descriptor,
         'blueprint.listDerived',
-        { parentClass },
+        { classPath: parentClass },
         this.rpcOptions,
-      )) as { blueprints?: BridgeBlueprintEntry[] };
-      return (result.blueprints ?? []).map((b) => ({ ...b, authoritative: true }));
+      )) as { derived?: BridgeBlueprintEntry[]; blueprints?: BridgeBlueprintEntry[] };
+      const list = result.derived ?? result.blueprints ?? [];
+      return list.map((b) => ({ ...b, authoritative: true }));
     } catch {
       return [];
     }
   }
 
+  async tailLogs(lines = 200): Promise<string[]> {
+    const descriptor = this.descriptor;
+    if (!this.canCall('logs.tail') || !descriptor) return [];
+    try {
+      const result = (await editorBridgeRpc(descriptor, 'logs.tail', { lines }, this.rpcOptions)) as {
+        lines?: Array<{ text?: string } | string>;
+      };
+      return (result.lines ?? []).map((l) => (typeof l === 'string' ? l : l.text ?? '')).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  async getPieState(): Promise<{ isPlaying: boolean; mode: string } | undefined> {
+    const descriptor = this.descriptor;
+    if (!this.canCall('pie.getState') || !descriptor) return undefined;
+    try {
+      return (await editorBridgeRpc(descriptor, 'pie.getState', {}, this.rpcOptions)) as {
+        isPlaying: boolean;
+        mode: string;
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
   async findBlueprintImplementations(interfaceName: string): Promise<BridgeBlueprintEntry[]> {
-    if (!this.descriptor || !this.isAuthoritative()) return [];
+    const descriptor = this.descriptor;
+    if (!this.canCall('blueprint.findImplementations') || !descriptor) return [];
     try {
       const result = (await editorBridgeRpc(
-        this.descriptor,
+        descriptor,
         'blueprint.findImplementations',
         { interfaceName },
         this.rpcOptions,
@@ -189,10 +239,11 @@ export class EditorBridgeClient implements vscode.Disposable {
   }
 
   async getBlueprintPropertyOverrides(assetPath: string): Promise<Record<string, unknown>> {
-    if (!this.descriptor || !this.isAuthoritative()) return {};
+    const descriptor = this.descriptor;
+    if (!this.canCall('blueprint.propertyOverrides') || !descriptor) return {};
     try {
       const result = (await editorBridgeRpc(
-        this.descriptor,
+        descriptor,
         'blueprint.propertyOverrides',
         { assetPath },
         this.rpcOptions,
@@ -207,29 +258,29 @@ export class EditorBridgeClient implements vscode.Disposable {
     name: string,
     options?: { timeoutMs?: number; token?: vscode.CancellationToken },
   ): Promise<AutomationStatus> {
-    if (!this.descriptor || !this.isAuthoritative()) {
-      return { state: 'unknown', message: 'Editor Bridge offline' };
+    if (!this.canCall('automation.status')) {
+      return { state: 'unknown', message: 'automation.status not implemented on Bridge' };
     }
 
     const timeoutMs = options?.timeoutMs ?? 60_000;
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
       if (options?.token?.isCancellationRequested) {
-        return { state: 'unknown', message: 'Cancelled' };
+        return { state: 'cancelled', message: 'Cancelled' };
       }
       try {
-        const result = (await editorBridgeRpc(this.descriptor, 'automation.status', { name }, this.rpcOptions)) as {
+        const result = (await editorBridgeRpc(this.descriptor!, 'automation.status', { name }, this.rpcOptions)) as {
           state?: string;
           message?: string;
-          ok?: boolean;
         };
-        if (result.state === 'passed' || result.ok === true) return { state: 'passed' };
+        if (result.state === 'passed') return { state: 'passed' };
         if (result.state === 'failed') return { state: 'failed', message: result.message };
+        if (result.state === 'cancelled') return { state: 'cancelled', message: result.message };
         if (result.state === 'running') {
           await sleep(1000);
           continue;
         }
-        return { state: 'passed' };
+        return { state: 'unknown', message: result.message ?? `Unexpected status: ${result.state ?? 'none'}` };
       } catch (err) {
         return { state: 'unknown', message: err instanceof Error ? err.message : 'status poll failed' };
       }
@@ -237,10 +288,23 @@ export class EditorBridgeClient implements vscode.Disposable {
     return { state: 'unknown', message: 'Automation status timed out' };
   }
 
-  async listAutomationTests(): Promise<BridgeAutomationTest[]> {
-    if (!this.descriptor || !this.isAuthoritative()) return [];
+  async cancelAutomationTest(name: string): Promise<{ ok: boolean }> {
+    if (!this.canCall('automation.cancel')) return { ok: false };
     try {
-      const result = (await editorBridgeRpc(this.descriptor, 'automation.list', {}, this.rpcOptions)) as {
+      const result = (await editorBridgeRpc(this.descriptor!, 'automation.cancel', { name }, this.rpcOptions)) as {
+        ok?: boolean;
+      };
+      return { ok: result.ok ?? false };
+    } catch {
+      return { ok: false };
+    }
+  }
+
+  async listAutomationTests(): Promise<BridgeAutomationTest[]> {
+    const descriptor = this.descriptor;
+    if (!this.canCall('automation.list') || !descriptor) return [];
+    try {
+      const result = (await editorBridgeRpc(descriptor, 'automation.list', {}, this.rpcOptions)) as {
         tests?: BridgeAutomationTest[];
       };
       return result.tests ?? [];

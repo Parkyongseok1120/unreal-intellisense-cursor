@@ -161,20 +161,32 @@ export function previewBuildCsPatch(content: string, deps: string[]): { newConte
 
   for (const dep of deps) {
     if (new RegExp(`"${dep}"`).test(patched)) continue;
-    const publicBlock = /PublicDependencyModuleNames\.AddRange\s*\(\s*new\s+string\[\]\s*\{/i;
-    const privateBlock = /PrivateDependencyModuleNames\.AddRange\s*\(\s*new\s+string\[\]\s*\{/i;
-    const usePublic = publicBlock.test(patched);
-    const blockRe = usePublic ? publicBlock : privateBlock;
-    const match = patched.match(blockRe);
-    if (!match || match.index === undefined) return undefined;
 
-    const openBrace = patched.indexOf('{', match.index);
-    const closeBrace = patched.indexOf('}', openBrace);
-    if (openBrace < 0 || closeBrace < 0) return undefined;
+    const singleAdd = /(Public|Private)DependencyModuleNames\.Add\s*\(\s*"[^"]+"\s*\)/i;
+    const blockRe = /(Public|Private)DependencyModuleNames\.AddRange\s*\(\s*new\s+string\[\]\s*\{/i;
+    const useBlock = blockRe.test(patched);
+    if (useBlock) {
+      const match = patched.match(blockRe);
+      if (!match || match.index === undefined) return undefined;
+      const openBrace = patched.indexOf('{', match.index);
+      const closeBrace = patched.indexOf('}', openBrace);
+      if (openBrace < 0 || closeBrace < 0) return undefined;
+      const insertion = `\n\t\t\t"${dep}",`;
+      patched = patched.slice(0, closeBrace) + insertion + patched.slice(closeBrace);
+      added.push(dep);
+      continue;
+    }
 
-    const insertion = `\n\t\t\t"${dep}",`;
-    patched = patched.slice(0, closeBrace) + insertion + patched.slice(closeBrace);
-    added.push(dep);
+    const addMatch = patched.match(singleAdd);
+    if (addMatch && addMatch.index !== undefined) {
+      const lineEnd = patched.indexOf('\n', addMatch.index);
+      const insertAt = lineEnd >= 0 ? lineEnd : patched.length;
+      patched = `${patched.slice(0, insertAt)}\n\t\tPublicDependencyModuleNames.Add("${dep}");${patched.slice(insertAt)}`;
+      added.push(dep);
+      continue;
+    }
+
+    return undefined;
   }
 
   if (added.length === 0) return undefined;

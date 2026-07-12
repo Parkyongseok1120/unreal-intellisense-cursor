@@ -6,11 +6,30 @@ import { discoverModuleLayouts } from '../parsers/moduleLayout';
 import { fileExists } from '../platform/paths';
 import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 import { buildReflectionIndex, type UClassReflection } from '../uht/reflectionIndex';
+import { findUhtManifest, parseUhtManifestInputFiles } from '../uht/uhtRunner';
 import { ensureDataDir } from '../platform/dataDir';
 import * as fs from 'fs';
 
-export const SEMANTIC_GRAPH_VERSION = 1;
+export const SEMANTIC_GRAPH_VERSION = 2;
 const SEMANTIC_GRAPH_FILE = 'semantic-graph.json';
+
+export type SymbolConfidence = 'authoritative' | 'derived' | 'heuristic';
+export type SymbolProvenance = 'uht' | 'generated-header' | 'source-parser' | 'editor-bridge';
+
+export interface UeClassSymbol {
+  id: string;
+  name: string;
+  sourceFile: string;
+  sourceLine?: number;
+  baseClass?: string;
+  interfaces?: string[];
+  generatedHeader?: string;
+  moduleName?: string;
+  provenance: SymbolProvenance;
+  confidence: SymbolConfidence;
+  generation?: number;
+  fingerprint?: string;
+}
 
 export interface ProjectModelGraph {
   projectRoot: string;
@@ -32,6 +51,7 @@ export interface SemanticGraph {
   plugins: PluginNode[];
   targets: TargetNode[];
   reflection: UClassReflection[];
+  symbols: UeClassSymbol[];
   compileActions: CompileAction[];
   generatedArtifacts: GeneratedArtifact[];
 }
@@ -141,20 +161,53 @@ export async function buildSemanticGraph(project: UEProject): Promise<SemanticGr
   const targets = await discoverTargets(project.projectRoot);
   const reflection = await buildReflectionIndex(project.projectRoot);
   const compileActions = await collectCompileActionsFromProject(project.projectRoot);
-  const generatedArtifacts = await linkGeneratedArtifacts(project.projectRoot, reflection);
+  const generatedArtifacts = await linkGeneratedArtifacts(project, reflection);
+
+  const symbols = reflectionToSymbols(reflection, generatedArtifacts, modules);
 
   return {
     version: SEMANTIC_GRAPH_VERSION,
     projectRoot: project.projectRoot,
     updatedAt: new Date().toISOString(),
     generation: Date.now(),
+    fingerprint: hashString(JSON.stringify({ modules: modules.length, reflection: reflection.length })),
+    provenance: 'uht',
     modules,
     plugins,
     targets,
     reflection,
+    symbols,
     compileActions,
     generatedArtifacts,
   };
+}
+
+function reflectionToSymbols(
+  reflection: UClassReflection[],
+  artifacts: GeneratedArtifact[],
+  modules: ModuleNode[],
+): UeClassSymbol[] {
+  const genByHeader = new Map(artifacts.map((a) => [path.normalize(a.headerPath).toLowerCase(), a.generatedPath]));
+  return reflection
+    .filter((r) => r.filePath && !r.filePath.endsWith('.generated.h'))
+    .map((r) => {
+      const sourceFile = path.normalize(r.filePath);
+      const mod = modules.find((m) => sourceFile.startsWith(path.normalize(m.root)));
+      const generatedHeader = genByHeader.get(sourceFile.toLowerCase());
+      const provenance: SymbolProvenance = generatedHeader ? 'generated-header' : 'source-parser';
+      const confidence: SymbolConfidence = generatedHeader ? 'authoritative' : 'derived';
+      return {
+        id: `${r.className}@${sourceFile}`,
+        name: r.className,
+        sourceFile,
+        sourceLine: r.properties[0]?.line ?? r.functions[0]?.line ?? 0,
+        baseClass: r.superClass,
+        generatedHeader,
+        moduleName: mod?.name,
+        provenance,
+        confidence,
+      };
+    });
 }
 
 export async function saveSemanticGraph(projectRoot: string, graph: SemanticGraph): Promise<string> {
@@ -169,7 +222,12 @@ export async function loadSemanticGraph(projectRoot: string): Promise<SemanticGr
     try {
       const raw = await fs.promises.readFile(path.join(projectRoot, sub, SEMANTIC_GRAPH_FILE), 'utf-8');
       const graph = JSON.parse(raw) as SemanticGraph;
-      if (graph.version === SEMANTIC_GRAPH_VERSION) return graph;
+      if (graph.version === SEMANTIC_GRAPH_VERSION || graph.version === 1) {
+        if (!graph.symbols && graph.reflection) {
+          graph.symbols = reflectionToSymbols(graph.reflection, graph.generatedArtifacts ?? [], graph.modules ?? []);
+        }
+        return graph;
+      }
     } catch {
       // try next
     }
@@ -218,10 +276,39 @@ function parseBuildCsDeps(buildCsPath: string): { public: string[]; private: str
 }
 
 async function linkGeneratedArtifacts(
-  projectRoot: string,
+  project: UEProject,
   reflection: UClassReflection[],
 ): Promise<GeneratedArtifact[]> {
   const artifacts: GeneratedArtifact[] = [];
+  const manifest = await findUhtManifest(project);
+  const inputFiles = manifest ? await parseUhtManifestInputFiles(manifest) : [];
+
+  const generatedByClass = new Map<string, string>();
+  for (const cls of reflection) {
+    if (!cls.filePath.endsWith('.generated.h')) continue;
+    generatedByClass.set(cls.className.toLowerCase(), cls.filePath);
+  }
+
+  if (inputFiles.length > 0) {
+    for (const headerPath of inputFiles) {
+      if (!headerPath.endsWith('.h') || headerPath.endsWith('.generated.h')) continue;
+      const className = reflection.find(
+        (r) => path.normalize(r.filePath).toLowerCase() === path.normalize(headerPath).toLowerCase(),
+      )?.className;
+      const generated =
+        (className && generatedByClass.get(className.toLowerCase())) ||
+        (await findGeneratedForHeader(project.projectRoot, headerPath));
+      if (generated && (await fileExists(headerPath))) {
+        artifacts.push({
+          headerPath: path.normalize(headerPath),
+          generatedPath: path.normalize(generated),
+          className,
+        });
+      }
+    }
+    if (artifacts.length > 0) return artifacts;
+  }
+
   for (const cls of reflection) {
     if (!cls.filePath.endsWith('.generated.h')) continue;
     const headerGuess = cls.filePath.replace(/\.generated\.h$/i, '.h');
@@ -234,6 +321,32 @@ async function linkGeneratedArtifacts(
     }
   }
   return artifacts;
+}
+
+async function findGeneratedForHeader(projectRoot: string, headerPath: string): Promise<string | undefined> {
+  const base = path.basename(headerPath, '.h');
+  const intermediate = path.join(projectRoot, 'Intermediate', 'Build');
+  const matches: string[] = [];
+  await walkGenerated(intermediate, `${base}.generated.h`, matches, 0);
+  return matches[0];
+}
+
+async function walkGenerated(dir: string, name: string, out: string[], depth: number): Promise<void> {
+  if (depth > 10) return;
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isFile() && entry.name.toLowerCase() === name.toLowerCase()) {
+      out.push(full);
+    } else if (entry.isDirectory()) {
+      await walkGenerated(full, name, out, depth + 1);
+    }
+  }
 }
 
 export async function collectCompileActionsFromProject(projectRoot: string): Promise<CompileAction[]> {

@@ -28,7 +28,7 @@ async function main() {
   }
 
   const fixture = path.resolve(extensionDevelopmentPath, 'test', 'fixtures', 'synthetic-ue-project');
-  const launchArgs = [fixture, '--disable-extensions'];
+  const launchArgs = [fixture];
 
   try {
     await testElectron.runTests({

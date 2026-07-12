@@ -16,227 +16,172 @@ export interface UeInspectionResult {
   fingerprint: string;
 }
 
-type LineRule = {
+type FileRule = {
   id: string;
   severity: InspectionSeverity;
-  test: (line: string, lineNo: number, allLines: string[]) => UeInspection | undefined;
+  enabled: boolean;
+  run: (content: string) => UeInspection[];
 };
 
-const RULES: LineRule[] = [
-  {
-    id: 'ue.generated-body-scope',
-    severity: 'error',
-    test: (line, lineNo) => {
-      if (!/\bGENERATED_BODY\s*\(\s*\)/.test(line)) return undefined;
-      return {
-        id: 'ue.generated-body-scope',
-        message: 'GENERATED_BODY() must be the first statement in the class body',
-        severity: 'error',
-        line: lineNo,
-        column: line.indexOf('GENERATED_BODY'),
-        length: 14,
-      };
-    },
-  },
-  {
-    id: 'ue.rpc-server-spec',
-    severity: 'warning',
-    test: (line, lineNo) => {
-      if (!/UFUNCTION\s*\([^)]*Server[^)]*\)/i.test(line)) return undefined;
-      if (/WithValidation|Reliable|Unreliable/.test(line)) return undefined;
-      return {
-        id: 'ue.rpc-server-spec',
-        message: 'Server RPC should specify Reliable or Unreliable',
-        severity: 'warning',
-        line: lineNo,
-        column: line.indexOf('UFUNCTION'),
-        length: 8,
-      };
-    },
-  },
-  {
-    id: 'ue.rpc-client-spec',
-    severity: 'warning',
-    test: (line, lineNo) => {
-      if (!/UFUNCTION\s*\([^)]*Client[^)]*\)/i.test(line)) return undefined;
-      if (/WithValidation|Reliable|Unreliable/.test(line)) return undefined;
-      return {
-        id: 'ue.rpc-client-spec',
-        message: 'Client RPC should specify Reliable or Unreliable',
-        severity: 'warning',
-        line: lineNo,
-        column: line.indexOf('UFUNCTION'),
-        length: 8,
-      };
-    },
-  },
-  {
-    id: 'ue.delegate-ufunction',
-    severity: 'error',
-    test: (line, lineNo) => {
-      if (!/DECLARE_DYNAMIC_MULTICAST_DELEGATE/.test(line)) return undefined;
-      const nextCtx = line;
-      if (/UFUNCTION/.test(nextCtx)) return undefined;
-      return {
-        id: 'ue.delegate-ufunction',
-        message: 'Dynamic multicast delegates exposed to Blueprint need UPROPERTY on the delegate member',
-        severity: 'error',
-        line: lineNo,
-        column: 0,
-        length: Math.max(1, line.trim().length),
-      };
-    },
-  },
-  {
-    id: 'ue.uproperty-blueprint-readonly',
-    severity: 'information',
-    test: (line, lineNo) => {
-      if (!/UPROPERTY\s*\([^)]*BlueprintReadOnly[^)]*\)/i.test(line)) return undefined;
-      if (/meta\s*=\s*\(/.test(line)) return undefined;
-      return {
-        id: 'ue.uproperty-blueprint-readonly',
-        message: 'Consider adding meta=(AllowPrivateAccess) for BlueprintReadOnly private fields',
-        severity: 'information',
-        line: lineNo,
-        column: line.indexOf('UPROPERTY'),
-        length: 9,
-      };
-    },
-  },
-  {
-    id: 'ue.uclass-abstract-mismatch',
-    severity: 'warning',
-    test: (line, lineNo) => {
-      if (!/UCLASS\s*\([^)]*Abstract[^)]*\)/i.test(line)) return undefined;
-      if (/\bclass\s+[A-Z]\w+\s*:\s*public\s+AActor/.test(line)) return undefined;
-      return {
-        id: 'ue.uclass-abstract-mismatch',
-        message: 'Abstract UCLASS on non-actor types should be reviewed for instantiation sites',
-        severity: 'warning',
-        line: lineNo,
-        column: line.indexOf('UCLASS'),
-        length: 6,
-      };
-    },
-  },
-  {
-    id: 'ue.ufunction-blueprint-callable-static',
-    severity: 'warning',
-    test: (line, lineNo) => {
-      if (!/UFUNCTION\s*\([^)]*BlueprintCallable[^)]*\)/i.test(line)) return undefined;
-      if (!/\bstatic\b/.test(line)) return undefined;
-      return {
-        id: 'ue.ufunction-blueprint-callable-static',
-        message: 'BlueprintCallable on static UFUNCTION may not be invokable from all Blueprint contexts',
-        severity: 'warning',
-        line: lineNo,
-        column: line.indexOf('UFUNCTION'),
-        length: 8,
-      };
-    },
-  },
-  {
-    id: 'ue.uproperty-edit-defaults-only',
-    severity: 'information',
-    test: (line, lineNo) => {
-      if (!/UPROPERTY\s*\([^)]*EditDefaultsOnly[^)]*\)/i.test(line)) return undefined;
-      return {
-        id: 'ue.uproperty-edit-defaults-only',
-        message: 'EditDefaultsOnly is not editable on placed instances in editor',
-        severity: 'information',
-        line: lineNo,
-        column: line.indexOf('UPROPERTY'),
-        length: 9,
-      };
-    },
-  },
-  {
-    id: 'ue.uenum-missing',
-    severity: 'error',
-    test: (line, lineNo, allLines) => {
-      if (!/\benum\s+class\s+[A-Z]\w+/.test(line)) return undefined;
-      if (/UENUM\s*\(/.test(line)) return undefined;
-      const prev = allLines.slice(Math.max(0, lineNo - 2), lineNo).join('\n');
-      if (/UENUM\s*\(/.test(prev)) return undefined;
-      return {
-        id: 'ue.uenum-missing',
-        message: 'Reflected enum should use UENUM() macro',
-        severity: 'error',
-        line: lineNo,
-        column: line.search(/enum\s+class/),
-        length: 10,
-      };
-    },
-  },
-  {
-    id: 'ue.ustruct-missing',
-    severity: 'error',
-    test: (line, lineNo, allLines) => {
-      if (!/\bstruct\s+[A-Z]\w+/.test(line)) return undefined;
-      if (/USTRUCT\s*\(/.test(line)) return undefined;
-      const prev = allLines.slice(Math.max(0, lineNo - 2), lineNo).join('\n');
-      if (/USTRUCT\s*\(/.test(prev)) return undefined;
-      return {
-        id: 'ue.ustruct-missing',
-        message: 'Reflected struct should use USTRUCT() macro',
-        severity: 'error',
-        line: lineNo,
-        column: line.search(/struct\s+[A-Z]/),
-        length: 6,
-      };
-    },
-  },
+function collectUfunctionBlocks(content: string): Array<{ text: string; line: number }> {
+  const lines = content.split(/\r?\n/);
+  const blocks: Array<{ text: string; line: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/UFUNCTION\s*\(/i.test(lines[i])) continue;
+    let text = lines[i];
+    let j = i;
+    while (!text.includes(')') && j + 1 < lines.length) {
+      j++;
+      text += '\n' + lines[j];
+    }
+    blocks.push({ text, line: i });
+    i = j;
+  }
+  return blocks;
+}
+
+const RULES: FileRule[] = [
   {
     id: 'ue.generated-include-order',
-    severity: 'warning',
-    test: (line, lineNo) => {
-      if (!/\.generated\.h/.test(line)) return undefined;
-      if (!/#include/.test(line)) return undefined;
-      return {
-        id: 'ue.generated-include-order',
-        message: '.generated.h include should be the last include in the header',
-        severity: 'warning',
-        line: lineNo,
-        column: line.indexOf('#include'),
-        length: 8,
-      };
+    severity: 'error',
+    enabled: true,
+    run: (content) => {
+      const includes = [...content.matchAll(/#include\s+"([^"]+\.generated\.h)"/gi)];
+      if (includes.length === 0) return [];
+      const lastInclude = [...content.matchAll(/#include\s+"[^"]+"/g)].pop();
+      if (!lastInclude) return [];
+      const gen = includes[includes.length - 1];
+      if (lastInclude.index === gen.index) return [];
+      const line = content.slice(0, gen.index!).split('\n').length - 1;
+      return [
+        {
+          id: 'ue.generated-include-order',
+          message: '.generated.h include must be the last #include in the file',
+          severity: 'error',
+          line,
+          column: gen.index! - content.lastIndexOf('\n', gen.index!) - 1,
+          length: gen[0].length,
+        },
+      ];
     },
   },
   {
-    id: 'ue.ufunction-implementation-missing',
-    severity: 'information',
-    test: (line, lineNo) => {
-      if (!/UFUNCTION\s*\([^)]*BlueprintNativeEvent[^)]*\)/i.test(line)) return undefined;
-      return {
-        id: 'ue.ufunction-implementation-missing',
-        message: 'BlueprintNativeEvent requires _Implementation in cpp (quick fix disabled until signature resolution)',
-        severity: 'information',
-        line: lineNo,
-        column: line.indexOf('UFUNCTION'),
-        length: 8,
-      };
+    id: 'ue.rpc-reliability',
+    severity: 'warning',
+    enabled: true,
+    run: (content) => {
+      const hits: UeInspection[] = [];
+      for (const block of collectUfunctionBlocks(content)) {
+        const isServer = /Server/i.test(block.text);
+        const isClient = /Client/i.test(block.text);
+        if (!isServer && !isClient) continue;
+        if (/WithValidation|Reliable|Unreliable/.test(block.text)) continue;
+        hits.push({
+          id: 'ue.rpc-reliability',
+          message: `${isServer ? 'Server' : 'Client'} RPC should specify Reliable or Unreliable`,
+          severity: 'warning',
+          line: block.line,
+          column: block.text.indexOf('UFUNCTION'),
+          length: 8,
+        });
+      }
+      return hits;
+    },
+  },
+  {
+    id: 'ue.generated-body-present',
+    severity: 'warning',
+    enabled: true,
+    run: (content) => {
+      if (!/UCLASS\s*\(/i.test(content)) return [];
+      const classBody = content.match(/UCLASS\s*\([^)]*\)\s*class[^;{]*\{([^}]*)/s);
+      if (!classBody) return [];
+      if (/GENERATED_BODY\s*\(\s*\)/.test(classBody[1])) return [];
+      const line = content.split(/\r?\n/).findIndex((l) => /UCLASS\s*\(/i.test(l));
+      return [
+        {
+          id: 'ue.generated-body-present',
+          message: 'UCLASS body should contain GENERATED_BODY()',
+          severity: 'warning',
+          line: Math.max(0, line),
+          column: 0,
+          length: 6,
+        },
+      ];
+    },
+  },
+  {
+    id: 'ue.bne-implementation-pair',
+    severity: 'warning',
+    enabled: true,
+    run: (content) => {
+      const hits: UeInspection[] = [];
+      for (const block of collectUfunctionBlocks(content)) {
+        if (!/BlueprintNativeEvent/i.test(block.text)) continue;
+        const fn = block.text.match(/(\w+)\s*\(/);
+        const name = fn?.[1];
+        if (!name) continue;
+        if (!new RegExp(`\\b${name}_Implementation\\s*\\(`).test(content)) {
+          const line = content.slice(0, content.indexOf(block.text)).split('\n').length - 1;
+          hits.push({
+            id: 'ue.bne-implementation-pair',
+            message: `BlueprintNativeEvent ${name} should have ${name}_Implementation in this class`,
+            severity: 'warning',
+            line,
+            column: block.text.indexOf(name),
+            length: name.length,
+          });
+        }
+      }
+      return hits;
+    },
+  },
+  {
+    id: 'ue.delegate-member-uproperty',
+    severity: 'warning',
+    enabled: true,
+    run: (content) => {
+      const hits: UeInspection[] = [];
+      const lines = content.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (/DECLARE_\w+_DELEGATE/i.test(line)) continue;
+        if (!/\bF\w+Delegate\b/.test(line) || /UPROPERTY/i.test(line)) continue;
+        if (/^\s*\/\//.test(line)) continue;
+        hits.push({
+          id: 'ue.delegate-member-uproperty',
+          message: 'Multicast/dynamic delegate member properties should use UPROPERTY',
+          severity: 'warning',
+          line: i,
+          column: line.search(/\bF\w+Delegate\b/),
+          length: 8,
+        });
+      }
+      return hits;
     },
   },
 ];
 
-export function runUeInspections(content: string): UeInspectionResult {
-  const lines = content.split(/\r?\n/);
-  const inspections: UeInspection[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    for (const rule of RULES) {
-      const hit = rule.test(line, i, lines);
-      if (hit) inspections.push(hit);
-    }
+export function runUeInspections(content: string, enabled = false): UeInspectionResult {
+  if (!enabled) {
+    return { inspections: [], fingerprint: fingerprint(content) };
   }
 
+  const inspections: UeInspection[] = [];
+  for (const rule of RULES) {
+    if (!rule.enabled) continue;
+    inspections.push(...rule.run(content));
+  }
+
+  return { inspections, fingerprint: fingerprint(content) };
+}
+
+function fingerprint(content: string): string {
   let fp = 0;
   for (const ch of content) {
     fp = (fp * 31 + ch.charCodeAt(0)) >>> 0;
   }
-
-  return { inspections, fingerprint: fp.toString(16) };
+  return fp.toString(16);
 }
 
 export function inspectionsToDiagnostics(uri: vscode.Uri, result: UeInspectionResult): vscode.Diagnostic[] {
@@ -249,12 +194,16 @@ export function inspectionsToDiagnostics(uri: vscode.Uri, result: UeInspectionRe
           ? vscode.DiagnosticSeverity.Warning
           : vscode.DiagnosticSeverity.Information;
     const diag = new vscode.Diagnostic(range, ins.message, severity);
-    diag.source = 'UE inspection';
+    diag.source = 'UE inspection (derived)';
     diag.code = ins.id;
     return diag;
   });
 }
 
 export function inspectionRuleCount(): number {
-  return RULES.length;
+  return RULES.filter((r) => r.enabled).length;
+}
+
+export function enabledInspectionIds(): string[] {
+  return RULES.filter((r) => r.enabled).map((r) => r.id);
 }

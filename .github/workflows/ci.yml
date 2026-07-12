@@ -47,4 +47,7 @@ jobs:
       - run: node -e "const fs=require('fs'); fs.mkdirSync('dist-test/parsers',{recursive:true}); fs.copyFileSync('src/parsers/buildProgressParser.ts','dist-test/parsers/buildProgressParser.ts')"
       - run: npx esbuild src/parsers/buildProgressParser.ts --outfile=dist-test/parsers/buildProgressParser.js --format=esm --platform=node
       - run: npm test
+      - run: npm run verify:rider-workflow
+      - run: npm run release:scorecard
       - run: npm run test:ext-host
+      - run: npm run test:ue-e2e

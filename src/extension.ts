@@ -20,7 +20,7 @@ import { CommandBridge } from './mcp/commandBridge';
 import { configureMcpBridge } from './blueprint/mcpBlueprintBridge';
 import { parseBuildProgress } from './parsers/buildProgressParser';
 import { ProjectSession } from './session/projectSession';
-import { getProjectSession, disposeAllProjectSessions } from './session/projectSessions';
+import { getWorkspaceProjectRegistry, disposeWorkspaceProjectRegistry } from './session/workspaceProjectRegistry';
 import { getExtensionVersion } from './version';
 import { refreshSemanticGraph, computeCompileParity, invalidateSemanticGraph } from './semantic/semanticService';
 import { registerSemanticNavigation } from './semantic/semanticNavigation';
@@ -74,7 +74,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (editorBridge) extensionContext.subscriptions.push(editorBridge);
   if (testExplorer) extensionContext.subscriptions.push(testExplorer);
 
-  registerSemanticNavigation(extensionContext, () => ctx.project);
+  registerSemanticNavigation(extensionContext, () => ctx.project, settings);
 
   if (settings.experimentalHlsl) {
     registerHLSLProviders(extensionContext);
@@ -149,7 +149,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   statusBar.startPolling();
 
   if (projectSession) {
-    extensionContext.subscriptions.push(registerUhtSaveValidation(ctx, projectSession));
+    extensionContext.subscriptions.push(registerUhtSaveValidation(ctx, projectSession, settings));
   }
 
   extensionContext.subscriptions.push(
@@ -163,7 +163,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (!projectSession) return;
         for (const h of headers) {
           void import('./uht/uhtValidation').then(({ scheduleUhtValidation }) =>
-            scheduleUhtValidation(ctx, projectSession!, h),
+            scheduleUhtValidation(ctx, projectSession!, h, settings),
           );
         }
       },
@@ -209,7 +209,7 @@ export function deactivate(): void {
   editorBridge?.dispose();
   testExplorer?.dispose();
   disposeUhtDiagnostics();
-  disposeAllProjectSessions();
+  disposeWorkspaceProjectRegistry();
 }
 
 async function openContentBrowserForProject(options?: { reopen?: boolean }): Promise<void> {
@@ -385,7 +385,7 @@ async function executeDetectionPipeline(
   void testExplorer?.refresh(ctx);
 
   if (ctx.project) {
-    getProjectSession(ctx.project.projectRoot);
+    getWorkspaceProjectRegistry().ensure(ctx.project, ctx.engine, extensionContext);
     const graph = await refreshSemanticGraph(ctx.project);
     ctx.outputChannel.appendLine(
       `[UE5_8 Cursor] Semantic graph: ${graph.modules.length} module(s), ${graph.reflection.length} class(es), ${graph.plugins.length} plugin(s)`,

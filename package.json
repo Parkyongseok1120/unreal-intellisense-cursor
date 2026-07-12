@@ -528,6 +528,18 @@
           "description": "HLSL completion provider 등록 (experimental scaffold).",
           "scope": "resource"
         },
+        "ue58rider.semantic.navigation.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "UE semantic navigation providers. Off until authoritative graph is ready.",
+          "scope": "resource"
+        },
+        "ue58rider.uht.inspections.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "UE heuristic inspections on UHT diagnostics. Off until safe corpus passes.",
+          "scope": "resource"
+        },
         "ue58rider.autoStartLogViewer": {
           "type": "boolean",
           "default": false,
@@ -718,6 +730,8 @@
     "test": "node --test test/*.test.mjs",
     "test:ext-host": "node test/run-extension-host.mjs",
     "verify:rider-workflow": "node scripts/verify-rider-workflow.mjs",
+    "release:scorecard": "node scripts/release-scorecard.mjs",
+    "test:ue-e2e": "node test/ue-editor-e2e.mjs",
     "build:ue-plugin": "node scripts/build-ue-plugin.mjs",
     "verify:ue-project": "node scripts/verify-ue-project.mjs",
     "audit:encoding": "node scripts/audit-encoding.mjs",

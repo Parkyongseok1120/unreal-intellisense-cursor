@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { UEProject } from '../types';
+import type { UE5_8CursorSettings } from '../config/settings';
+import type { UeClassSymbol } from '../projectModel/projectModelService';
 import {
   findGeneratedPair,
   getOrBuildSemanticGraph,
@@ -13,6 +15,11 @@ async function loadGraph(getProject: ProjectGetter) {
   const project = getProject();
   if (!project) return undefined;
   return getOrBuildSemanticGraph(project);
+}
+
+function authoritativeSymbols(graph: Awaited<ReturnType<typeof loadGraph>>): UeClassSymbol[] {
+  if (!graph?.symbols?.length) return [];
+  return graph.symbols.filter((s) => s.confidence === 'authoritative' || s.confidence === 'derived');
 }
 
 export class UeSemanticDefinitionProvider implements vscode.DefinitionProvider {
@@ -29,6 +36,14 @@ export class UeSemanticDefinitionProvider implements vscode.DefinitionProvider {
     if (!wordRange) return undefined;
     const word = document.getText(wordRange);
 
+    const sym = authoritativeSymbols(graph).find((s) => s.name === word);
+    if (sym?.sourceFile) {
+      const uri = vscode.Uri.file(sym.sourceFile);
+      const target = await vscode.workspace.openTextDocument(uri);
+      const pos = findWordPosition(target, word);
+      if (pos) return new vscode.Location(uri, pos);
+    }
+
     const reflection = querySymbol(graph, word);
     if (reflection?.filePath) {
       const uri = vscode.Uri.file(reflection.filePath);
@@ -40,9 +55,13 @@ export class UeSemanticDefinitionProvider implements vscode.DefinitionProvider {
     const pair = findGeneratedPair(graph, document.fileName);
     if (pair?.generated && document.fileName.endsWith('.h')) {
       const uri = vscode.Uri.file(pair.generated);
-      const target = await vscode.workspace.openTextDocument(uri);
-      const pos = findWordPosition(target, word);
-      if (pos) return new vscode.Location(uri, pos);
+      try {
+        const target = await vscode.workspace.openTextDocument(uri);
+        const pos = findWordPosition(target, word);
+        if (pos) return new vscode.Location(uri, pos);
+      } catch {
+        return undefined;
+      }
     }
 
     return undefined;
@@ -50,38 +69,10 @@ export class UeSemanticDefinitionProvider implements vscode.DefinitionProvider {
 }
 
 export class UeSemanticReferenceProvider implements vscode.ReferenceProvider {
-  constructor(private readonly getProject: ProjectGetter) {}
+  constructor(private readonly _getProject: ProjectGetter) {}
 
-  async provideReferences(
-    document: vscode.TextDocument,
-    position: vscode.Position,
-  ): Promise<vscode.Location[] | undefined> {
-    const graph = await loadGraph(this.getProject);
-    if (!graph) return undefined;
-
-    const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
-    if (!wordRange) return undefined;
-    const word = document.getText(wordRange);
-    const locations: vscode.Location[] = [];
-
-    for (const cls of graph.reflection) {
-      if (cls.className !== word) continue;
-      if (cls.filePath) {
-        const uri = vscode.Uri.file(cls.filePath);
-        const doc = await vscode.workspace.openTextDocument(uri);
-        const pos = findWordPosition(doc, word);
-        if (pos) locations.push(new vscode.Location(uri, pos));
-      }
-    }
-
-    for (const mod of graph.modules) {
-      for (const tu of mod.translationUnits) {
-        if (!tu.toLowerCase().includes(word.toLowerCase())) continue;
-        locations.push(new vscode.Location(vscode.Uri.file(tu), new vscode.Position(0, 0)));
-      }
-    }
-
-    return locations.length > 0 ? locations : undefined;
+  async provideReferences(): Promise<vscode.Location[] | undefined> {
+    return undefined;
   }
 }
 
@@ -94,34 +85,19 @@ export class UeSemanticDocumentSymbolProvider implements vscode.DocumentSymbolPr
 
     const file = path.normalize(document.fileName).toLowerCase();
     const symbols: vscode.DocumentSymbol[] = [];
-
-    for (const cls of graph.reflection) {
-      if (!cls.filePath || path.normalize(cls.filePath).toLowerCase() !== file) continue;
-      const range = new vscode.Range(0, 0, 0, 0);
-      const sym = new vscode.DocumentSymbol(cls.className, 'UCLASS', vscode.SymbolKind.Class, range, range);
-      for (const prop of cls.properties ?? []) {
-        const child = new vscode.DocumentSymbol(
-          prop.name,
-          'UPROPERTY',
-          vscode.SymbolKind.Property,
-          range,
-          range,
-        );
-        sym.children.push(child);
-      }
-      for (const fn of cls.functions ?? []) {
-        const child = new vscode.DocumentSymbol(
-          fn.name,
-          'UFUNCTION',
-          vscode.SymbolKind.Method,
-          range,
-          range,
-        );
-        sym.children.push(child);
-      }
-      symbols.push(sym);
+    for (const sym of authoritativeSymbols(graph)) {
+      if (path.normalize(sym.sourceFile).toLowerCase() !== file) continue;
+      const line = sym.sourceLine ?? 0;
+      symbols.push(
+        new vscode.DocumentSymbol(
+          sym.name,
+          sym.baseClass ? `extends ${sym.baseClass}` : '',
+          vscode.SymbolKind.Class,
+          new vscode.Range(line, 0, line, sym.name.length),
+          new vscode.Range(line, 0, line, sym.name.length),
+        ),
+      );
     }
-
     return symbols;
   }
 }
@@ -131,21 +107,21 @@ export class UeSemanticWorkspaceSymbolProvider implements vscode.WorkspaceSymbol
 
   async provideWorkspaceSymbols(query: string): Promise<vscode.SymbolInformation[]> {
     const graph = await loadGraph(this.getProject);
-    if (!graph) return [];
+    if (!graph || query.length < 2) return [];
 
     const q = query.toLowerCase();
     const out: vscode.SymbolInformation[] = [];
-    for (const cls of graph.reflection) {
-      if (!cls.className.toLowerCase().includes(q)) continue;
-      const uri = cls.filePath ? vscode.Uri.file(cls.filePath) : vscode.Uri.file(graph.projectRoot);
+    for (const sym of authoritativeSymbols(graph)) {
+      if (!sym.name.toLowerCase().includes(q)) continue;
+      const uri = vscode.Uri.file(sym.sourceFile);
+      const line = sym.sourceLine ?? 0;
       out.push(
-        new vscode.SymbolInformation(cls.className, vscode.SymbolKind.Class, 'UE', new vscode.Location(uri, new vscode.Position(0, 0))),
-      );
-    }
-    for (const mod of graph.modules) {
-      if (!mod.name.toLowerCase().includes(q)) continue;
-      out.push(
-        new vscode.SymbolInformation(mod.name, vscode.SymbolKind.Module, 'UE Module', new vscode.Location(vscode.Uri.file(graph.projectRoot), new vscode.Position(0, 0))),
+        new vscode.SymbolInformation(
+          sym.name,
+          vscode.SymbolKind.Class,
+          'UE',
+          new vscode.Location(uri, new vscode.Position(line, 0)),
+        ),
       );
     }
     return out;
@@ -161,39 +137,75 @@ export class UeSemanticTypeHierarchyProvider implements vscode.TypeHierarchyProv
   ): Promise<vscode.TypeHierarchyItem | undefined> {
     const graph = await loadGraph(this.getProject);
     if (!graph) return undefined;
+
     const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
     if (!wordRange) return undefined;
     const word = document.getText(wordRange);
-    const cls = querySymbol(graph, word);
-    if (!cls) return undefined;
+    const sym = authoritativeSymbols(graph).find(
+      (s) => s.name === word && path.normalize(s.sourceFile).toLowerCase() === path.normalize(document.fileName).toLowerCase(),
+    );
+    if (!sym) return undefined;
+
     return new vscode.TypeHierarchyItem(
       vscode.SymbolKind.Class,
-      word,
-      '',
+      sym.name,
+      sym.baseClass ?? '',
       document.uri,
-      wordRange,
-      wordRange,
+      new vscode.Range(sym.sourceLine ?? position.line, 0, sym.sourceLine ?? position.line, sym.name.length),
+      new vscode.Range(sym.sourceLine ?? position.line, 0, sym.sourceLine ?? position.line, sym.name.length),
     );
   }
 
-  async provideTypeHierarchySupertypes(): Promise<vscode.TypeHierarchyItem[] | undefined> {
-    return [];
+  async provideTypeHierarchySupertypes(item: vscode.TypeHierarchyItem): Promise<vscode.TypeHierarchyItem[] | undefined> {
+    const graph = await loadGraph(this.getProject);
+    if (!graph) return [];
+
+    const sym = authoritativeSymbols(graph).find((s) => s.name === item.name);
+    if (!sym?.baseClass) return [];
+
+    const parent = authoritativeSymbols(graph).find((s) => s.name === sym.baseClass);
+    if (!parent) {
+      return [
+        new vscode.TypeHierarchyItem(
+          vscode.SymbolKind.Class,
+          sym.baseClass,
+          '',
+          item.uri,
+          item.range,
+          item.selectionRange ?? item.range,
+        ),
+      ];
+    }
+
+    return [
+      new vscode.TypeHierarchyItem(
+        vscode.SymbolKind.Class,
+        parent.name,
+        parent.baseClass ?? '',
+        vscode.Uri.file(parent.sourceFile),
+        new vscode.Range(parent.sourceLine ?? 0, 0, parent.sourceLine ?? 0, parent.name.length),
+        new vscode.Range(parent.sourceLine ?? 0, 0, parent.sourceLine ?? 0, parent.name.length),
+      ),
+    ];
   }
 
   async provideTypeHierarchySubtypes(item: vscode.TypeHierarchyItem): Promise<vscode.TypeHierarchyItem[] | undefined> {
     const graph = await loadGraph(this.getProject);
     if (!graph) return [];
-    return graph.reflection
-      .filter((c) => c.className !== item.name)
-      .slice(0, 8)
-      .map((c) => new vscode.TypeHierarchyItem(
-        vscode.SymbolKind.Class,
-        c.className,
-        '',
-        item.uri,
-        item.range,
-        item.range,
-      ));
+
+    return authoritativeSymbols(graph)
+      .filter((s) => s.baseClass === item.name)
+      .map(
+        (s) =>
+          new vscode.TypeHierarchyItem(
+            vscode.SymbolKind.Class,
+            s.name,
+            s.baseClass ?? '',
+            vscode.Uri.file(s.sourceFile),
+            new vscode.Range(s.sourceLine ?? 0, 0, s.sourceLine ?? 0, s.name.length),
+            new vscode.Range(s.sourceLine ?? 0, 0, s.sourceLine ?? 0, s.name.length),
+          ),
+      );
   }
 }
 
@@ -214,54 +226,50 @@ export class UeSemanticInlayHintsProvider implements vscode.InlayHintsProvider {
     );
     if (mod) {
       const line = Math.min(range.start.line, document.lineCount - 1);
-      const pos = new vscode.Position(line, 0);
       hints.push({
-        position: pos,
+        position: new vscode.Position(line, 0),
         label: `module:${mod.name}`,
         kind: vscode.InlayHintKind.Type,
         paddingRight: true,
       });
     }
-
-    for (const cls of graph.reflection) {
-      if (!cls.filePath || path.normalize(cls.filePath).toLowerCase() !== file) continue;
-      for (let i = range.start.line; i <= range.end.line && i < document.lineCount; i++) {
-        const text = document.lineAt(i).text;
-        if (/\bUCLASS\s*\(/.test(text)) {
-          hints.push({
-            position: new vscode.Position(i, text.indexOf('UCLASS')),
-            label: 'UHT',
-            kind: vscode.InlayHintKind.Parameter,
-            paddingRight: true,
-          });
-        }
-      }
-    }
-
     return hints;
   }
 }
 
 function findWordPosition(doc: vscode.TextDocument, word: string): vscode.Position | undefined {
+  const re = new RegExp(`\\b${escapeRegex(word)}\\b`);
   for (let i = 0; i < doc.lineCount; i++) {
     const line = doc.lineAt(i).text;
-    const idx = line.indexOf(word);
-    if (idx >= 0) return new vscode.Position(i, idx);
+    const match = re.exec(line);
+    if (match && match.index >= 0) return new vscode.Position(i, match.index);
   }
   return undefined;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function registerSemanticNavigation(
   context: vscode.ExtensionContext,
   getProject: ProjectGetter,
+  settings: UE5_8CursorSettings,
 ): void {
   const selector = { language: 'cpp', scheme: 'file' };
-  context.subscriptions.push(
-    vscode.languages.registerDefinitionProvider(selector, new UeSemanticDefinitionProvider(getProject)),
-    vscode.languages.registerReferenceProvider(selector, new UeSemanticReferenceProvider(getProject)),
-    vscode.languages.registerDocumentSymbolProvider(selector, new UeSemanticDocumentSymbolProvider(getProject)),
-    vscode.languages.registerWorkspaceSymbolProvider(new UeSemanticWorkspaceSymbolProvider(getProject)),
-    vscode.languages.registerTypeHierarchyProvider(selector, new UeSemanticTypeHierarchyProvider(getProject)),
-    vscode.languages.registerInlayHintsProvider(selector, new UeSemanticInlayHintsProvider(getProject)),
-  );
+
+  if (settings.semanticNavigationEnabled) {
+    context.subscriptions.push(
+      vscode.languages.registerDefinitionProvider(selector, new UeSemanticDefinitionProvider(getProject)),
+      vscode.languages.registerReferenceProvider(selector, new UeSemanticReferenceProvider(getProject)),
+      vscode.languages.registerDocumentSymbolProvider(selector, new UeSemanticDocumentSymbolProvider(getProject)),
+      vscode.languages.registerWorkspaceSymbolProvider(new UeSemanticWorkspaceSymbolProvider(getProject)),
+      vscode.languages.registerTypeHierarchyProvider(selector, new UeSemanticTypeHierarchyProvider(getProject)),
+      vscode.languages.registerInlayHintsProvider(selector, new UeSemanticInlayHintsProvider(getProject)),
+    );
+  } else {
+    context.subscriptions.push(
+      vscode.languages.registerDefinitionProvider(selector, new UeSemanticDefinitionProvider(getProject)),
+    );
+  }
 }

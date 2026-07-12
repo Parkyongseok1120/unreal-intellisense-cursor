@@ -45,6 +45,24 @@ export function resolveUhtExecutable(engine: UEInstallation): string {
   return win;
 }
 
+export async function parseUhtManifestInputFiles(manifestPath: string): Promise<string[]> {
+  try {
+    const raw = await fs.promises.readFile(manifestPath, 'utf-8');
+    const json = JSON.parse(raw) as {
+      Modules?: Array<{ InputFiles?: string[] }>;
+    };
+    const files: string[] = [];
+    for (const mod of json.Modules ?? []) {
+      for (const f of mod.InputFiles ?? []) {
+        files.push(path.normalize(f));
+      }
+    }
+    return files;
+  } catch {
+    return [];
+  }
+}
+
 export async function findUhtManifest(project: UEProject): Promise<string | undefined> {
   const base = path.join(project.projectRoot, 'Intermediate', 'Build', 'Win64');
   const candidates = [

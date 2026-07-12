@@ -2,17 +2,29 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CompileAction } from '../projectModel/projectModelService';
-import { collectCompileActionsFromProject } from '../projectModel/projectModelService';
+import { collectCompileActionsFromProject, compareActionHashes } from '../projectModel/projectModelService';
 import { fileExists } from '../platform/paths';
 
-export const BUILD_SNAPSHOT_VERSION = 1;
+export const BUILD_SNAPSHOT_VERSION = 2;
 const SNAPSHOT_FILE = 'build-snapshot.json';
 
-export type CompileDbProvenance = 'ubt' | 'rsp' | 'buildcs' | 'unknown';
+export type CompileDbProvenance = 'ubt-clang-db' | 'ubt-rsp' | 'synthetic-buildcs' | 'unknown';
+
+export interface InputFingerprint {
+  path: string;
+  sha256: string;
+}
+
+export interface ParityResult {
+  matched: number;
+  total: number;
+  parity: number;
+}
 
 export interface BuildSnapshot {
-  version: number;
+  snapshotVersion: number;
   projectRoot: string;
+  projectId?: string;
   target?: string;
   platform?: string;
   configuration?: string;
@@ -22,8 +34,14 @@ export interface BuildSnapshot {
   provenance: CompileDbProvenance;
   fingerprint: string;
   updatedAt: string;
-  compileActions: CompileAction[];
+  authoritativeActions: CompileAction[];
+  ideActions: CompileAction[];
   rspPaths: string[];
+  inputs: InputFingerprint[];
+  parity: ParityResult;
+  /** @deprecated v1 field */
+  compileActions?: CompileAction[];
+  version?: number;
 }
 
 export async function collectRspPaths(projectRoot: string): Promise<string[]> {
@@ -51,28 +69,83 @@ async function walkRsp(dir: string, out: string[], depth: number): Promise<void>
   }
 }
 
+function parseRspLine(line: string): string[] {
+  const args: string[] = [];
+  let cur = '';
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (!inQuote && /\s/.test(ch)) {
+      if (cur.length > 0) {
+        args.push(cur);
+        cur = '';
+      }
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur.length > 0) args.push(cur);
+  return args;
+}
+
 export async function importActionsFromRsp(projectRoot: string): Promise<CompileAction[]> {
   const rspPaths = await collectRspPaths(projectRoot);
   const actions: CompileAction[] = [];
+  const seen = new Set<string>();
 
   for (const rspPath of rspPaths) {
     try {
       const raw = await fs.promises.readFile(rspPath, 'utf-8');
-      const args = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
-      const cpp = args.find((a) => a.endsWith('.cpp') || a.endsWith('.c'));
+      const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      const args: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith('@')) {
+          const nested = line.slice(1).trim();
+          try {
+            const nestedRaw = await fs.promises.readFile(path.isAbsolute(nested) ? nested : path.join(path.dirname(rspPath), nested), 'utf-8');
+            for (const nl of nestedRaw.split(/\r?\n/)) {
+              args.push(...parseRspLine(nl));
+            }
+          } catch {
+            args.push(...parseRspLine(line));
+          }
+        } else {
+          args.push(...parseRspLine(line));
+        }
+      }
+      const cpp = args.find((a) => /\.(cpp|c|cc|cxx)$/i.test(a) && !a.startsWith('/Fo') && !a.startsWith('-Fo'));
       if (!cpp) continue;
-      const normalized = args.map((a) => a.replace(/\\/g, '/')).join('\0');
+      const normFile = path.normalize(cpp);
+      if (seen.has(normFile)) continue;
+      seen.add(normFile);
+      const normalized = normalizeParityArgs(args);
       actions.push({
-        file: path.normalize(cpp),
+        file: normFile,
         arguments: args,
         hash: hashString(normalized),
       });
     } catch {
-      // skip unreadable rsp
+      // skip
     }
   }
 
   return actions;
+}
+
+export function normalizeParityArgs(args: string[]): string {
+  return args
+    .map((a) => a.replace(/\\/g, '/'))
+    .filter((a) => {
+      if (!a.length) return false;
+      if (a.startsWith('/Fo') || a.startsWith('-Fo')) return false;
+      if (a.endsWith('.obj') || a.endsWith('.o')) return false;
+      return true;
+    })
+    .join('\0');
 }
 
 function hashString(input: string): string {
@@ -84,9 +157,63 @@ function hashString(input: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
+async function fingerprintFile(filePath: string): Promise<InputFingerprint | undefined> {
+  try {
+    const raw = await fs.promises.readFile(filePath);
+    return {
+      path: filePath,
+      sha256: crypto.createHash('sha256').update(raw).digest('hex'),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function collectInputFingerprints(projectRoot: string): Promise<InputFingerprint[]> {
+  const inputs: InputFingerprint[] = [];
+  const uproject = (await fs.promises.readdir(projectRoot)).find((f) => f.endsWith('.uproject'));
+  if (uproject) {
+    const fp = await fingerprintFile(path.join(projectRoot, uproject));
+    if (fp) inputs.push(fp);
+  }
+  const compileDb = await fingerprintFile(path.join(projectRoot, 'compile_commands.json'));
+  if (compileDb) inputs.push(compileDb);
+
+  const sourceDir = path.join(projectRoot, 'Source');
+  await walkFingerprint(sourceDir, /\.(Build|Target)\.cs$/i, inputs, 0);
+  const rspPaths = await collectRspPaths(projectRoot);
+  for (const rsp of rspPaths.slice(0, 32)) {
+    const fp = await fingerprintFile(rsp);
+    if (fp) inputs.push(fp);
+  }
+  return inputs;
+}
+
+async function walkFingerprint(dir: string, pattern: RegExp, out: InputFingerprint[], depth: number): Promise<void> {
+  if (depth > 8) return;
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await walkFingerprint(full, pattern, out, depth + 1);
+    } else if (pattern.test(entry.name)) {
+      const fp = await fingerprintFile(full);
+      if (fp) out.push(fp);
+    }
+  }
+}
+
 export async function buildCompileSnapshot(project: {
   projectRoot: string;
   engineAssociation?: string;
+  target?: string;
+  platform?: string;
+  configuration?: string;
 }): Promise<BuildSnapshot> {
   const compileDbPath = path.join(project.projectRoot, 'compile_commands.json');
   let synthetic = false;
@@ -98,43 +225,51 @@ export async function buildCompileSnapshot(project: {
     if (raw.includes('UE5_8_CURSOR_SYNTHETIC_COMPILE_DB=1')) {
       synthetic = true;
       syntheticReason = 'synthetic compile_commands marker';
-      provenance = 'buildcs';
+      provenance = 'synthetic-buildcs';
     } else if (raw.includes('UE5_8_CURSOR_RSP_DB=1')) {
-      provenance = 'rsp';
+      provenance = 'ubt-rsp';
     } else {
-      provenance = 'ubt';
+      provenance = 'ubt-clang-db';
     }
   } catch {
     synthetic = true;
     syntheticReason = 'compile_commands.json missing';
   }
 
-  let compileActions = await collectCompileActionsFromProject(project.projectRoot);
+  const ideActions = await collectCompileActionsFromProject(project.projectRoot);
   const rspPaths = await collectRspPaths(project.projectRoot);
-  const rspActions = await importActionsFromRsp(project.projectRoot);
+  const authoritativeActions = await importActionsFromRsp(project.projectRoot);
+  const inputs = await collectInputFingerprints(project.projectRoot);
 
-  if (!synthetic && rspActions.length > 0) {
-    compileActions = rspActions;
-    provenance = 'rsp';
-  }
+  const parity = compareActionHashes(
+    provenance === 'ubt-clang-db' ? authoritativeActions : ideActions,
+    ideActions,
+  );
 
   const fingerprint = crypto
     .createHash('sha256')
-    .update(JSON.stringify({ compileActions, rspPaths, synthetic, provenance }))
+    .update(JSON.stringify({ inputs, ideActions, authoritativeActions, synthetic, provenance }))
     .digest('hex')
     .slice(0, 16);
 
   return {
-    version: BUILD_SNAPSHOT_VERSION,
+    snapshotVersion: BUILD_SNAPSHOT_VERSION,
     projectRoot: project.projectRoot,
+    projectId: path.basename(project.projectRoot),
     engineId: project.engineAssociation,
+    target: project.target,
+    platform: project.platform,
+    configuration: project.configuration,
     synthetic,
     syntheticReason,
     provenance,
     fingerprint,
     updatedAt: new Date().toISOString(),
-    compileActions,
+    authoritativeActions,
+    ideActions,
     rspPaths,
+    inputs,
+    parity,
   };
 }
 
@@ -151,7 +286,12 @@ export async function loadBuildSnapshot(projectRoot: string): Promise<BuildSnaps
     try {
       const raw = await fs.promises.readFile(path.join(projectRoot, sub, SNAPSHOT_FILE), 'utf-8');
       const snap = JSON.parse(raw) as BuildSnapshot;
-      if (snap.version === BUILD_SNAPSHOT_VERSION) return snap;
+      if (snap.snapshotVersion === BUILD_SNAPSHOT_VERSION || snap.version === 1) {
+        if (!snap.ideActions && snap.compileActions) snap.ideActions = snap.compileActions;
+        if (!snap.authoritativeActions) snap.authoritativeActions = snap.compileActions ?? [];
+        if (!snap.parity) snap.parity = { matched: 0, total: 0, parity: 0 };
+        return snap;
+      }
     } catch {
       // try next
     }

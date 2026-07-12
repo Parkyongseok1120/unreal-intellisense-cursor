@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 import type { EditorBridgeClient } from '../editorBridge/editorBridgeClient';
+import { isMethodImplemented } from '../editorBridge/bridgeProtocol';
 
 export interface AutomationTestEntry {
   name: string;
@@ -18,6 +19,7 @@ export class UnrealTestExplorer implements vscode.Disposable {
   private bridge: EditorBridgeClient | undefined;
   private runOutput: vscode.OutputChannel;
   private runProfile: vscode.TestRunProfile | undefined;
+  private readonly failedTests = new Set<string>();
 
   constructor() {
     this.controller = vscode.tests.createTestController('ue58rider.automation', 'UE Automation');
@@ -55,7 +57,7 @@ export class UnrealTestExplorer implements vscode.Disposable {
       return [];
     }
 
-    if (this.bridge?.isAuthoritative()) {
+    if (this.bridge?.hasCapability('automationTests')) {
       try {
         const remote = await this.bridge.listAutomationTests();
         this.tests = remote.map((t) => ({ name: t.name, source: t.source }));
@@ -76,7 +78,15 @@ export class UnrealTestExplorer implements vscode.Disposable {
   }
 
   private async refreshFromBridge(): Promise<void> {
-    if (this.tests.length > 0) this.rebuildTree();
+    if (this.bridge?.hasCapability('automationTests')) {
+      try {
+        const remote = await this.bridge.listAutomationTests();
+        this.tests = remote.map((t) => ({ name: t.name, source: t.source }));
+        this.rebuildTree();
+      } catch {
+        // keep cached
+      }
+    }
   }
 
   private rebuildTree(): void {
@@ -118,16 +128,6 @@ export class UnrealTestExplorer implements vscode.Disposable {
       return;
     }
 
-    if (this.bridge?.isAuthoritative()) {
-      const result = await this.bridge.runAutomationTest(test.name);
-      if (result.ok) {
-        vscode.window.showInformationMessage(`UE5_8 Cursor: started automation test ${test.name}`);
-      } else {
-        vscode.window.showWarningMessage(result.message ?? `Failed to run ${test.name}`);
-      }
-      return;
-    }
-
     vscode.window.showInformationMessage(this.offlineMessage);
   }
 
@@ -145,42 +145,59 @@ export class UnrealTestExplorer implements vscode.Disposable {
       run.started(item);
       this.runOutput.appendLine(`[run] ${testName}`);
 
-      if (!this.bridge?.isAuthoritative()) {
+      if (!this.bridge?.hasCapability('automationTests')) {
         run.errored(item, new vscode.TestMessage(this.offlineMessage));
+        continue;
+      }
+
+      if (!isMethodImplemented('automation.status')) {
+        run.errored(item, new vscode.TestMessage('automation.status not available on Bridge server'));
         continue;
       }
 
       const start = await this.bridge.runAutomationTest(testName);
       if (!start.ok) {
         run.failed(item, new vscode.TestMessage(start.message ?? 'Failed to start test'));
+        this.failedTests.add(testName);
         continue;
       }
+
+      run.appendOutput(`Started ${testName}\n`);
 
       const status = await this.bridge.pollAutomationStatus(testName, { timeoutMs: 120_000, token });
       if (status.state === 'passed') {
         run.passed(item);
+        this.failedTests.delete(testName);
         this.runOutput.appendLine(`[pass] ${testName}`);
       } else if (status.state === 'failed') {
         run.failed(item, new vscode.TestMessage(status.message ?? 'Test failed'));
+        this.failedTests.add(testName);
         this.runOutput.appendLine(`[fail] ${testName}: ${status.message ?? ''}`);
-      } else if (token.isCancellationRequested) {
+      } else if (status.state === 'cancelled' || token.isCancellationRequested) {
+        await this.bridge.cancelAutomationTest(testName);
         run.skipped(item);
       } else {
-        run.errored(item, new vscode.TestMessage(status.message ?? 'Test timed out'));
+        run.errored(item, new vscode.TestMessage(status.message ?? 'Test status unknown — not marked passed'));
+        this.failedTests.add(testName);
       }
     }
 
     run.end();
   }
 
-  private async rerunFailed(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
-    const failed = [...this.controller.items].filter(([, item]) => item.description === 'failed');
-    if (failed.length === 0) {
+  private async rerunFailed(_request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
+    if (this.failedTests.size === 0) {
       vscode.window.showInformationMessage('UE5_8 Cursor: no failed tests to rerun.');
       return;
     }
-    const subset = new vscode.TestRunRequest(failed.map(([, item]) => item));
-    await this.runHandler(subset, token);
+    const items = [...this.failedTests]
+      .map((name) => this.controller.items.get(`automation:${name}`) ?? this.controller.items.get(`spec:${name}`))
+      .filter((item): item is vscode.TestItem => !!item);
+    if (items.length === 0) {
+      vscode.window.showInformationMessage('UE5_8 Cursor: failed tests not found in tree.');
+      return;
+    }
+    await this.runHandler(new vscode.TestRunRequest(items), token);
   }
 
   private collectTests(request: vscode.TestRunRequest): vscode.TestItem[] {
@@ -192,5 +209,6 @@ export class UnrealTestExplorer implements vscode.Disposable {
     this.emitter.dispose();
     this.controller.dispose();
     this.runOutput.dispose();
+    this.failedTests.clear();
   }
 }
