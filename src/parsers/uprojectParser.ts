@@ -82,3 +82,28 @@ export async function ensureMcpPluginsInUProject(
   await mutateJson(tx, projectRoot, uprojectPath, updated, { consentGranted: true });
   return true;
 }
+
+export async function ensurePluginInUProject(
+  uprojectPath: string,
+  pluginName: string,
+  tx?: WorkspaceMutationTransaction,
+  opts?: { consentGranted?: boolean },
+): Promise<boolean> {
+  const raw = await fs.promises.readFile(uprojectPath, 'utf-8');
+  const data = JSON.parse(raw) as { Plugins?: UProjectPluginEntry[] };
+  const plugins = [...(data.Plugins ?? [])];
+  const idx = plugins.findIndex((p) => p.Name === pluginName);
+
+  if (idx === -1) {
+    plugins.push({ Name: pluginName, Enabled: true });
+  } else if (plugins[idx].Enabled) {
+    return false;
+  } else {
+    plugins[idx] = { ...plugins[idx], Enabled: true };
+  }
+
+  const updated = { ...data, Plugins: plugins };
+  const projectRoot = path.dirname(uprojectPath);
+  await mutateJson(tx, projectRoot, uprojectPath, updated, { consentGranted: opts?.consentGranted });
+  return true;
+}

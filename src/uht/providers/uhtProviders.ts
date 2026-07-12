@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { getOrBuildReflectionIndex, type UClassReflection } from '../reflectionIndex';
+import { getReflectionClasses } from '../../semantic/semanticService';
 import { parseHeaderUProperties } from '../generatedHeaderParser';
+import type { UClassReflection } from '../generatedHeaderParser';
 
 function findEnclosingClass(document: vscode.TextDocument, line: number): string | undefined {
   for (let i = line; i >= 0; i--) {
@@ -31,11 +32,11 @@ export class UPropertyCodeLensProvider implements vscode.CodeLensProvider {
       const line = prop.line - 1;
       const range = new vscode.Range(line, 0, line, 0);
       const title = prop.meta ? `UPROPERTY: ${prop.type} (${prop.meta.slice(0, 40)})` : `UPROPERTY: ${prop.type}`;
-      lenses.push(new vscode.CodeLens(range, { title, command: '' }));
+      lenses.push(new vscode.CodeLens(range, { title, command: 'ue58rider.showUFunctionInfo', arguments: [prop.name, [prop.type]] }));
     }
 
     if (lenses.length === 0) {
-      const classes = await getOrBuildReflectionIndex(root);
+      const classes = await getReflectionClasses(root);
       const className = findEnclosingClass(document, document.lineCount - 1);
       if (className) {
         const reflection = classes.find((c: UClassReflection) => c.className.toLowerCase() === className.toLowerCase());
@@ -44,7 +45,8 @@ export class UPropertyCodeLensProvider implements vscode.CodeLensProvider {
             lenses.push(
               new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
                 title: `${reflection.className}.${prop.name}: ${prop.type}`,
-                command: '',
+                command: 'ue58rider.showUFunctionInfo',
+                arguments: [prop.name, [prop.type]],
               }),
             );
           }
@@ -73,7 +75,7 @@ export class GeneratedSymbolHoverProvider implements vscode.HoverProvider {
     const className = findEnclosingClass(document, position.line);
     if (!className) return undefined;
 
-    const classes = await getOrBuildReflectionIndex(root);
+    const classes = await getReflectionClasses(root);
     const reflection = classes.find((c: UClassReflection) => c.className.toLowerCase() === className.toLowerCase());
     if (!reflection) return undefined;
 

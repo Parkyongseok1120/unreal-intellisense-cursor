@@ -43,6 +43,10 @@ coverage/
 .nyc_output/
 .vscode-test/
 
+# UE5_8 Cursor local project data (tokens, bridge descriptors)
+.ue5_8cursor/
+.ue58rider/
+
 # Optional: keep test fixtures committed; ignore scratch outputs
 test/**/*.tmp
 test/**/scratch/

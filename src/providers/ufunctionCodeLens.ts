@@ -27,8 +27,8 @@ export class UFunctionCodeLensProvider implements vscode.CodeLensProvider {
     let reflectionByClass: Map<string, Set<string>> | undefined;
     if (root) {
       try {
-        const { loadReflectionIndex } = await import('../uht/reflectionIndex');
-        const classes = await loadReflectionIndex(root);
+        const { getReflectionClasses } = await import('../semantic/semanticService');
+        const classes = await getReflectionClasses(root);
         reflectionByClass = new Map(
           classes.map((c) => [c.className.toLowerCase(), new Set(c.functions.map((f) => f.name))]),
         );

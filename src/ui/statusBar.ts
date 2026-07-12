@@ -23,6 +23,11 @@ export class StatusBarManager implements vscode.Disposable {
   private indexCounts = { assets: 0, reflection: 0 };
   private intelliSenseMode: IntelliSenseMode = 'missing';
   private provisionalDb = false;
+  private compileParity = 1;
+  private compileParitySynthetic = false;
+  private modelStatus: 'ready' | 'partial' | 'stale' | 'missing' = 'missing';
+  private modelProvenance = 'unknown';
+  private bridgeConnected = false;
 
   constructor() {
     this.mainItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -56,6 +61,20 @@ export class StatusBarManager implements vscode.Disposable {
     this.intelliSenseMode = mode;
     this.provisionalDb = options?.provisional ?? mode === 'partial';
     this.updateIntelliSenseItem();
+  }
+
+  setCompileParity(parity: number, synthetic: boolean, options?: { status?: 'ready' | 'partial' | 'stale' | 'missing'; provenance?: string }): void {
+    this.compileParity = parity;
+    this.compileParitySynthetic = synthetic;
+    if (options?.status) this.modelStatus = options.status;
+    if (options?.provenance) this.modelProvenance = options.provenance;
+    if (synthetic) this.provisionalDb = true;
+    this.updateIntelliSenseItem();
+  }
+
+  setBridgeStatus(info: { connected: boolean }): void {
+    this.bridgeConnected = info.connected;
+    this.updateMcpItem();
   }
 
   setBuildProgress(current: number, total: number): void {
@@ -110,19 +129,25 @@ export class StatusBarManager implements vscode.Disposable {
   }
 
   private updateIntelliSenseItem(): void {
+    const parityPct = Math.round(this.compileParity * 100);
+    const parityNote = this.compileParitySynthetic
+      ? `Compile parity: ${parityPct}% (synthetic DB — advisory only)`
+      : `Compile parity: ${parityPct}%`;
+    const modelNote = `Model: ${this.modelStatus} (${this.modelProvenance})`;
+
     switch (this.intelliSenseMode) {
       case 'ready':
-        this.intelliSenseItem.text = '$(check) IntelliSense: Ready';
-        this.intelliSenseItem.tooltip = 'compile_commands.json + clangd 준비 완료';
+        this.intelliSenseItem.text = `$(check) IntelliSense: Ready`;
+        this.intelliSenseItem.tooltip = `compile_commands.json + clangd ready.\n${modelNote}\n${parityNote}`;
         break;
       case 'partial':
-        this.intelliSenseItem.text = '$(warning) IntelliSense: Provisional';
+        this.intelliSenseItem.text = `$(warning) IntelliSense: ${this.modelStatus === 'stale' ? 'Stale' : 'Provisional'}`;
         this.intelliSenseItem.tooltip =
-          'synthetic/provisional compile database — clangd advisories may differ from UBT/MSVC build results. Run an Editor build for authoritative flags.';
+          `Synthetic/provisional compile database — clangd advisories may differ from UBT/MSVC build results. Run an Editor build for authoritative flags.\n${modelNote}\n${parityNote}`;
         break;
       default:
         this.intelliSenseItem.text = '$(error) IntelliSense: Missing';
-        this.intelliSenseItem.tooltip = 'Setup 또는 Refresh IntelliSense 실행';
+        this.intelliSenseItem.tooltip = `Run Setup or Refresh IntelliSense.\n${parityNote}`;
         break;
     }
     this.intelliSenseItem.show();
@@ -138,7 +163,8 @@ export class StatusBarManager implements vscode.Disposable {
   }
 
   private updateMcpItem(): void {
-    this.mcpItem.text = this.mcpConnected ? `$(plug) MCP:${this.mcpPort}` : '$(plug) MCP:off';
+    const bridge = this.bridgeConnected ? ' Bridge:on' : '';
+    this.mcpItem.text = this.mcpConnected ? `$(plug) MCP:${this.mcpPort}${bridge}` : `$(plug) MCP:off${bridge}`;
     this.mcpItem.show();
   }
 

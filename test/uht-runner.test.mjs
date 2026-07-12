@@ -18,14 +18,23 @@ describe('uhtRunner', () => {
     assert.match(diags[0].message, /GENERATED_BODY/);
   });
 
-  it('suggests RPC quick fixes', () => {
-    const fixes = uht.suggestedQuickFixes({
+  it('suggests only safe header quick fixes', () => {
+    const implFixes = uht.suggestedQuickFixes({
       file: 'x.h',
       line: 1,
       column: 1,
       severity: 'error',
       message: 'RPC function missing _Implementation',
     });
-    assert.ok(fixes.includes('Generate _Implementation stub'));
+    assert.equal(implFixes.length, 0);
+
+    const bodyFixes = uht.suggestedQuickFixes({
+      file: 'x.h',
+      line: 1,
+      column: 1,
+      severity: 'error',
+      message: 'missing GENERATED_BODY()',
+    });
+    assert.ok(bodyFixes.some((f) => f.includes('GENERATED_BODY')));
   });
 });

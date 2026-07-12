@@ -1,17 +1,24 @@
 #include "UE58CursorBridgeModule.h"
-#include "AssetRegistry/AssetRegistryModule.h"
+#include "CursorBridgeHttpServer.h"
 #include "Modules/ModuleManager.h"
 
 #define LOCTEXT_NAMESPACE "UE58CursorBridge"
 
+static TUniquePtr<FCursorBridgeHttpServer> GBridgeServer;
+
 void FUE58CursorBridgeModule::StartupModule()
 {
-	// Future: authenticated named pipe / WebSocket server exposing Asset Registry deltas,
-	// Blueprint graph metadata, PIE state, and structured Unreal logs to the VSIX.
+	GBridgeServer = MakeUnique<FCursorBridgeHttpServer>();
+	GBridgeServer->Start();
 }
 
 void FUE58CursorBridgeModule::ShutdownModule()
 {
+	if (GBridgeServer.IsValid())
+	{
+		GBridgeServer->Stop();
+		GBridgeServer.Reset();
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

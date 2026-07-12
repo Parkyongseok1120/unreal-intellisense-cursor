@@ -2,7 +2,7 @@
   "name": "ue5-8-cursor",
   "displayName": "UE5_8 Cursor",
   "description": "Cursor dedicated Unreal Engine 5.8 C++ workflow — IntelliSense, build, Live Coding, MCP",
-  "version": "6.2.1",
+  "version": "7.0.0",
   "publisher": "truesync",
   "license": "MIT",
   "repository": {
@@ -192,6 +192,12 @@
         "category": "UE5_8 Cursor"
       },
       {
+        "command": "ue58rider.installCursorBridgePlugin",
+        "title": "Install Editor Bridge Plugin",
+        "category": "UE5_8 Cursor",
+        "icon": "$(plug)"
+      },
+      {
         "command": "ue58rider.setupMcp",
         "title": "Setup UE 5.8 MCP Connection",
         "category": "UE5_8 Cursor"
@@ -243,6 +249,12 @@
         "title": "Debug: Play In Editor",
         "category": "UE5_8 Cursor",
         "icon": "$(debug-start)"
+      },
+      {
+        "command": "ue58rider.debugMultiplayer",
+        "title": "Debug: Multiplayer PIE / Dedicated Server",
+        "category": "UE5_8 Cursor",
+        "icon": "$(debug-alt)"
       },
       {
         "command": "ue58rider.findUFunctionBlueprints",
@@ -704,8 +716,11 @@
     "package": "vsce package --target win32-x64",
     "prepackage": "npm run build && node scripts/fetch-llvm.mjs",
     "test": "node --test test/*.test.mjs",
-    "test:ext-host": "node --test test/extension-host-smoke.test.mjs",
+    "test:ext-host": "node test/run-extension-host.mjs",
+    "verify:rider-workflow": "node scripts/verify-rider-workflow.mjs",
+    "build:ue-plugin": "node scripts/build-ue-plugin.mjs",
     "verify:ue-project": "node scripts/verify-ue-project.mjs",
+    "audit:encoding": "node scripts/audit-encoding.mjs",
     "verify:project-mjs": "node scripts/project-mjs-verify.mjs --capture-schema",
     "setup:intellisense": "node scripts/setup-intellisense.mjs"
   },
@@ -713,6 +728,7 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.4.0",
     "@vscode/vsce": "^2.22.0",
     "ajv": "^8.17.1",
     "esbuild": "^0.20.0",

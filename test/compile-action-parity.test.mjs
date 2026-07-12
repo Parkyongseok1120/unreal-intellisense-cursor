@@ -14,6 +14,12 @@ const projectModel = loadTsModule('src/projectModel/projectModelService.ts', {
   '../platform/workspaceMutation': () => ({
     mutateJson: async () => {},
   }),
+  '../uht/reflectionIndex': () => ({
+    buildReflectionIndex: async () => [],
+  }),
+  '../platform/dataDir': () => ({
+    ensureDataDir: async (root) => path.join(root, '.ue5_8cursor'),
+  }),
 });
 
 function commandToArgs(command) {

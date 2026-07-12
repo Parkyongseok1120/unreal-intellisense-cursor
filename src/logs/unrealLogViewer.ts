@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { UEProject } from '../types';
+import { parseUnrealLogLine } from '../hlsl/hlslProviders';
 
 const LOG_CHANNEL = 'UE5_8 Unreal Log';
 
@@ -11,6 +12,8 @@ export class UnrealLogViewer implements vscode.Disposable {
   private filePath: string | undefined;
   private offset = 0;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private follow = true;
+  private categoryFilter: string | undefined;
 
   constructor() {
     this.channel = vscode.window.createOutputChannel(LOG_CHANNEL, { log: true });
@@ -34,6 +37,14 @@ export class UnrealLogViewer implements vscode.Disposable {
     }
 
     await this.tailFile(logFile);
+  }
+
+  setCategoryFilter(category?: string): void {
+    this.categoryFilter = category?.trim() || undefined;
+  }
+
+  setFollow(enabled: boolean): void {
+    this.follow = enabled;
   }
 
   private async tailFile(logFile: string): Promise<void> {
@@ -62,7 +73,7 @@ export class UnrealLogViewer implements vscode.Disposable {
   }
 
   private async readNewContent(): Promise<void> {
-    if (!this.filePath) return;
+    if (!this.filePath || !this.follow) return;
     try {
       const stat = await fs.promises.stat(this.filePath);
       if (stat.size < this.offset) this.offset = 0;
@@ -76,7 +87,12 @@ export class UnrealLogViewer implements vscode.Disposable {
         this.offset = stat.size;
         const text = buf.toString('utf-8');
         for (const line of text.split(/\r?\n/)) {
-          if (line.length > 0) this.channel.appendLine(highlightLogLine(line));
+          if (line.length === 0) continue;
+          const structured = parseUnrealLogLine(line);
+          if (this.categoryFilter && structured && structured.category !== this.categoryFilter) {
+            continue;
+          }
+          this.channel.appendLine(highlightLogLine(line, structured));
         }
       } finally {
         await fd.close();
@@ -92,7 +108,13 @@ export class UnrealLogViewer implements vscode.Disposable {
   }
 }
 
-function highlightLogLine(line: string): string {
+function highlightLogLine(line: string, structured?: ReturnType<typeof parseUnrealLogLine>): string {
+  if (structured) {
+    const prefix = `[${structured.category}]`;
+    if (structured.verbosity === 'Error' || structured.verbosity === 'Fatal') return `❌ ${prefix} ${structured.message}`;
+    if (structured.verbosity === 'Warning') return `⚠️ ${prefix} ${structured.message}`;
+    return `${prefix} ${structured.message}`;
+  }
   if (/\bError\b/i.test(line)) return `❌ ${line}`;
   if (/\bWarning\b/i.test(line)) return `⚠️ ${line}`;
   return line;
@@ -101,21 +123,16 @@ function highlightLogLine(line: string): string {
 async function listLogFiles(projectRoot: string): Promise<Array<{ name: string; path: string; mtime: number }>> {
   const logsDir = path.join(projectRoot, 'Saved', 'Logs');
   try {
-    const files = await fs.promises.readdir(logsDir);
-    const logs = files.filter((f) => f.endsWith('.log'));
-    const result: Array<{ name: string; path: string; mtime: number }> = [];
-    for (const f of logs) {
-      const full = path.join(logsDir, f);
+    const entries = await fs.promises.readdir(logsDir, { withFileTypes: true });
+    const files: Array<{ name: string; path: string; mtime: number }> = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.log')) continue;
+      const full = path.join(logsDir, entry.name);
       const stat = await fs.promises.stat(full);
-      result.push({ name: f, path: full, mtime: stat.mtimeMs });
+      files.push({ name: entry.name, path: full, mtime: stat.mtimeMs });
     }
-    return result.sort((a, b) => b.mtime - a.mtime);
+    return files.sort((a, b) => b.mtime - a.mtime);
   } catch {
     return [];
   }
-}
-
-async function findLatestLog(projectRoot: string): Promise<string | undefined> {
-  const logs = await listLogFiles(projectRoot);
-  return logs[0]?.path;
 }

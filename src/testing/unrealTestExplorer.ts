@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
+import type { EditorBridgeClient } from '../editorBridge/editorBridgeClient';
 
 export interface AutomationTestEntry {
   name: string;
@@ -9,22 +10,84 @@ export interface AutomationTestEntry {
 }
 
 export class UnrealTestExplorer implements vscode.Disposable {
+  private controller: vscode.TestController;
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChange = this.emitter.event;
   private tests: AutomationTestEntry[] = [];
   private offlineMessage = 'Editor Bridge offline — automation tests unavailable';
+  private bridge: EditorBridgeClient | undefined;
+  private runOutput: vscode.OutputChannel;
+  private runProfile: vscode.TestRunProfile | undefined;
+
+  constructor() {
+    this.controller = vscode.tests.createTestController('ue58rider.automation', 'UE Automation');
+    this.runOutput = vscode.window.createOutputChannel('UE5_8 Automation');
+    this.controller.resolveHandler = async (item) => {
+      if (!item) await this.refreshFromBridge();
+    };
+    this.runProfile = this.controller.createRunProfile(
+      'Run',
+      vscode.TestRunProfileKind.Run,
+      (request, token) => this.runHandler(request, token),
+      true,
+    );
+    this.controller.createRunProfile(
+      'Rerun Failed',
+      vscode.TestRunProfileKind.Run,
+      (request, token) => this.rerunFailed(request, token),
+      false,
+    );
+  }
+
+  setBridge(bridge: EditorBridgeClient | undefined): void {
+    this.bridge = bridge;
+  }
+
+  getController(): vscode.TestController {
+    return this.controller;
+  }
 
   async refresh(ctx: UE5_8CursorContext): Promise<AutomationTestEntry[]> {
     if (!ctx.project) {
       this.tests = [];
+      this.controller.items.replace([]);
       this.emitter.fire();
       return [];
     }
 
+    if (this.bridge?.isAuthoritative()) {
+      try {
+        const remote = await this.bridge.listAutomationTests();
+        this.tests = remote.map((t) => ({ name: t.name, source: t.source }));
+        this.offlineMessage = '';
+        this.rebuildTree();
+        this.emitter.fire();
+        return this.tests;
+      } catch {
+        // fall through
+      }
+    }
+
     this.tests = [];
     this.offlineMessage = 'Editor Bridge offline — automation tests unavailable';
+    this.controller.items.replace([]);
     this.emitter.fire();
     return this.tests;
+  }
+
+  private async refreshFromBridge(): Promise<void> {
+    if (this.tests.length > 0) this.rebuildTree();
+  }
+
+  private rebuildTree(): void {
+    const items = new Map<string, vscode.TestItem>();
+    for (const test of this.tests) {
+      const id = `${test.source}:${test.name}`;
+      const item = this.controller.createTestItem(id, test.name, vscode.Uri.parse('untitled:ue-test'));
+      item.description = test.source;
+      items.set(id, item);
+    }
+    this.controller.items.replace([...items.values()]);
   }
 
   getTests(): AutomationTestEntry[] {
@@ -38,16 +101,96 @@ export class UnrealTestExplorer implements vscode.Disposable {
   async runTest(
     ctx: UE5_8CursorContext,
     _settings: UE5_8CursorSettings,
-    _test: AutomationTestEntry,
+    test: AutomationTestEntry,
   ): Promise<void> {
     if (!ctx.project) {
       vscode.window.showWarningMessage('UE5_8 Cursor: project required to run tests.');
       return;
     }
+
+    const id = `${test.source}:${test.name}`;
+    const item = this.controller.items.get(id);
+    if (item && this.runProfile) {
+      await this.runProfile.runHandler(
+        new vscode.TestRunRequest([item]),
+        new vscode.CancellationTokenSource().token,
+      );
+      return;
+    }
+
+    if (this.bridge?.isAuthoritative()) {
+      const result = await this.bridge.runAutomationTest(test.name);
+      if (result.ok) {
+        vscode.window.showInformationMessage(`UE5_8 Cursor: started automation test ${test.name}`);
+      } else {
+        vscode.window.showWarningMessage(result.message ?? `Failed to run ${test.name}`);
+      }
+      return;
+    }
+
     vscode.window.showInformationMessage(this.offlineMessage);
+  }
+
+  private async runHandler(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
+    const run = this.controller.createTestRun(request);
+    const queue = this.collectTests(request);
+
+    for (const item of queue) {
+      if (token.isCancellationRequested) {
+        run.skipped(item);
+        continue;
+      }
+
+      const testName = item.label;
+      run.started(item);
+      this.runOutput.appendLine(`[run] ${testName}`);
+
+      if (!this.bridge?.isAuthoritative()) {
+        run.errored(item, new vscode.TestMessage(this.offlineMessage));
+        continue;
+      }
+
+      const start = await this.bridge.runAutomationTest(testName);
+      if (!start.ok) {
+        run.failed(item, new vscode.TestMessage(start.message ?? 'Failed to start test'));
+        continue;
+      }
+
+      const status = await this.bridge.pollAutomationStatus(testName, { timeoutMs: 120_000, token });
+      if (status.state === 'passed') {
+        run.passed(item);
+        this.runOutput.appendLine(`[pass] ${testName}`);
+      } else if (status.state === 'failed') {
+        run.failed(item, new vscode.TestMessage(status.message ?? 'Test failed'));
+        this.runOutput.appendLine(`[fail] ${testName}: ${status.message ?? ''}`);
+      } else if (token.isCancellationRequested) {
+        run.skipped(item);
+      } else {
+        run.errored(item, new vscode.TestMessage(status.message ?? 'Test timed out'));
+      }
+    }
+
+    run.end();
+  }
+
+  private async rerunFailed(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
+    const failed = [...this.controller.items].filter(([, item]) => item.description === 'failed');
+    if (failed.length === 0) {
+      vscode.window.showInformationMessage('UE5_8 Cursor: no failed tests to rerun.');
+      return;
+    }
+    const subset = new vscode.TestRunRequest(failed.map(([, item]) => item));
+    await this.runHandler(subset, token);
+  }
+
+  private collectTests(request: vscode.TestRunRequest): vscode.TestItem[] {
+    if (request.include) return [...request.include];
+    return [...this.controller.items].map(([, item]) => item);
   }
 
   dispose(): void {
     this.emitter.dispose();
+    this.controller.dispose();
+    this.runOutput.dispose();
   }
 }

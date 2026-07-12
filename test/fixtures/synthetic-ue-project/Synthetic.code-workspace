@@ -1,0 +1,37 @@
+{
+  "ue58rider.multiRootWorkspace": true,
+  "folders": [
+    {
+      "name": "Synthetic (Root)",
+      "path": "."
+    },
+    {
+      "name": "Source",
+      "path": "Source"
+    },
+    {
+      "name": "Config",
+      "path": "Config"
+    },
+    {
+      "name": "Plugin: NestedPlugin",
+      "path": "Plugins\\NestedPlugin\\Source"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "Binaries": true,
+      "Intermediate": true,
+      "DerivedDataCache": true,
+      "Saved": true,
+      "Content": true,
+      "Build": true,
+      "Docs": true
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "anysphere.cpptools"
+    ]
+  }
+}

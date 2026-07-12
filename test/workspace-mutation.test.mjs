@@ -77,17 +77,17 @@ describe('workspaceMutation legacy API', () => {
     assert.equal(restored.ok, true);
   });
 
-  it('forbids Build.cs mutation by default', async () => {
+  it('requires consent for Build.cs mutation by default', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ue58-mutation-'));
     const filePath = path.join(root, 'Source', 'Game', 'Game.Build.cs');
     const result = await mutation.writeProjectFileAtomic({
       projectRoot: root,
       filePath,
       content: 'class Game {}',
-      policy: 'forbidden',
+      policy: 'consentRequired',
     });
     assert.equal(result.changed, false);
-    assert.match(result.error ?? '', /forbidden/i);
+    assert.match(result.error ?? '', /consent/i);
   });
 
   it('removes only managed explorer patterns', () => {

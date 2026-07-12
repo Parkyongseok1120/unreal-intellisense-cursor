@@ -211,9 +211,37 @@ async function enrichBatch(entries: AssetIndexEntry[]): Promise<AssetIndexEntry[
   return result;
 }
 
+export async function mergeBridgeAssets(
+  entries: AssetIndexEntry[],
+  bridgeAssets: Array<{ assetPath: string; className?: string }>,
+): Promise<AssetIndexEntry[]> {
+  if (bridgeAssets.length === 0) return entries;
+  const byPath = new Map(entries.map((e) => [e.assetPath.toLowerCase(), e]));
+  for (const asset of bridgeAssets) {
+    const key = asset.assetPath.toLowerCase();
+    const existing = byPath.get(key);
+    if (existing) {
+      existing.packageClass = asset.className ?? existing.packageClass;
+    } else {
+      const name = asset.assetPath.split('/').pop()?.split('.')[0] ?? 'Asset';
+      const entry: AssetIndexEntry = {
+        diskPath: '',
+        assetPath: asset.assetPath,
+        fileName: name,
+        assetName: name,
+        packageClass: asset.className,
+        inferredClass: asset.className,
+      };
+      entries.push(entry);
+      byPath.set(key, entry);
+    }
+  }
+  return entries;
+}
+
 export async function refreshAssetIndex(
   projectRoot: string,
-  options: { enrichMcp?: boolean; forceFull?: boolean } = {},
+  options: { enrichMcp?: boolean; forceFull?: boolean; bridgeAssets?: Array<{ assetPath: string; className?: string }> } = {},
 ): Promise<AssetIndexEntry[]> {
   const existing = await loadAssetIndexCache(projectRoot);
   let entries: AssetIndexEntry[];
@@ -226,6 +254,10 @@ export async function refreshAssetIndex(
 
   if (options.enrichMcp) {
     entries = await enrichBatch(entries);
+  }
+
+  if (options.bridgeAssets?.length) {
+    entries = await mergeBridgeAssets(entries, options.bridgeAssets);
   }
 
   await saveAssetIndex(projectRoot, entries);

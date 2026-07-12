@@ -22,6 +22,8 @@ export interface WizardInput {
   moduleName: string;
   apiMacro: string;
   subfolder?: string;
+  /** When true, missing Build.cs deps are applied inside the transaction. */
+  consentBuildCs?: boolean;
 }
 
 interface KindMeta {
@@ -137,71 +139,124 @@ function cppTemplate(input: WizardInput, className: string): string {
 ${className}::${className}()\n{\n${ctorBody}}\n${beginPlay}${tick}`;
 }
 
+export function buildCsPath(project: UEProject, moduleName: string): string {
+  return path.join(project.projectRoot, 'Source', moduleName, `${moduleName}.Build.cs`);
+}
+
+export async function readBuildCsContent(project: UEProject, moduleName: string): Promise<string | undefined> {
+  try {
+    return await fs.promises.readFile(buildCsPath(project, moduleName), 'utf-8');
+  } catch {
+    return undefined;
+  }
+}
+
+export function getMissingModuleDependencies(content: string, deps: string[]): string[] {
+  return deps.filter((dep) => !new RegExp(`"${dep}"`).test(content));
+}
+
+export function previewBuildCsPatch(content: string, deps: string[]): { newContent: string; preview: string } | undefined {
+  let patched = content;
+  const added: string[] = [];
+
+  for (const dep of deps) {
+    if (new RegExp(`"${dep}"`).test(patched)) continue;
+    const publicBlock = /PublicDependencyModuleNames\.AddRange\s*\(\s*new\s+string\[\]\s*\{/i;
+    const privateBlock = /PrivateDependencyModuleNames\.AddRange\s*\(\s*new\s+string\[\]\s*\{/i;
+    const usePublic = publicBlock.test(patched);
+    const blockRe = usePublic ? publicBlock : privateBlock;
+    const match = patched.match(blockRe);
+    if (!match || match.index === undefined) return undefined;
+
+    const openBrace = patched.indexOf('{', match.index);
+    const closeBrace = patched.indexOf('}', openBrace);
+    if (openBrace < 0 || closeBrace < 0) return undefined;
+
+    const insertion = `\n\t\t\t"${dep}",`;
+    patched = patched.slice(0, closeBrace) + insertion + patched.slice(closeBrace);
+    added.push(dep);
+  }
+
+  if (added.length === 0) return undefined;
+  return {
+    newContent: patched,
+    preview: added.map((d) => `+ "${d}"`).join('\n'),
+  };
+}
+
+export async function getMissingWizardDependencies(
+  project: UEProject,
+  input: WizardInput,
+): Promise<string[]> {
+  const meta = KIND_META[input.kind];
+  if (!meta.moduleExtra?.length) return [];
+  const content = await readBuildCsContent(project, input.moduleName);
+  if (!content) return meta.moduleExtra;
+  return getMissingModuleDependencies(content, meta.moduleExtra);
+}
+
+export async function applyBuildCsPatchInTx(
+  tx: WorkspaceMutationTransaction,
+  project: UEProject,
+  moduleName: string,
+  deps: string[],
+): Promise<boolean> {
+  const content = await readBuildCsContent(project, moduleName);
+  if (!content) return false;
+  const patch = previewBuildCsPatch(content, deps);
+  if (!patch) return false;
+  await mutateText(tx, project.projectRoot, buildCsPath(project, moduleName), patch.newContent, {
+    consentGranted: true,
+  });
+  return true;
+}
+
+/** @deprecated Use getMissingWizardDependencies + applyBuildCsPatchInTx */
 export async function updateBuildCsDependencies(
   project: UEProject,
   moduleName: string,
   deps: string[],
 ): Promise<boolean> {
-  const buildCs = path.join(project.projectRoot, 'Source', moduleName, `${moduleName}.Build.cs`);
-  let content = '';
-  try {
-    content = await fs.promises.readFile(buildCs, 'utf-8');
-  } catch {
-    return false;
-  }
-
-  let changed = false;
-  for (const dep of deps) {
-    if (new RegExp(`"${dep}"`).test(content)) continue;
-    const publicBlock = /PublicDependencyModuleNames\.AddRange\s*\(\s*new\s+string\[\]\s*\{/i;
-    const privateBlock = /PrivateDependencyModuleNames\.AddRange\s*\(\s*new\s+string\[\]\s*\{/i;
-    const usePublic = publicBlock.test(content);
-    const blockRe = usePublic ? publicBlock : privateBlock;
-    const match = content.match(blockRe);
-    if (!match || match.index === undefined) continue;
-
-    const openBrace = content.indexOf('{', match.index);
-    const closeBrace = content.indexOf('}', openBrace);
-    if (openBrace < 0 || closeBrace < 0) continue;
-
-    const insertion = `\n\t\t\t"${dep}",`;
-    content = content.slice(0, closeBrace) + insertion + content.slice(closeBrace);
-    changed = true;
-  }
-
-  if (changed) {
-    // Build.cs mutation is forbidden by workspace policy — caller must edit manually.
-    return false;
-  }
-  return changed;
+  const content = await readBuildCsContent(project, moduleName);
+  if (!content) return false;
+  return getMissingModuleDependencies(content, deps).length === 0;
 }
 
 export async function generateClassFiles(project: UEProject, input: WizardInput) {
-  return runWithTransaction(project.projectRoot, async (tx) => generateClassFilesInTx(project, input, tx));
+  const missing = await getMissingWizardDependencies(project, input);
+  if (missing.length > 0 && !input.consentBuildCs) {
+    throw new Error(
+      `Missing module dependencies: ${missing.join(', ')}. Consent required to update ${input.moduleName}.Build.cs`,
+    );
+  }
+
+  return runWithTransaction(project.projectRoot, async (tx) => generateClassFilesInTx(project, input, tx, missing));
 }
 
 async function generateClassFilesInTx(
   project: UEProject,
   input: WizardInput,
   tx: WorkspaceMutationTransaction,
+  missingDeps: string[],
 ) {
   const meta = KIND_META[input.kind];
   const paths = resolveWizardPaths(project, input);
   if (await fileExists(paths.publicHeader) || (!meta.headerOnly && (await fileExists(paths.privateCpp)))) {
-    throw new Error(`이미 존재합니다: ${paths.className}`);
+    throw new Error(`Already exists: ${paths.className}`);
   }
 
-  await fs.promises.mkdir(path.dirname(paths.publicHeader), { recursive: true });
+  if (missingDeps.length > 0 && input.consentBuildCs) {
+    const applied = await applyBuildCsPatchInTx(tx, project, input.moduleName, missingDeps);
+    if (!applied) {
+      throw new Error(`Failed to update ${input.moduleName}.Build.cs with dependencies: ${missingDeps.join(', ')}`);
+    }
+  }
+
   if (!meta.headerOnly) {
-    await fs.promises.mkdir(path.dirname(paths.privateCpp), { recursive: true });
     await mutateText(tx, project.projectRoot, paths.privateCpp, cppTemplate(input, paths.className));
   }
 
   await mutateText(tx, project.projectRoot, paths.publicHeader, headerTemplate(input, paths.className));
-
-  if (meta.moduleExtra?.length) {
-    await updateBuildCsDependencies(project, input.moduleName, meta.moduleExtra);
-  }
 
   return {
     className: paths.className,

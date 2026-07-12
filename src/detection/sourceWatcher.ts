@@ -29,6 +29,8 @@ export function watchSourceChanges(
   ctx: UE5_8CursorContext,
   settings: UE5_8CursorSettings,
   onRefresh: () => void,
+  onUhtHeaders?: (headers: string[]) => void,
+  onProjectModelInvalidate?: () => void,
 ): vscode.Disposable {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) return new vscode.Disposable(() => {});
@@ -144,12 +146,20 @@ export function watchSourceChanges(
   const flushCompileRefreshBatch = (): void => {
     if (!ctx.project) return;
     const scopes: string[] = [];
+    const uhtHeaders = [...pending.uhtModules];
     if (pending.projectModel) scopes.push('project model');
     if (pending.modules.size > 0) scopes.push(`${pending.modules.size} module(s)`);
     if (pending.uhtModules.size > 0) scopes.push(`${pending.uhtModules.size} UHT header(s)`);
     if (pending.targetModules.size > 0) scopes.push(`${pending.targetModules.size} RSP(s)`);
     if (pending.deletedPaths.size > 0) scopes.push(`${pending.deletedPaths.size} delete(s)`);
     if (scopes.length === 0) return;
+
+    if (pending.projectModel && onProjectModelInvalidate) {
+      onProjectModelInvalidate();
+    }
+    if (uhtHeaders.length > 0 && onUhtHeaders) {
+      onUhtHeaders(uhtHeaders);
+    }
 
     ctx.outputChannel.appendLine(
       `[UE5_8 Cursor] Batch invalidation (${scopes.join(', ')}) — refreshing IntelliSense...`,

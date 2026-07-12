@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface StructuredLogEntry {
   timestamp: string;
@@ -36,20 +38,75 @@ export function toDiagnostic(entry: StructuredLogEntry, line: number): vscode.Di
   return diag;
 }
 
+const ENGINE_SHADER_PATHS = [
+  'Engine/Shaders',
+  'Engine/Shaders/Private',
+  'Engine/Shaders/Public',
+];
+
 export function registerHLSLProviders(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
       { language: 'hlsl', scheme: 'file' },
       {
-        provideCompletionItems() {
-          return [
+        provideCompletionItems(document) {
+          const items: vscode.CompletionItem[] = [
             new vscode.CompletionItem('float4', vscode.CompletionItemKind.Keyword),
             new vscode.CompletionItem('Texture2D', vscode.CompletionItemKind.Class),
             new vscode.CompletionItem('SamplerState', vscode.CompletionItemKind.Class),
+            new vscode.CompletionItem('StructuredBuffer', vscode.CompletionItemKind.Class),
+            new vscode.CompletionItem('RWTexture2D', vscode.CompletionItemKind.Class),
           ];
+
+          const engineRoot = resolveEngineRootFromDocument(document);
+          if (engineRoot) {
+            for (const rel of ENGINE_SHADER_PATHS) {
+              const include = path.join(engineRoot, rel).replace(/\\/g, '/');
+              const item = new vscode.CompletionItem(include, vscode.CompletionItemKind.Folder);
+              item.detail = 'UE engine shader include path';
+              items.push(item);
+            }
+          }
+
+          return items;
         },
       },
       '.',
+      '/',
+    ),
+    vscode.languages.registerHoverProvider(
+      { language: 'hlsl', scheme: 'file' },
+      {
+        provideHover(document, position) {
+          const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z0-9_]+/);
+          if (!wordRange) return undefined;
+          const word = document.getText(wordRange);
+          if (word === 'Texture2D' || word === 'SamplerState') {
+            return new vscode.Hover(`UE HLSL type \`${word}\` — requires engine shader include paths for DXC/FXC parity.`);
+          }
+          return undefined;
+        },
+      },
     ),
   );
+}
+
+function resolveEngineRootFromDocument(document: vscode.TextDocument): string | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders?.length) return undefined;
+
+  for (const folder of folders) {
+    const engineDir = path.join(folder.uri.fsPath, 'Engine');
+    if (fs.existsSync(path.join(engineDir, 'Shaders'))) {
+      return folder.uri.fsPath;
+    }
+  }
+
+  const cfg = vscode.workspace.getConfiguration('ue58rider');
+  const engineRoot = cfg.get<string>('engineRoot');
+  if (engineRoot && fs.existsSync(path.join(engineRoot, 'Engine', 'Shaders'))) {
+    return engineRoot;
+  }
+
+  return undefined;
 }

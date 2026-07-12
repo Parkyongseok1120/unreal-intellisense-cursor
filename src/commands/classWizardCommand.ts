@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import {
   generateClassFiles,
+  getMissingWizardDependencies,
+  previewBuildCsPatch,
+  readBuildCsContent,
   suggestApiMacro,
   type WizardClassKind,
 } from '../wizard/classWizard';
@@ -11,22 +14,22 @@ import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 
 const CLASS_KINDS: Array<{ label: string; description: string; classKind: WizardClassKind }> = [
-  { label: 'Actor', description: 'AActor — 월드에 배치', classKind: 'Actor' },
-  { label: 'Character', description: 'ACharacter — 캐릭터', classKind: 'Character' },
+  { label: 'Actor', description: 'AActor — world placeable', classKind: 'Actor' },
+  { label: 'Character', description: 'ACharacter', classKind: 'Character' },
   { label: 'Player Controller', description: 'APlayerController', classKind: 'PlayerController' },
   { label: 'Game Mode', description: 'AGameModeBase', classKind: 'GameMode' },
   { label: 'Actor Component', description: 'UActorComponent', classKind: 'ActorComponent' },
   { label: 'Game Instance', description: 'UGameInstance', classKind: 'GameInstance' },
   { label: 'Anim Instance', description: 'UAnimInstance', classKind: 'AnimInstance' },
-  { label: 'UObject', description: '데이터/유틸', classKind: 'Object' },
+  { label: 'UObject', description: 'Data/utility', classKind: 'Object' },
   { label: 'Data Asset', description: 'UPrimaryDataAsset', classKind: 'DataAsset' },
-  { label: 'User Widget', description: 'UUserWidget — UMG', classKind: 'UserWidget' },
-  { label: 'Interface', description: 'UINTERFACE (헤더만)', classKind: 'Interface' },
+  { label: 'User Widget', description: 'UUserWidget — requires UMG in Build.cs', classKind: 'UserWidget' },
+  { label: 'Interface', description: 'UINTERFACE (header only)', classKind: 'Interface' },
 ];
 
 export async function runClassWizard(ctx: UE5_8CursorContext, _settings: UE5_8CursorSettings): Promise<void> {
   if (!ctx.project) {
-    vscode.window.showErrorMessage('UE5_8 Cursor: 프로젝트가 없습니다.');
+    vscode.window.showErrorMessage('UE5_8 Cursor: no project detected.');
     return;
   }
 
@@ -34,32 +37,53 @@ export async function runClassWizard(ctx: UE5_8CursorContext, _settings: UE5_8Cu
   const moduleName =
     modules.length === 1
       ? modules[0]
-      : await vscode.window.showQuickPick(modules, { placeHolder: '모듈 선택' });
+      : await vscode.window.showQuickPick(modules, { placeHolder: 'Select module' });
   if (!moduleName) return;
 
-  const kind = await vscode.window.showQuickPick(CLASS_KINDS, { placeHolder: '클래스 종류' });
+  const kind = await vscode.window.showQuickPick(CLASS_KINDS, { placeHolder: 'Class kind' });
   if (!kind) return;
 
   const className = await vscode.window.showInputBox({
-    prompt: '클래스 이름 (접두사 A/U/I 자동 추가)',
+    prompt: 'Class name (A/U/I prefix added automatically)',
     placeHolder: 'MyNewCharacter',
-    validateInput: (v) => (/^[A-Za-z][A-Za-z0-9_]*$/.test(v) ? null : '유효한 C++ 식별자를 입력하세요'),
+    validateInput: (v) => (/^[A-Za-z][A-Za-z0-9_]*$/.test(v) ? null : 'Enter a valid C++ identifier'),
   });
   if (!className) return;
 
   const subfolder = await vscode.window.showInputBox({
-    prompt: '하위 폴더 (선택, e.g. Character/Enemy)',
-    placeHolder: '비워두면 Public/Private 루트',
+    prompt: 'Subfolder (optional, e.g. Character/Enemy)',
+    placeHolder: 'Leave empty for Public/Private root',
   });
 
+  const wizardInput = {
+    className,
+    kind: kind.classKind,
+    moduleName,
+    apiMacro: suggestApiMacro(moduleName),
+    subfolder: subfolder || undefined,
+    consentBuildCs: false,
+  };
+
+  const missingDeps = await getMissingWizardDependencies(ctx.project, wizardInput);
+  if (missingDeps.length > 0) {
+    const content = await readBuildCsContent(ctx.project, moduleName);
+    const preview = content ? previewBuildCsPatch(content, missingDeps) : undefined;
+    const detail = preview?.preview ?? missingDeps.map((d) => `+ "${d}"`).join('\n');
+    const consent = await vscode.window.showWarningMessage(
+      `${moduleName}.Build.cs needs module dependencies for ${kind.label}:`,
+      { modal: true, detail },
+      'Update Build.cs',
+      'Cancel',
+    );
+    if (consent !== 'Update Build.cs') {
+      vscode.window.showInformationMessage('Class creation cancelled — add dependencies manually to Build.cs first.');
+      return;
+    }
+    wizardInput.consentBuildCs = true;
+  }
+
   try {
-    const result = await generateClassFiles(ctx.project, {
-      className,
-      kind: kind.classKind,
-      moduleName,
-      apiMacro: suggestApiMacro(moduleName),
-      subfolder: subfolder || undefined,
-    });
+    const result = await generateClassFiles(ctx.project, wizardInput);
 
     const doc = await vscode.workspace.openTextDocument(result.headerPath);
     await vscode.window.showTextDocument(doc);
@@ -72,19 +96,16 @@ export async function runClassWizard(ctx: UE5_8CursorContext, _settings: UE5_8Cu
         onStderr: (l) => ctx.outputChannel.appendLine(l),
       });
       if (pf.exitCode !== 0) {
-        vscode.window.showWarningMessage('UE5_8 Cursor: GenerateProjectFiles 실패 — 수동으로 프로젝트 파일을 갱신하세요.');
+        vscode.window.showWarningMessage('UE5_8 Cursor: GenerateProjectFiles failed — refresh project files manually.');
       }
     }
 
-    vscode.window.showInformationMessage(
-      `UE5_8 Cursor: ${result.className} 생성 완료`,
-      'IntelliSense 갱신',
-    ).then((c) => {
-      if (c === 'IntelliSense 갱신') {
+    vscode.window.showInformationMessage(`UE5_8 Cursor: created ${result.className}`, 'Refresh IntelliSense').then((c) => {
+      if (c === 'Refresh IntelliSense') {
         vscode.commands.executeCommand('ue58rider.generateCompileCommands');
       }
     });
   } catch (err) {
-    vscode.window.showErrorMessage(`UE5_8 Cursor: 클래스 생성 실패 — ${err}`);
+    vscode.window.showErrorMessage(`UE5_8 Cursor: class creation failed — ${err}`);
   }
 }

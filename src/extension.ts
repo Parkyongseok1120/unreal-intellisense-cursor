@@ -20,9 +20,20 @@ import { CommandBridge } from './mcp/commandBridge';
 import { configureMcpBridge } from './blueprint/mcpBlueprintBridge';
 import { parseBuildProgress } from './parsers/buildProgressParser';
 import { ProjectSession } from './session/projectSession';
+import { getProjectSession, disposeAllProjectSessions } from './session/projectSessions';
 import { getExtensionVersion } from './version';
-import { buildProjectModel } from './projectModel/projectModelService';
-import { EditorBridgeClient } from './editorBridge/editorBridgeClient';
+import { refreshSemanticGraph, computeCompileParity, invalidateSemanticGraph } from './semantic/semanticService';
+import { registerSemanticNavigation } from './semantic/semanticNavigation';
+import { EditorBridgeClient, formatBridgeStatus, withBridgeTimeout } from './editorBridge/editorBridgeClient';
+import {
+  formatInstallPreview,
+  installCursorBridgePlugin,
+  isCursorBridgePluginInstalled,
+  listCursorBridgePluginFiles,
+} from './editorBridge/editorBridgeRpc';
+import { UhtCodeActionProvider } from './uht/uhtCodeActionProvider';
+import { disposeUhtDiagnostics } from './uht/uhtDiagnostics';
+import { registerUhtSaveValidation } from './uht/uhtValidation';
 import { registerHLSLProviders } from './hlsl/hlslProviders';
 import { UnrealTestExplorer } from './testing/unrealTestExplorer';
 import type { UE5_8CursorContext } from './types';
@@ -47,7 +58,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   statusBar = new StatusBarManager();
   logViewer = new UnrealLogViewer();
   projectSession = new ProjectSession();
-  editorBridge = new EditorBridgeClient();
+  editorBridge = new EditorBridgeClient(undefined, context);
   testExplorer = new UnrealTestExplorer();
   const outputChannel = createOutputChannel();
 
@@ -62,6 +73,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (projectSession) extensionContext.subscriptions.push(projectSession);
   if (editorBridge) extensionContext.subscriptions.push(editorBridge);
   if (testExplorer) extensionContext.subscriptions.push(testExplorer);
+
+  registerSemanticNavigation(extensionContext, () => ctx.project);
+
   if (settings.experimentalHlsl) {
     registerHLSLProviders(extensionContext);
   }
@@ -121,6 +135,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       { language: 'cpp', scheme: 'file' },
       new GeneratedSymbolHoverProvider(() => ctx.project?.projectRoot),
     ),
+    vscode.languages.registerCodeActionsProvider(
+      { language: 'cpp', scheme: 'file' },
+      new UhtCodeActionProvider(),
+      { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
+    ),
     vscode.tasks.registerTaskProvider(
       UE5_8CursorTaskProvider.type,
       new UE5_8CursorTaskProvider(() => ctx, () => settings),
@@ -129,10 +148,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   statusBar.startPolling();
 
+  if (projectSession) {
+    extensionContext.subscriptions.push(registerUhtSaveValidation(ctx, projectSession));
+  }
+
   extensionContext.subscriptions.push(
-    (await import('./detection/sourceWatcher')).watchSourceChanges(ctx, settings, () => {
-      void scheduleCompileRefresh();
-    }),
+    (await import('./detection/sourceWatcher')).watchSourceChanges(
+      ctx,
+      settings,
+      () => {
+        void scheduleCompileRefresh();
+      },
+      (headers) => {
+        if (!projectSession) return;
+        for (const h of headers) {
+          void import('./uht/uhtValidation').then(({ scheduleUhtValidation }) =>
+            scheduleUhtValidation(ctx, projectSession!, h),
+          );
+        }
+      },
+      () => {
+        if (!ctx.project || !projectSession) return;
+        const gen = projectSession.getGeneration();
+        const token = projectSession.getActiveToken() ?? new vscode.CancellationTokenSource().token;
+        void projectSession.runJob('detection', ctx.project.projectRoot, gen, token, async () => {
+          invalidateSemanticGraph(ctx.project!.projectRoot);
+          await refreshSemanticGraph(ctx.project!);
+        });
+      },
+    ),
   );
 
   outputChannel.appendLine(`[UE5_8 Cursor] Activating UE 5.8 development environment (v${getExtensionVersion(extensionPath)})...`);
@@ -164,6 +208,8 @@ export function deactivate(): void {
   projectSession?.dispose();
   editorBridge?.dispose();
   testExplorer?.dispose();
+  disposeUhtDiagnostics();
+  disposeAllProjectSessions();
 }
 
 async function openContentBrowserForProject(options?: { reopen?: boolean }): Promise<void> {
@@ -316,14 +362,44 @@ async function executeDetectionPipeline(
 
   configureMcpBridge(ctx.project.projectRoot, extensionPath);
   contentBrowser?.setProjectRoot(ctx.project.projectRoot);
-  void editorBridge?.connect();
+
+  if (editorBridge) {
+    const bridgeInfo = await withBridgeTimeout(editorBridge.connect(ctx.project.projectRoot), 5000);
+    if (bridgeInfo) {
+      testExplorer?.setBridge(editorBridge);
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] ${formatBridgeStatus(bridgeInfo)}`);
+      statusBar.setBridgeStatus(bridgeInfo);
+      if (bridgeInfo.connected) {
+        try {
+          const bridgeResult = await withBridgeTimeout(editorBridge.queryAssets(), 5000);
+          if (bridgeResult?.assets?.length) {
+            const { refreshAssetIndex } = await import('./assets/assetIndex');
+            await refreshAssetIndex(ctx.project.projectRoot, { bridgeAssets: bridgeResult.assets });
+          }
+        } catch {
+          // bridge asset sync optional
+        }
+      }
+    }
+  }
   void testExplorer?.refresh(ctx);
 
   if (ctx.project) {
-    const model = await buildProjectModel(ctx.project);
+    getProjectSession(ctx.project.projectRoot);
+    const graph = await refreshSemanticGraph(ctx.project);
     ctx.outputChannel.appendLine(
-      `[UE5_8 Cursor] Project model: ${model.modules.length} module(s), ${model.plugins.length} plugin(s)`,
+      `[UE5_8 Cursor] Semantic graph: ${graph.modules.length} module(s), ${graph.reflection.length} class(es), ${graph.plugins.length} plugin(s)`,
     );
+    const parity = await computeCompileParity(ctx.project);
+    statusBar.setCompileParity(parity.parity, parity.synthetic, {
+      status: parity.status,
+      provenance: parity.provenance,
+    });
+    if (parity.synthetic && parity.total > 0) {
+      ctx.outputChannel.appendLine(
+        `[UE5_8 Cursor] Compile action parity: ${Math.round(parity.parity * 100)}% (synthetic DB)`,
+      );
+    }
   }
 
   if (settings.engineRoot) {
@@ -514,6 +590,29 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     await debugPIE(ctx, settings);
   });
 
+  reg(Commands.DebugMultiplayer, async () => {
+    const players = await vscode.window.showInputBox({
+      prompt: 'Number of PIE clients',
+      value: '2',
+      validateInput: (v) => (/^\d+$/.test(v) && Number(v) > 0 ? undefined : 'Enter a positive number'),
+    });
+    if (!players) return;
+    const mode = await vscode.window.showQuickPick(
+      [
+        { label: 'Listen server + clients', id: 'listen' },
+        { label: 'Dedicated server', id: 'dedicated' },
+      ],
+      { placeHolder: 'Multiplayer debug mode' },
+    );
+    if (!mode) return;
+    const { launchMultiplayerDebug } = await import('./debug/multiplayerRun');
+    await launchMultiplayerDebug(ctx, settings, {
+      players: Number(players),
+      listenServer: mode.id === 'listen',
+      dedicatedServer: mode.id === 'dedicated',
+    });
+  });
+
   reg(Commands.NewCppClass, async () => {
     const { runClassWizard } = await import('./commands/classWizardCommand');
     await runClassWizard(ctx, settings);
@@ -545,6 +644,40 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   reg(Commands.SetupMcp, async () => {
     const { setupMcpConfig } = await import('./commands/mcpCommands');
     await setupMcpConfig(ctx, settings, extensionPath);
+  });
+
+  reg(Commands.InstallCursorBridgePlugin, async () => {
+    if (!ctx.project) {
+      vscode.window.showWarningMessage('UE5_8 Cursor: open a UE project first.');
+      return;
+    }
+    if (isCursorBridgePluginInstalled(ctx.project)) {
+      vscode.window.showInformationMessage('UE5_8 Cursor: UE58CursorBridge is already installed.');
+      return;
+    }
+    const files = await listCursorBridgePluginFiles(extensionPath);
+    const preview = formatInstallPreview(ctx.project, extensionPath, files);
+    const consent = await vscode.window.showWarningMessage(
+      'Install UE58CursorBridge editor plugin into this project?',
+      { modal: true, detail: preview },
+      'Install',
+      'Cancel',
+    );
+    if (consent !== 'Install') return;
+
+    const result = await installCursorBridgePlugin(ctx.project, {
+      consentGranted: true,
+      extensionPath,
+      enableInUproject: true,
+    });
+    if (result.ok) {
+      vscode.window.showInformationMessage(
+        result.message ?? 'UE58CursorBridge installed. Restart the Unreal Editor to load the bridge.',
+      );
+      await runDetectionPipeline();
+    } else {
+      vscode.window.showErrorMessage(result.message ?? 'Failed to install UE58CursorBridge.');
+    }
   });
 
   reg(Commands.VerifyMcp, async () => {

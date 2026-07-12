@@ -6,16 +6,45 @@ on:
   pull_request:
 
 jobs:
-  build:
-    runs-on: windows-latest
+  plugin-build:
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    runs-on: [self-hosted, windows, ue58]
     steps:
       - uses: actions/checkout@v4
+      - name: Verify UE_ROOT
+        shell: pwsh
+        run: |
+          if (-not $env:UE_ROOT -and -not $env:UE5_ROOT) {
+            Write-Error "UE_ROOT or UE5_ROOT must be set on the self-hosted runner"
+            exit 1
+          }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run build:ue-plugin
+      - name: Upload plugin build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ue58-cursor-bridge-plugin
+          path: Saved/UE58CursorBridge/
+          if-no-files-found: error
+
+  build:
+    runs-on: windows-latest
+    needs: plugin-build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Whitespace check
+        run: git diff --check
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run audit:encoding
       - run: node -e "const fs=require('fs'); fs.mkdirSync('dist-test/parsers',{recursive:true}); fs.copyFileSync('src/parsers/buildProgressParser.ts','dist-test/parsers/buildProgressParser.ts')"
       - run: npx esbuild src/parsers/buildProgressParser.ts --outfile=dist-test/parsers/buildProgressParser.js --format=esm --platform=node
       - run: npm test
+      - run: npm run test:ext-host

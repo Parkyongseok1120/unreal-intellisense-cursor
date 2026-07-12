@@ -5,7 +5,12 @@ import type { UEProject } from '../types';
 import { discoverModuleLayouts } from '../parsers/moduleLayout';
 import { fileExists } from '../platform/paths';
 import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
+import { buildReflectionIndex, type UClassReflection } from '../uht/reflectionIndex';
+import { ensureDataDir } from '../platform/dataDir';
 import * as fs from 'fs';
+
+export const SEMANTIC_GRAPH_VERSION = 1;
+const SEMANTIC_GRAPH_FILE = 'semantic-graph.json';
 
 export interface ProjectModelGraph {
   projectRoot: string;
@@ -14,10 +19,47 @@ export interface ProjectModelGraph {
   targets: string[];
 }
 
+export interface SemanticGraph {
+  version: number;
+  projectRoot: string;
+  updatedAt: string;
+  generation?: number;
+  fingerprint?: string;
+  engineId?: string;
+  provenance?: string;
+  synthetic?: boolean;
+  modules: ModuleNode[];
+  plugins: PluginNode[];
+  targets: TargetNode[];
+  reflection: UClassReflection[];
+  compileActions: CompileAction[];
+  generatedArtifacts: GeneratedArtifact[];
+}
+
 export interface ModuleNode {
   name: string;
   root: string;
+  publicDir?: string;
+  privateDir?: string;
+  publicHeaders: string[];
   translationUnits: string[];
+  buildCsDeps?: { public: string[]; private: string[] };
+}
+
+export interface PluginNode {
+  name: string;
+  modules: string[];
+}
+
+export interface TargetNode {
+  name: string;
+  path: string;
+}
+
+export interface GeneratedArtifact {
+  headerPath: string;
+  generatedPath: string;
+  className?: string;
 }
 
 export interface CompileAction {
@@ -48,58 +90,154 @@ function commandToArgs(command: string): string[] {
 }
 
 export async function buildProjectModel(project: UEProject): Promise<ProjectModelGraph> {
+  const graph = await buildSemanticGraph(project);
+  return {
+    projectRoot: graph.projectRoot,
+    modules: graph.modules,
+    plugins: graph.plugins.map((p) => p.name),
+    targets: graph.targets.map((t) => t.name),
+  };
+}
+
+export async function buildSemanticGraph(project: UEProject): Promise<SemanticGraph> {
   const layouts = await discoverModuleLayouts(project.projectRoot);
   const modules: ModuleNode[] = [];
 
   for (const layout of layouts) {
     const tus: string[] = [];
-    const privateDir = path.join(layout.moduleRoot, 'Private');
-    if (await fileExists(privateDir)) {
-      await collectCppFiles(privateDir, tus);
+    const headers: string[] = [];
+    if (layout.privateDir && (await fileExists(layout.privateDir))) {
+      await collectSourceFiles(layout.privateDir, tus, ['.cpp']);
     }
+    if (layout.publicDir && (await fileExists(layout.publicDir))) {
+      await collectSourceFiles(layout.publicDir, headers, ['.h', '.hpp', '.inl']);
+    }
+    const buildCs = path.join(layout.moduleRoot, `${layout.moduleName}.Build.cs`);
+    const deps = (await fileExists(buildCs)) ? parseBuildCsDeps(buildCs) : undefined;
     modules.push({
       name: layout.moduleName,
       root: layout.moduleRoot,
+      publicDir: layout.publicDir,
+      privateDir: layout.privateDir,
+      publicHeaders: headers,
       translationUnits: tus,
+      buildCsDeps: deps,
     });
   }
 
-  const plugins: string[] = [];
+  const plugins: PluginNode[] = [];
   const pluginsDir = path.join(project.projectRoot, 'Plugins');
   if (await fileExists(pluginsDir)) {
     const entries = await fs.promises.readdir(pluginsDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory()) plugins.push(entry.name);
+      if (!entry.isDirectory()) continue;
+      const pluginModules = modules
+        .filter((m) => m.root.includes(path.join('Plugins', entry.name)))
+        .map((m) => m.name);
+      plugins.push({ name: entry.name, modules: pluginModules });
     }
   }
 
+  const targets = await discoverTargets(project.projectRoot);
+  const reflection = await buildReflectionIndex(project.projectRoot);
+  const compileActions = await collectCompileActionsFromProject(project.projectRoot);
+  const generatedArtifacts = await linkGeneratedArtifacts(project.projectRoot, reflection);
+
   return {
+    version: SEMANTIC_GRAPH_VERSION,
     projectRoot: project.projectRoot,
+    updatedAt: new Date().toISOString(),
+    generation: Date.now(),
     modules,
     plugins,
-    targets: [`${project.name}Editor`, project.name],
+    targets,
+    reflection,
+    compileActions,
+    generatedArtifacts,
   };
 }
 
-async function collectCppFiles(dir: string, out: string[]): Promise<void> {
-  const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      await collectCppFiles(full, out);
-    } else if (entry.isFile() && entry.name.endsWith('.cpp')) {
-      out.push(full);
+export async function saveSemanticGraph(projectRoot: string, graph: SemanticGraph): Promise<string> {
+  const dir = await ensureDataDir(projectRoot);
+  const filePath = path.join(dir, SEMANTIC_GRAPH_FILE);
+  await fs.promises.writeFile(filePath, JSON.stringify(graph, null, 2) + '\n', 'utf-8');
+  return filePath;
+}
+
+export async function loadSemanticGraph(projectRoot: string): Promise<SemanticGraph | undefined> {
+  for (const sub of ['.ue5_8cursor', '.ue58rider']) {
+    try {
+      const raw = await fs.promises.readFile(path.join(projectRoot, sub, SEMANTIC_GRAPH_FILE), 'utf-8');
+      const graph = JSON.parse(raw) as SemanticGraph;
+      if (graph.version === SEMANTIC_GRAPH_VERSION) return graph;
+    } catch {
+      // try next
     }
+  }
+  return undefined;
+}
+
+async function discoverTargets(projectRoot: string): Promise<TargetNode[]> {
+  const targets: TargetNode[] = [];
+  const sourceDir = path.join(projectRoot, 'Source');
+  if (!(await fileExists(sourceDir))) return targets;
+
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(sourceDir, { withFileTypes: true });
+  } catch {
+    return targets;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.Target.cs')) continue;
+    targets.push({
+      name: entry.name.replace('.Target.cs', ''),
+      path: path.join(sourceDir, entry.name),
+    });
+  }
+  return targets;
+}
+
+function parseBuildCsDeps(buildCsPath: string): { public: string[]; private: string[] } {
+  try {
+    const content = fs.readFileSync(buildCsPath, 'utf-8');
+    const extract = (blockName: string): string[] => {
+      const re = new RegExp(`${blockName}\\.AddRange\\(new string\\[\\]\\s*\\{([^}]+)\\}`, 's');
+      const m = content.match(re);
+      if (!m) return [];
+      return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+    };
+    return {
+      public: extract('PublicDependencyModuleNames'),
+      private: extract('PrivateDependencyModuleNames'),
+    };
+  } catch {
+    return { public: [], private: [] };
   }
 }
 
-export async function collectCompileActions(
-  ctx: UE5_8CursorContext,
-  _settings: UE5_8CursorSettings,
-): Promise<CompileAction[]> {
-  if (!ctx.project) return [];
+async function linkGeneratedArtifacts(
+  projectRoot: string,
+  reflection: UClassReflection[],
+): Promise<GeneratedArtifact[]> {
+  const artifacts: GeneratedArtifact[] = [];
+  for (const cls of reflection) {
+    if (!cls.filePath.endsWith('.generated.h')) continue;
+    const headerGuess = cls.filePath.replace(/\.generated\.h$/i, '.h');
+    if (await fileExists(headerGuess)) {
+      artifacts.push({
+        headerPath: headerGuess,
+        generatedPath: cls.filePath,
+        className: cls.className,
+      });
+    }
+  }
+  return artifacts;
+}
 
-  const compileDbPath = path.join(ctx.project.projectRoot, 'compile_commands.json');
+export async function collectCompileActionsFromProject(projectRoot: string): Promise<CompileAction[]> {
+  const compileDbPath = path.join(projectRoot, 'compile_commands.json');
   if (!(await fileExists(compileDbPath))) return [];
 
   try {
@@ -121,6 +259,26 @@ export async function collectCompileActions(
       });
   } catch {
     return [];
+  }
+}
+
+export async function collectCompileActions(
+  ctx: UE5_8CursorContext,
+  _settings: UE5_8CursorSettings,
+): Promise<CompileAction[]> {
+  if (!ctx.project) return [];
+  return collectCompileActionsFromProject(ctx.project.projectRoot);
+}
+
+async function collectSourceFiles(dir: string, out: string[], exts: string[]): Promise<void> {
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await collectSourceFiles(full, out, exts);
+    } else if (entry.isFile() && exts.some((e) => entry.name.endsWith(e))) {
+      out.push(full);
+    }
   }
 }
 

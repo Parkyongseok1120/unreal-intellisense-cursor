@@ -60,7 +60,8 @@ function journalPath(projectRoot: string): string {
 export function classifyPolicy(filePath: string): MutationPolicy {
   const base = path.basename(filePath).toLowerCase();
   if (base.endsWith('.uproject') || base.endsWith('.uplugin')) return 'consentRequired';
-  if (base.endsWith('.build.cs') || base.endsWith('.target.cs')) return 'forbidden';
+  if (base.endsWith('.build.cs')) return 'consentRequired';
+  if (base.endsWith('.target.cs')) return 'forbidden';
   return 'auto';
 }
 
