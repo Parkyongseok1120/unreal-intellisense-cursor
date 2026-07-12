@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { UProjectData } from '../types';
+import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
 export interface UProjectPluginEntry {
   Name: string;
@@ -54,7 +55,10 @@ export function getMissingMcpPlugins(plugins: UProjectPluginEntry[]): string[] {
   return REQUIRED_MCP_PLUGINS.filter((name) => getPluginStatus(plugins, name) !== true);
 }
 
-export async function ensureMcpPluginsInUProject(uprojectPath: string): Promise<boolean> {
+export async function ensureMcpPluginsInUProject(
+  uprojectPath: string,
+  tx?: WorkspaceMutationTransaction,
+): Promise<boolean> {
   const raw = await fs.promises.readFile(uprojectPath, 'utf-8');
   const data = JSON.parse(raw) as { Plugins?: UProjectPluginEntry[] };
   const plugins = [...(data.Plugins ?? [])];
@@ -74,6 +78,7 @@ export async function ensureMcpPluginsInUProject(uprojectPath: string): Promise<
   if (!changed) return false;
 
   const updated = { ...data, Plugins: plugins };
-  await fs.promises.writeFile(uprojectPath, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
+  const projectRoot = path.dirname(uprojectPath);
+  await mutateJson(tx, projectRoot, uprojectPath, updated, { consentGranted: true });
   return true;
 }

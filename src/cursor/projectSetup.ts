@@ -12,13 +12,14 @@ import { findActiveMcpPortWithMode } from '../mcp/epicMcpClient';
 import { refreshProjectMcpSchema } from '../mcp/schemaRegistry';
 import { configureMcpBridge } from '../blueprint/mcpBlueprintBridge';
 import { getMissingMcpPlugins, parseUProjectFull, ensureMcpPluginsInUProject } from '../parsers/uprojectParser';
-import { writeProjectFileAtomic } from '../platform/workspaceMutation';
+import type { WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 import type { UEProject } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 
 export async function ensureUhtIntellisense(
   project: UEProject,
   extensionPath: string,
+  tx?: WorkspaceMutationTransaction,
 ): Promise<{ stubs: boolean; clangd: boolean }> {
   const stubsPath = await ensureUhtStubs(project.projectRoot, extensionPath);
   const [intermediateIncludes, moduleIncludes] = await Promise.all([
@@ -28,6 +29,7 @@ export async function ensureUhtIntellisense(
   const clangd = await ensureClangdConfig(project.projectRoot, {
     stubsPath,
     intermediateIncludes: [...moduleIncludes, ...intermediateIncludes],
+    tx,
   });
   return { stubs: true, clangd };
 }
@@ -36,6 +38,7 @@ export async function ensureMcpIntegration(
   project: UEProject,
   extensionPath: string,
   settings: UE5_8CursorSettings,
+  tx?: WorkspaceMutationTransaction,
 ): Promise<{ configured: boolean; activePort?: number; mode?: string; schemaRefreshed?: boolean }> {
   if (!settings.mcpEnabled) return { configured: false };
 
@@ -48,11 +51,14 @@ export async function ensureMcpIntegration(
     EPIC_MCP_DEFAULT_PORT;
 
   const mcpScript = path.join(extensionPath, 'dist', 'mcp-server.js');
-  const configured = await ensureProjectMcpConfig({
-    projectRoot: project.projectRoot,
-    port: preferred,
-    extensionMcpScript: mcpScript,
-  });
+  const configured = await ensureProjectMcpConfig(
+    {
+      projectRoot: project.projectRoot,
+      port: preferred,
+      extensionMcpScript: mcpScript,
+    },
+    tx,
+  );
 
   const found = await findActiveMcpPortWithMode([
     preferred,
@@ -80,7 +86,7 @@ export async function ensureMcpIntegration(
         'Skip',
       );
       if (consent === 'Allow') {
-        await ensureMcpPluginsInUProject(project.uprojectPath);
+        await ensureMcpPluginsInUProject(project.uprojectPath, tx);
       }
     }
   } catch {

@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CLANGD_MANAGED_BEGIN, CLANGD_MANAGED_END, LEGACY_CLANGD_MANAGED_BEGIN, LEGACY_CLANGD_MANAGED_END } from '../constants';
-import { writeProjectFileAtomic } from '../platform/workspaceMutation';
+import { mutateText, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
 export function buildManagedClangdBlock(options: {
   stubsPath?: string;
@@ -49,7 +49,7 @@ export function buildManagedClangdBlock(options: {
 
 export async function ensureClangdConfig(
   projectRoot: string,
-  options: { stubsPath?: string; intermediateIncludes?: string[] } = {},
+  options: { stubsPath?: string; intermediateIncludes?: string[]; tx?: WorkspaceMutationTransaction } = {},
 ): Promise<boolean> {
   const filePath = path.join(projectRoot, '.clangd');
   const block = buildManagedClangdBlock(options);
@@ -79,24 +79,12 @@ export async function ensureClangdConfig(
     if (after.length > 0) pieces.push(after);
     const newContent = pieces.join('\n\n') + '\n';
     if (newContent === content) return false;
-    const result = await writeProjectFileAtomic({
-      projectRoot,
-      filePath,
-      content: newContent,
-      policy: 'auto',
-    });
-    if (result.error) throw new Error(result.error);
-    return result.changed;
+    await mutateText(options.tx, projectRoot, filePath, newContent);
+    return true;
   }
 
   const trimmed = content.trimEnd();
   const newContent = trimmed.length === 0 ? `${block}\n` : `${trimmed}\n\n${block}\n`;
-  const result = await writeProjectFileAtomic({
-    projectRoot,
-    filePath,
-    content: newContent,
-    policy: 'auto',
-  });
-  if (result.error) throw new Error(result.error);
-  return result.changed;
+  await mutateText(options.tx, projectRoot, filePath, newContent);
+  return true;
 }

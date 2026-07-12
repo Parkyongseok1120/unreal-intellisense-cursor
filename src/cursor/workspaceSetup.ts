@@ -10,7 +10,7 @@ import {
   stripExplorerFilterMarkers,
 } from './explorerFilter';
 import { GENERATED_SETTINGS_FLAG, GITIGNORE_MARKER, GENERATED_GITIGNORE_LINES } from './generatedArtifacts';
-import { writeProjectFileAtomic } from '../platform/workspaceMutation';
+import { mutateJson, mutateText, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
 function deepMerge(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
   const result = { ...base };
@@ -95,12 +95,10 @@ export async function ensureWorkspaceSettings(
     clangdPath?: string;
     applyExplorerFilter?: boolean;
     contentBrowserMode?: import('./explorerFilter').ContentBrowserMode;
+    tx?: WorkspaceMutationTransaction;
   } = {},
 ): Promise<boolean> {
-  const vscodeDir = path.join(project.projectRoot, '.vscode');
-  await fs.promises.mkdir(vscodeDir, { recursive: true });
-
-  const settingsPath = path.join(vscodeDir, 'settings.json');
+  const settingsPath = path.join(project.projectRoot, '.vscode', 'settings.json');
   const existing = await readSettingsFile(settingsPath);
 
   const ueSettings = buildUeSettings({
@@ -114,20 +112,14 @@ export async function ensureWorkspaceSettings(
   const newContent = JSON.stringify(merged, null, 2) + '\n';
   const oldContent = JSON.stringify(existing, null, 2) + '\n';
   if (newContent === oldContent) return false;
-  const result = await writeProjectFileAtomic({
-    projectRoot: project.projectRoot,
-    filePath: settingsPath,
-    content: newContent,
-    policy: 'auto',
-  });
-  if (result.error) throw new Error(result.error);
-  return result.changed;
+  await mutateText(options.tx, project.projectRoot, settingsPath, newContent);
+  return true;
 }
 
-/**
- * .gitignore에 플러그인 생성물 등록 — .vscode, .cursor 등 커밋 방지
- */
-export async function ensureGeneratedGitignore(projectRoot: string): Promise<boolean> {
+export async function ensureGeneratedGitignore(
+  projectRoot: string,
+  tx?: WorkspaceMutationTransaction,
+): Promise<boolean> {
   const gitignorePath = path.join(projectRoot, '.gitignore');
   let content = '';
   try {
@@ -142,14 +134,8 @@ export async function ensureGeneratedGitignore(projectRoot: string): Promise<boo
 
   const block = '\n' + GENERATED_GITIGNORE_LINES.join('\n') + '\n';
   const newContent = content.endsWith('\n') || content.length === 0 ? content + block : content + '\n' + block;
-  const result = await writeProjectFileAtomic({
-    projectRoot: projectRoot,
-    filePath: gitignorePath,
-    content: newContent,
-    policy: 'auto',
-  });
-  if (result.error) throw new Error(result.error);
-  return result.changed;
+  await mutateText(tx, projectRoot, gitignorePath, newContent);
+  return true;
 }
 
 export async function applyExplorerFilter(project: UEProject): Promise<boolean> {
@@ -189,14 +175,8 @@ export async function removeExplorerFilter(project: UEProject): Promise<boolean>
   if (nextWatcher) cleaned['files.watcherExclude'] = nextWatcher;
   else delete cleaned['files.watcherExclude'];
 
-  const result = await writeProjectFileAtomic({
-    projectRoot: project.projectRoot,
-    filePath: settingsPath,
-    content: JSON.stringify(cleaned, null, 2) + '\n',
-    policy: 'auto',
-  });
-  if (result.error) throw new Error(result.error);
-  return result.changed;
+  await mutateText(undefined, project.projectRoot, settingsPath, JSON.stringify(cleaned, null, 2) + '\n');
+  return true;
 }
 
 function removeManagedExplorerPatterns(
@@ -211,11 +191,11 @@ function removeManagedExplorerPatterns(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-export async function ensureCursorRules(project: UEProject): Promise<boolean> {
-  const rulesDir = path.join(project.projectRoot, '.cursor', 'rules');
-  await fs.promises.mkdir(rulesDir, { recursive: true });
-
-  const rulePath = path.join(rulesDir, 'ue58-cpp.mdc');
+export async function ensureCursorRules(
+  project: UEProject,
+  tx?: WorkspaceMutationTransaction,
+): Promise<boolean> {
+  const rulePath = path.join(project.projectRoot, '.cursor', 'rules', 'ue58-cpp.mdc');
   const content = `---
 description: Unreal Engine 5.8 C++ conventions for this project
 globs: **/*.{h,cpp,inl}
@@ -238,19 +218,10 @@ alwaysApply: false
   } catch {
     // new file
   }
-  const result = await writeProjectFileAtomic({
-    projectRoot: project.projectRoot,
-    filePath: rulePath,
-    content,
-    policy: 'auto',
-  });
-  if (result.error) throw new Error(result.error);
-  return result.changed;
+  await mutateText(tx, project.projectRoot, rulePath, content);
+  return true;
 }
 
-/**
- * 프로젝트 감지 시 플러그인 생성물 일괄 적용
- */
 export async function ensureGeneratedWorkspace(
   project: UEProject,
   options: {
@@ -260,24 +231,29 @@ export async function ensureGeneratedWorkspace(
     engine?: UEInstallation;
     debugConfiguration?: BuildConfiguration;
     platform?: string;
+    tx?: WorkspaceMutationTransaction;
   } = {},
 ): Promise<{ settings: boolean; gitignore: boolean; debug?: { launch: boolean; tasks: boolean } }> {
   const settings = await ensureWorkspaceSettings(project, {
     clangdPath: options.clangdPath,
     applyExplorerFilter: options.applyExplorerFilter,
     contentBrowserMode: options.contentBrowserMode,
+    tx: options.tx,
   });
-  const gitignore = await ensureGeneratedGitignore(project.projectRoot);
+  const gitignore = await ensureGeneratedGitignore(project.projectRoot, options.tx);
 
   let debug: { launch: boolean; tasks: boolean } | undefined;
   if (options.engine && options.debugConfiguration) {
     const { ensureDebugConfigs } = await import('./launchConfig');
-    debug = await ensureDebugConfigs({
-      project,
-      engine: options.engine,
-      debugConfiguration: options.debugConfiguration,
-      platform: options.platform ?? 'Win64',
-    });
+    debug = await ensureDebugConfigs(
+      {
+        project,
+        engine: options.engine,
+        debugConfiguration: options.debugConfiguration,
+        platform: options.platform ?? 'Win64',
+      },
+      options.tx,
+    );
   }
 
   return { settings, gitignore, debug };

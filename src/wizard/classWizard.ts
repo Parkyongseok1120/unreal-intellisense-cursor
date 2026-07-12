@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { UEProject } from '../types';
+import { mutateText, runWithTransaction, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
 export type WizardClassKind =
   | 'Actor'
@@ -168,11 +169,22 @@ export async function updateBuildCsDependencies(
     changed = true;
   }
 
-  if (changed) await fs.promises.writeFile(buildCs, content, 'utf-8');
+  if (changed) {
+    // Build.cs mutation is forbidden by workspace policy — caller must edit manually.
+    return false;
+  }
   return changed;
 }
 
 export async function generateClassFiles(project: UEProject, input: WizardInput) {
+  return runWithTransaction(project.projectRoot, async (tx) => generateClassFilesInTx(project, input, tx));
+}
+
+async function generateClassFilesInTx(
+  project: UEProject,
+  input: WizardInput,
+  tx: WorkspaceMutationTransaction,
+) {
   const meta = KIND_META[input.kind];
   const paths = resolveWizardPaths(project, input);
   if (await fileExists(paths.publicHeader) || (!meta.headerOnly && (await fileExists(paths.privateCpp)))) {
@@ -182,10 +194,10 @@ export async function generateClassFiles(project: UEProject, input: WizardInput)
   await fs.promises.mkdir(path.dirname(paths.publicHeader), { recursive: true });
   if (!meta.headerOnly) {
     await fs.promises.mkdir(path.dirname(paths.privateCpp), { recursive: true });
-    await fs.promises.writeFile(paths.privateCpp, cppTemplate(input, paths.className), 'utf-8');
+    await mutateText(tx, project.projectRoot, paths.privateCpp, cppTemplate(input, paths.className));
   }
 
-  await fs.promises.writeFile(paths.publicHeader, headerTemplate(input, paths.className), 'utf-8');
+  await mutateText(tx, project.projectRoot, paths.publicHeader, headerTemplate(input, paths.className));
 
   if (meta.moduleExtra?.length) {
     await updateBuildCsDependencies(project, input.moduleName, meta.moduleExtra);

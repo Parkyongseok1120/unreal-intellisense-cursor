@@ -1,11 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { UEProject } from '../types';
+import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
-export async function ensureShaderIntellisense(project: UEProject, engineRoot?: string): Promise<boolean> {
-  const vscodeDir = path.join(project.projectRoot, '.vscode');
-  await fs.promises.mkdir(vscodeDir, { recursive: true });
-  const settingsPath = path.join(vscodeDir, 'settings.json');
+export async function ensureShaderIntellisense(
+  project: UEProject,
+  engineRoot?: string,
+  tx?: WorkspaceMutationTransaction,
+): Promise<boolean> {
+  const settingsPath = path.join(project.projectRoot, '.vscode', 'settings.json');
 
   let existing: Record<string, unknown> = {};
   try {
@@ -39,6 +42,6 @@ export async function ensureShaderIntellisense(project: UEProject, engineRoot?: 
   const newContent = JSON.stringify(merged, null, 2) + '\n';
   const oldContent = JSON.stringify(existing, null, 2) + '\n';
   if (newContent === oldContent) return false;
-  await fs.promises.writeFile(settingsPath, newContent, 'utf-8');
+  await mutateJson(tx, project.projectRoot, settingsPath, merged);
   return true;
 }

@@ -4,6 +4,7 @@ import type { UE5_8CursorSettings } from '../config/settings';
 import type { UEProject } from '../types';
 import { discoverModuleLayouts } from '../parsers/moduleLayout';
 import { fileExists } from '../platform/paths';
+import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 import * as fs from 'fs';
 
 export interface ProjectModelGraph {
@@ -127,13 +128,26 @@ export async function addTranslationUnitAction(
   projectRoot: string,
   cppPath: string,
   templateAction?: CompileAction,
+  options?: { enabled?: boolean; tx?: WorkspaceMutationTransaction },
 ): Promise<boolean> {
+  if (options?.enabled === false) return false;
+
   const compileDbPath = path.join(projectRoot, 'compile_commands.json');
   if (!(await fileExists(compileDbPath))) return false;
 
+  let rawContent = '';
+  try {
+    rawContent = await fs.promises.readFile(compileDbPath, 'utf-8');
+  } catch {
+    return false;
+  }
+  if (!rawContent.includes('UE5_8_CURSOR_SYNTHETIC_COMPILE_DB=1')) {
+    return false;
+  }
+
   let entries: Array<{ file: string; directory?: string; arguments?: string[]; command?: string }>;
   try {
-    entries = JSON.parse(await fs.promises.readFile(compileDbPath, 'utf-8'));
+    entries = JSON.parse(rawContent);
   } catch {
     return false;
   }
@@ -160,7 +174,7 @@ export async function addTranslationUnitAction(
     arguments: args,
   });
 
-  await fs.promises.writeFile(compileDbPath, JSON.stringify(entries, null, 2) + '\n', 'utf-8');
+  await mutateJson(options?.tx, projectRoot, compileDbPath, entries);
   return true;
 }
 

@@ -15,6 +15,8 @@ import { spawnAsync } from '../platform/process';
 import { findAndPlaceCompileCommands } from '../commands/setupCommands';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
+import { runWithTransaction, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
+import type { CancellationToken } from 'vscode';
 
 export type IntelliSenseMode = 'ready' | 'partial' | 'missing';
 
@@ -130,6 +132,7 @@ export async function runCacheWarmup(
   settings: UE5_8CursorSettings,
   log: (msg: string) => void,
   onLine?: (line: string) => void,
+  token?: CancellationToken,
 ): Promise<boolean> {
   if (!ctx.project || !ctx.engine) return false;
 
@@ -151,6 +154,7 @@ export async function runCacheWarmup(
   const result = await spawnAsync(cmd.executable, cmd.args, {
     onStdout: sink,
     onStderr: sink,
+    token,
   });
 
   const generated = await hasUhtGeneratedCache(ctx.project.projectRoot);
@@ -169,7 +173,7 @@ export async function ensureCompileDatabase(
   settings: UE5_8CursorSettings,
   extensionPath: string,
   log: (msg: string) => void,
-  options?: { force?: boolean; fast?: boolean },
+  options?: { force?: boolean; fast?: boolean; tx?: WorkspaceMutationTransaction; token?: CancellationToken },
 ): Promise<{ mode: IntelliSenseMode; source?: BootstrapResult['compileDbSource']; entries?: number }> {
   if (!ctx.project) return { mode: 'missing' };
 
@@ -186,7 +190,7 @@ export async function ensureCompileDatabase(
     return { mode: existingSynthetic ? 'partial' : 'ready', source: existingSynthetic ? 'buildcs' : 'rsp' };
   }
 
-  const rsp = await generateCompileDatabaseFromRsp(projectRoot, ctx.engine.root);
+  const rsp = await generateCompileDatabaseFromRsp(projectRoot, ctx.engine.root, options?.tx);
   if (rsp.ok) {
     log(`[UE5_8 Cursor] compile_commands from .rsp (${rsp.entryCount} entries)`);
     return { mode: 'ready', source: 'rsp', entries: rsp.entryCount };
@@ -215,6 +219,7 @@ export async function ensureCompileDatabase(
       env,
       onStdout: capture,
       onStderr: capture,
+      token: options?.token,
     });
     if (result.exitCode === 0) {
       const placed = await findAndPlaceCompileCommands(
@@ -236,7 +241,7 @@ export async function ensureCompileDatabase(
     return { mode: 'ready', source: 'ubt' };
   }
 
-  const synthetic = await generateCompileDatabaseFromBuildCs(projectRoot, ctx.engine.root);
+  const synthetic = await generateCompileDatabaseFromBuildCs(projectRoot, ctx.engine.root, options?.tx);
   if (synthetic.ok) {
     log(`[UE5_8 Cursor] compile_commands from Build.cs synthetic (${synthetic.entryCount} entries)`);
     return { mode: 'partial', source: 'buildcs', entries: synthetic.entryCount };
@@ -267,72 +272,73 @@ export async function bootstrapProject(
     log('[UE5_8 Cursor] WARNING: clangd not found');
   }
 
-  if (settings.upsertClangdConfig && extensionPath) {
-    await ensureUhtIntellisense(ctx.project, extensionPath);
-    const layouts = await discoverModuleLayouts(ctx.project.projectRoot);
-    if (layouts.length > 0) {
-      log(`[UE5_8 Cursor] Module Public/Private: ${layouts.map((l) => l.moduleName).join(', ')}`);
-    }
-  }
-
-  const { settings: wsChanged, gitignore: giChanged, debug } = await ensureGeneratedWorkspace(ctx.project, {
-    clangdPath,
-    applyExplorerFilter: settings.hideExplorerNoise,
-    contentBrowserMode: settings.contentBrowserMode,
-    engine: ctx.engine,
-    debugConfiguration: settings.debugBuildConfiguration,
-    platform: settings.platform,
-  });
-  if (wsChanged) log('[UE5_8 Cursor] .vscode/settings.json updated');
-  if (giChanged) log('[UE5_8 Cursor] .gitignore updated');
-  if (debug?.launch || debug?.tasks) log('[UE5_8 Cursor] debug configs updated');
-
-  if (extensionPath && settings.mcpEnabled) {
-    await ensureMcpIntegration(ctx.project, extensionPath, settings);
-  }
-
-  await ensureShaderIntellisense(ctx.project, ctx.engine?.root);
-  await ensureMultiRootWorkspace(ctx.project);
-  await ensureCursorRules(ctx.project);
-
-  // Warm-up (full UBT Editor build) can take minutes on a cold project. Do NOT
-  // block activation on it — report what we can build now and let the caller run
-  // the warm-up in the background, then upgrade IntelliSense to 'ready'.
-  const warmupPending = await needsCacheWarmup(ctx, settings);
-  let compileResult: {
-    mode: IntelliSenseMode;
-    source?: BootstrapResult['compileDbSource'];
-    entries?: number;
-  } = { mode: 'missing' };
-  if (settings.autoSetupOnOpen) {
-    const compileDb = path.join(ctx.project.projectRoot, 'compile_commands.json');
-    const forceCompileDb = await isSyntheticCompileDatabase(compileDb);
-    compileResult = await ensureCompileDatabase(ctx, settings, extensionPath, log, {
-      force: forceCompileDb,
-      fast: warmupPending,
-    });
+  return await runWithTransaction(ctx.project.projectRoot, async (tx) => {
     if (settings.upsertClangdConfig && extensionPath) {
-      await ensureUhtIntellisense(ctx.project, extensionPath);
+      await ensureUhtIntellisense(ctx.project!, extensionPath, tx);
+      const layouts = await discoverModuleLayouts(ctx.project!.projectRoot);
+      if (layouts.length > 0) {
+        log(`[UE5_8 Cursor] Module Public/Private: ${layouts.map((l) => l.moduleName).join(', ')}`);
+      }
     }
-    try {
-      await vscode.commands.executeCommand('clangd.restart');
-    } catch {
-      // clangd extension may not be active yet
+
+    const { settings: wsChanged, gitignore: giChanged, debug } = await ensureGeneratedWorkspace(ctx.project!, {
+      clangdPath,
+      applyExplorerFilter: settings.hideExplorerNoise,
+      contentBrowserMode: settings.contentBrowserMode,
+      engine: ctx.engine,
+      debugConfiguration: settings.debugBuildConfiguration,
+      platform: settings.platform,
+      tx,
+    });
+    if (wsChanged) log('[UE5_8 Cursor] .vscode/settings.json updated');
+    if (giChanged) log('[UE5_8 Cursor] .gitignore updated');
+    if (debug?.launch || debug?.tasks) log('[UE5_8 Cursor] debug configs updated');
+
+    if (extensionPath && settings.mcpEnabled) {
+      await ensureMcpIntegration(ctx.project!, extensionPath, settings, tx);
     }
-  }
 
-  if (warmupPending) {
-    log('[UE5_8 Cursor] IntelliSense partial — warming UHT cache in background for full accuracy');
-  } else if (compileResult.mode === 'partial') {
-    log('[UE5_8 Cursor] IntelliSense partial — launch editor once for full accuracy');
-  }
+    await ensureShaderIntellisense(ctx.project!, ctx.engine?.root, tx);
+    await ensureMultiRootWorkspace(ctx.project!, tx);
+    await ensureCursorRules(ctx.project!, tx);
 
-  return {
-    intelliSense: warmupPending && compileResult.mode === 'missing' ? 'partial' : compileResult.mode,
-    compileDbSource: compileResult.source,
-    compileDbEntries: compileResult.entries,
-    clangdPath,
-    warmupPending,
-    errors,
-  };
+    const warmupPending = await needsCacheWarmup(ctx, settings);
+    let compileResult: {
+      mode: IntelliSenseMode;
+      source?: BootstrapResult['compileDbSource'];
+      entries?: number;
+    } = { mode: 'missing' };
+    if (settings.autoSetupOnOpen) {
+      const compileDb = path.join(ctx.project!.projectRoot, 'compile_commands.json');
+      const forceCompileDb = await isSyntheticCompileDatabase(compileDb);
+      compileResult = await ensureCompileDatabase(ctx, settings, extensionPath, log, {
+        force: forceCompileDb,
+        fast: warmupPending,
+        tx,
+      });
+      if (settings.upsertClangdConfig && extensionPath) {
+        await ensureUhtIntellisense(ctx.project!, extensionPath, tx);
+      }
+      try {
+        await vscode.commands.executeCommand('clangd.restart');
+      } catch {
+        // clangd extension may not be active yet
+      }
+    }
+
+    if (warmupPending) {
+      log('[UE5_8 Cursor] IntelliSense partial — warming UHT cache in background for full accuracy');
+    } else if (compileResult.mode === 'partial') {
+      log('[UE5_8 Cursor] IntelliSense partial — launch editor once for full accuracy');
+    }
+
+    return {
+      intelliSense: warmupPending && compileResult.mode === 'missing' ? 'partial' : compileResult.mode,
+      compileDbSource: compileResult.source,
+      compileDbEntries: compileResult.entries,
+      clangdPath,
+      warmupPending,
+      errors,
+    };
+  });
 }

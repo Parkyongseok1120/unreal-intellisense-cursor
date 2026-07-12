@@ -15,13 +15,6 @@ export interface EditorBridgeInfo {
   protocolVersion: number;
 }
 
-const DEFAULT_CAPABILITIES: EditorBridgeCapability[] = [
-  'assetRegistry',
-  'blueprintGraph',
-  'pieState',
-  'unrealLogs',
-];
-
 export class EditorBridgeClient implements vscode.Disposable {
   private info: EditorBridgeInfo = {
     connected: false,
@@ -36,7 +29,7 @@ export class EditorBridgeClient implements vscode.Disposable {
     // Until the plugin is running, callers should treat MCP results as provisional.
     this.info = {
       connected: false,
-      capabilities: DEFAULT_CAPABILITIES,
+      capabilities: [],
       protocolVersion: 1,
     };
     return this.info;

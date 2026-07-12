@@ -1,10 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { UEProject } from '../types';
+import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
 const WORKSPACE_MARKER = 'ue58rider.multiRootWorkspace';
 
-export async function ensureMultiRootWorkspace(project: UEProject): Promise<string | undefined> {
+export async function ensureMultiRootWorkspace(
+  project: UEProject,
+  tx?: WorkspaceMutationTransaction,
+): Promise<string | undefined> {
   const wsPath = path.join(project.projectRoot, `${project.name}.code-workspace`);
   const folders: Array<{ name: string; path: string }> = [
     { name: `${project.name} (Root)`, path: '.' },
@@ -55,7 +59,7 @@ export async function ensureMultiRootWorkspace(project: UEProject): Promise<stri
   }
   if (existing === newJson) return undefined;
 
-  await fs.promises.writeFile(wsPath, newJson, 'utf-8');
+  await mutateJson(tx, project.projectRoot, wsPath, content);
   return wsPath;
 }
 

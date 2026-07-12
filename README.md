@@ -1,13 +1,22 @@
-# Unreal Engine 5.8 IntellisSense Cursor VSIX
+# Unreal Engine 5.8 IntelliSense Cursor VSIX
+
+```text
+Project status: Active development
+Current milestone: Reliability foundation (6.2.x)
+Production ready: No
+Rider replacement: Not yet
+Supported engine: UE 5.8
+Supported host: Cursor on Windows
+```
 
 Cursor에서 UE 5.8 C++ 환경을 조금 더 편하게 써보려고 만든 실험 확장입니다.  
 처음에는 “Cursor에서도 Unreal C++ IntelliSense를 꽤 쓸만하게 만들 수 있지 않을까?” 정도의 생각으로 시작했는데, 파고들다 보니 UBT, `compile_commands.json`, clangd, UHT, PCH, 모듈 의존성까지 꽤 깊게 들어가게 됐습니다.
 
-결론부터 말하면, **완성품이라기보다는 실험 기록에 가깝습니다.**  
-작동하는 부분도 있고, 한계가 명확해서 여기서 멈춘 부분도 있습니다.
+**2026-06에 일시 중단했던 실험이 reliability-first 방향으로 재개되었습니다.**  
+Milestone 0 (6.2.1)은 신뢰성 기반 — mutation rollback, session 직렬화, watcher batch, compile DB 안전화 — 을 목표로 합니다.
 
 Experimental Unreal Engine 5.8 C++ workflow extension for Cursor.  
-This is not a finished Rider replacement. It is closer to an archive of what worked, what did not, and which parts may still be useful.
+This is not a finished Rider replacement. Active development continues with a reliability-first roadmap.
 
 ---
 
@@ -15,9 +24,9 @@ This is not a finished Rider replacement. It is closer to an archive of what wor
 
 ### Project Status
 
-**This experiment ended in 2026-06.**
+**Active development — reliability foundation (6.2.x).**
 
-The original goal was to see how far we could push **UE 5.8 C++ IntelliSense in Cursor using clangd**. In the end, I could not get it to Rider-level accuracy.
+The original goal was to see how far we could push **UE 5.8 C++ IntelliSense in Cursor using clangd**. Development paused in 2026-06 but has resumed with Milestone 0 reliability fixes (6.2.1): transactional workspace writes, session job scheduling, watcher batching, and safer compile DB refresh.
 
 On an actual UE 5.8 game project, **MSVC builds and the Unreal Editor worked fine**. The issue was that the Problems panel still showed many `source: clang` errors that did not match the real build result.
 

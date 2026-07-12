@@ -1,6 +1,7 @@
 export type InvalidationScope =
   | 'translationUnit'
   | 'reflection'
+  | 'uhtModule'
   | 'module'
   | 'projectModel'
   | 'targetModule';
@@ -35,6 +36,9 @@ export function classifySourceChange(filePath: string, isCreate: boolean, projec
   const moduleName = sourceMatch?.[1];
 
   if (rel.endsWith('.h') || rel.endsWith('.hpp') || rel.endsWith('.inl')) {
+    if (isCreate) {
+      return { filePath, isCreate, scope: 'uhtModule', moduleName };
+    }
     return { filePath, isCreate, scope: 'reflection', moduleName };
   }
 
@@ -46,7 +50,7 @@ export function classifySourceChange(filePath: string, isCreate: boolean, projec
 }
 
 export function shouldRefreshCompileDatabase(event: SourceChangeEvent): boolean {
-  return ['translationUnit', 'module', 'projectModel', 'targetModule'].includes(event.scope);
+  return ['translationUnit', 'uhtModule', 'module', 'projectModel', 'targetModule'].includes(event.scope);
 }
 
 export function shouldRefreshReflectionOnly(event: SourceChangeEvent): boolean {
@@ -59,6 +63,8 @@ export function invalidationLabel(scope: InvalidationScope): string {
       return 'translation unit';
     case 'reflection':
       return 'reflection index';
+    case 'uhtModule':
+      return 'UHT module';
     case 'module':
       return 'module';
     case 'projectModel':

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as http from 'http';
 import { mcpJsonRpc } from '../mcp/epicMcpClient';
+import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
 export const EPIC_MCP_DEFAULT_PORT = 8000;
 
@@ -61,11 +62,11 @@ function mergeServerEntry(
   return merged;
 }
 
-export async function ensureProjectMcpConfig(options: McpConfigOptions): Promise<boolean> {
-  const cursorDir = path.join(options.projectRoot, '.cursor');
-  await fs.promises.mkdir(cursorDir, { recursive: true });
-
-  const configPath = path.join(cursorDir, 'mcp.json');
+export async function ensureProjectMcpConfig(
+  options: McpConfigOptions,
+  tx?: WorkspaceMutationTransaction,
+): Promise<boolean> {
+  const configPath = path.join(options.projectRoot, '.cursor', 'mcp.json');
   let existing: { mcpServers?: Record<string, unknown> } = {};
   try {
     existing = JSON.parse(await fs.promises.readFile(configPath, 'utf-8'));
@@ -90,8 +91,7 @@ export async function ensureProjectMcpConfig(options: McpConfigOptions): Promise
 
   if (!changed && existing.mcpServers) return false;
 
-  const newContent = JSON.stringify({ mcpServers: servers }, null, 2) + '\n';
-  await fs.promises.writeFile(configPath, newContent, 'utf-8');
+  await mutateJson(tx, options.projectRoot, configPath, { mcpServers: servers });
   return true;
 }
 

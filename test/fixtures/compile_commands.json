@@ -1,0 +1,12 @@
+[
+  {
+    "directory": "C:/Project",
+    "file": "C:/Project/Source/Game/Private/Foo.cpp",
+    "command": "clang++ -std=c++20 -DUE5_8_CURSOR_SYNTHETIC_COMPILE_DB=1 -c C:/Project/Source/Game/Private/Foo.cpp"
+  },
+  {
+    "directory": "C:/Project",
+    "file": "C:/Project/Source/Game/Private/Bar.cpp",
+    "command": "clang++ -std=c++20 -DUE5_8_CURSOR_SYNTHETIC_COMPILE_DB=1 -c C:/Project/Source/Game/Private/Bar.cpp"
+  }
+]

@@ -12,11 +12,15 @@ export type ProjectSessionState =
   | 'Refreshing'
   | 'Failed';
 
+export type JobKind = 'detection' | 'warmup' | 'compileRefresh' | 'reflection' | 'bridge';
+
 export interface PipelineRunOptions {
   allowAutoSetup?: boolean;
 }
 
 type PipelineRunner = (options: PipelineRunOptions, token: vscode.CancellationToken) => Promise<void>;
+
+const WRITE_JOBS: ReadonlySet<JobKind> = new Set(['warmup', 'compileRefresh']);
 
 export class ProjectSession implements vscode.Disposable {
   private state: ProjectSessionState = 'Idle';
@@ -26,6 +30,8 @@ export class ProjectSession implements vscode.Disposable {
   private bridge: CommandBridge | undefined;
   private bridgeProjectRoot: string | undefined;
   private failureCount = 0;
+  private writeJobChain: Promise<void> = Promise.resolve();
+  private pendingInvalidations = new Set<string>();
 
   getState(): ProjectSessionState {
     return this.state;
@@ -35,13 +41,22 @@ export class ProjectSession implements vscode.Disposable {
     return this.generation;
   }
 
+  getActiveToken(): vscode.CancellationToken | undefined {
+    return this.cancelSource?.token;
+  }
+
   private setState(next: ProjectSessionState): void {
     this.state = next;
   }
 
   async runPipeline(runner: PipelineRunner, options: PipelineRunOptions = {}): Promise<void> {
-    this.cancelSource?.cancel();
+    const previous = this.pipelinePromise;
+    if (previous) {
+      this.cancelSource?.cancel();
+      await previous.catch(() => {});
+    }
     this.cancelSource?.dispose();
+
     this.cancelSource = new vscode.CancellationTokenSource();
     const token = this.cancelSource.token;
     const gen = ++this.generation;
@@ -81,6 +96,17 @@ export class ProjectSession implements vscode.Disposable {
     }
   }
 
+  enqueueInvalidation(scope: string): void {
+    this.pendingInvalidations.add(scope);
+    this.invalidate();
+  }
+
+  drainInvalidations(): string[] {
+    const scopes = [...this.pendingInvalidations];
+    this.pendingInvalidations.clear();
+    return scopes;
+  }
+
   markRefreshing(): void {
     this.setState('Refreshing');
   }
@@ -99,6 +125,34 @@ export class ProjectSession implements vscode.Disposable {
 
   getBackoffMs(): number {
     return Math.min(60_000, 1000 * 2 ** Math.min(this.failureCount, 6));
+  }
+
+  async awaitIdleWrites(): Promise<void> {
+    await this.writeJobChain;
+  }
+
+  async runJob<T>(
+    kind: JobKind,
+    projectRoot: string,
+    generation: number,
+    token: vscode.CancellationToken,
+    fn: () => Promise<T>,
+  ): Promise<T | undefined> {
+    const run = async (): Promise<T | undefined> => {
+      if (token.isCancellationRequested || this.isStale(generation)) return undefined;
+      return fn();
+    };
+
+    if (WRITE_JOBS.has(kind)) {
+      const chained = this.writeJobChain.then(run, run);
+      this.writeJobChain = chained.then(
+        () => {},
+        () => {},
+      );
+      return chained;
+    }
+
+    return run();
   }
 
   async ensureBridge(projectRoot: string): Promise<CommandBridge | undefined> {

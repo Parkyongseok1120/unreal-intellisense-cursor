@@ -4,6 +4,10 @@ import { loadTsModule } from './helpers/loadTsModule.mjs';
 
 const wizard = loadTsModule('src/wizard/classWizard.ts', {
   fs: () => ({ promises: {} }),
+  '../platform/workspaceMutation': () => ({
+    mutateText: async () => {},
+    runWithTransaction: async (_root, fn) => fn({ writeText: async () => {} }),
+  }),
 });
 
 describe('classWizard', () => {

@@ -2,7 +2,7 @@
   "name": "ue5-8-cursor",
   "displayName": "UE5_8 Cursor",
   "description": "Cursor dedicated Unreal Engine 5.8 C++ workflow — IntelliSense, build, Live Coding, MCP",
-  "version": "6.2.0",
+  "version": "6.2.1",
   "publisher": "truesync",
   "license": "MIT",
   "repository": {
@@ -504,6 +504,18 @@
           "description": "Content Browser Webview에서 에셋 Import DnD (experimental). 에디터 MCP 필요.",
           "scope": "resource"
         },
+        "ue58rider.experimental.incrementalCompileDb": {
+          "type": "boolean",
+          "default": false,
+          "description": "새 .cpp 생성 시 추정 compile_commands 항목 삽입 (synthetic DB만, 기본 off).",
+          "scope": "resource"
+        },
+        "ue58rider.experimental.hlsl": {
+          "type": "boolean",
+          "default": false,
+          "description": "HLSL completion provider 등록 (experimental scaffold).",
+          "scope": "resource"
+        },
         "ue58rider.autoStartLogViewer": {
           "type": "boolean",
           "default": false,
@@ -692,6 +704,8 @@
     "package": "vsce package --target win32-x64",
     "prepackage": "npm run build && node scripts/fetch-llvm.mjs",
     "test": "node --test test/*.test.mjs",
+    "test:ext-host": "node --test test/extension-host-smoke.test.mjs",
+    "verify:ue-project": "node scripts/verify-ue-project.mjs",
     "verify:project-mjs": "node scripts/project-mjs-verify.mjs --capture-schema",
     "setup:intellisense": "node scripts/setup-intellisense.mjs"
   },

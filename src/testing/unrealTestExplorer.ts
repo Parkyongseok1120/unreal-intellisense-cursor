@@ -12,6 +12,7 @@ export class UnrealTestExplorer implements vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChange = this.emitter.event;
   private tests: AutomationTestEntry[] = [];
+  private offlineMessage = 'Editor Bridge offline — automation tests unavailable';
 
   async refresh(ctx: UE5_8CursorContext): Promise<AutomationTestEntry[]> {
     if (!ctx.project) {
@@ -20,11 +21,8 @@ export class UnrealTestExplorer implements vscode.Disposable {
       return [];
     }
 
-    // Placeholder until EditorBridge exposes Automation/Spec inventory.
-    this.tests = [
-      { name: `${ctx.project.name}.Smoke`, source: 'automation' },
-      { name: `${ctx.project.name}.Editor`, source: 'spec' },
-    ];
+    this.tests = [];
+    this.offlineMessage = 'Editor Bridge offline — automation tests unavailable';
     this.emitter.fire();
     return this.tests;
   }
@@ -33,17 +31,20 @@ export class UnrealTestExplorer implements vscode.Disposable {
     return this.tests;
   }
 
+  getOfflineMessage(): string {
+    return this.offlineMessage;
+  }
+
   async runTest(
     ctx: UE5_8CursorContext,
-    settings: UE5_8CursorSettings,
-    test: AutomationTestEntry,
+    _settings: UE5_8CursorSettings,
+    _test: AutomationTestEntry,
   ): Promise<void> {
-    if (!ctx.project || !ctx.engine) {
-      vscode.window.showWarningMessage('UE5_8 Cursor: project and engine required to run tests.');
+    if (!ctx.project) {
+      vscode.window.showWarningMessage('UE5_8 Cursor: project required to run tests.');
       return;
     }
-    const filter = `${ctx.project.name}.${test.name}`;
-    await vscode.window.showInformationMessage(`UE5_8 Cursor: run automation ${filter} (EditorBridge pending)`);
+    vscode.window.showInformationMessage(this.offlineMessage);
   }
 
   dispose(): void {

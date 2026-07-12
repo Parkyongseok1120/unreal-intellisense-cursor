@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { fileExists } from '../platform/paths';
 import { generateCompileDatabaseFromBuildCs } from './compileDatabaseFromBuildCs';
+import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
 export interface RspCompileContext {
   projectRoot: string;
@@ -241,6 +242,7 @@ function moduleNameFromRsp(rspPath: string): string {
 export async function generateCompileDatabaseFromRsp(
   projectRoot: string,
   engineRoot: string,
+  tx?: WorkspaceMutationTransaction,
 ): Promise<{ ok: boolean; entryCount: number; rspPath?: string; error?: string }> {
   const rspFiles = await findSharedRspFiles(projectRoot);
   if (rspFiles.length === 0) {
@@ -315,7 +317,7 @@ export async function generateCompileDatabaseFromRsp(
   }
 
   const outPath = path.join(projectRoot, 'compile_commands.json');
-  await fs.promises.writeFile(outPath, JSON.stringify(entries, null, 2) + '\n', 'utf-8');
+  await mutateJson(tx, projectRoot, outPath, entries);
   return { ok: true, entryCount: entries.length, rspPath: rspFiles[0] };
 }
 

@@ -4,6 +4,7 @@ import type { UEInstallation, UEProject, BuildConfiguration } from '../types';
 import { buildSymbolSearchPaths, resolveGameExecutable, resolveNatvisPath } from '../platform/debug';
 import { buildCommandLine, resolveTargetName } from '../build/ubt';
 import { getDebuggerType, getDebuggerMIMode } from '../platform/platform';
+import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
 export const DEBUG_TASK_BUILD_EDITOR = 'ue58rider: build editor (debug)';
 export const DEBUG_TASK_BUILD_GAME = 'ue58rider: build game (debug)';
@@ -115,12 +116,10 @@ export function buildLaunchJson(input: DebugConfigInput): object {
 
 export async function ensureDebugConfigs(
   input: DebugConfigInput,
+  tx?: WorkspaceMutationTransaction,
 ): Promise<{ launch: boolean; tasks: boolean }> {
-  const vscodeDir = path.join(input.project.projectRoot, '.vscode');
-  await fs.promises.mkdir(vscodeDir, { recursive: true });
-
-  const launchPath = path.join(vscodeDir, 'launch.json');
-  const tasksPath = path.join(vscodeDir, 'tasks.json');
+  const launchPath = path.join(input.project.projectRoot, '.vscode', 'launch.json');
+  const tasksPath = path.join(input.project.projectRoot, '.vscode', 'tasks.json');
 
   const generatedLaunch = buildLaunchJson(input) as { version: string; configurations: Array<{ name: string }> };
   const generatedTasks = buildTasksJson(input);
@@ -154,8 +153,12 @@ export async function ensureDebugConfigs(
     tasksChanged = true;
   }
 
-  if (launchChanged) await fs.promises.writeFile(launchPath, launchContent, 'utf-8');
-  if (tasksChanged) await fs.promises.writeFile(tasksPath, tasksContent, 'utf-8');
+  if (launchChanged) {
+    await mutateJson(tx, input.project.projectRoot, launchPath, JSON.parse(launchContent));
+  }
+  if (tasksChanged) {
+    await mutateJson(tx, input.project.projectRoot, tasksPath, generatedTasks);
+  }
 
   return { launch: launchChanged, tasks: tasksChanged };
 }

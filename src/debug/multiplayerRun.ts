@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 
+/** @internal Scaffold — not registered in extension activation. */
 export interface MultiplayerRunOptions {
   players: number;
   listenServer: boolean;

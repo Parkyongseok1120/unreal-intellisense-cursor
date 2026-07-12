@@ -110,6 +110,14 @@ export class UE5_8CursorSettings {
     return this.cfg.get<boolean>('experimental.assetImportDnD', false);
   }
 
+  get experimentalIncrementalCompileDb(): boolean {
+    return this.cfg.get<boolean>('experimental.incrementalCompileDb', false);
+  }
+
+  get experimentalHlsl(): boolean {
+    return this.cfg.get<boolean>('experimental.hlsl', false);
+  }
+
   private get cfg(): vscode.WorkspaceConfiguration {
     return vscode.workspace.getConfiguration(EXTENSION_ID);
   }

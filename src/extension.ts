@@ -62,7 +62,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (projectSession) extensionContext.subscriptions.push(projectSession);
   if (editorBridge) extensionContext.subscriptions.push(editorBridge);
   if (testExplorer) extensionContext.subscriptions.push(testExplorer);
-  registerHLSLProviders(extensionContext);
+  if (settings.experimentalHlsl) {
+    registerHLSLProviders(extensionContext);
+  }
   registerCommands(extensionContext);
 
   const { registerUprojectOpenHandler } = await import('./providers/uprojectOpenHandler');
@@ -129,7 +131,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   extensionContext.subscriptions.push(
     (await import('./detection/sourceWatcher')).watchSourceChanges(ctx, settings, () => {
-      void runSilentCompileRefresh();
+      void scheduleCompileRefresh();
     }),
   );
 
@@ -177,16 +179,27 @@ async function openContentBrowserForProject(options?: { reopen?: boolean }): Pro
   }
 }
 
-async function runSilentCompileRefresh(): Promise<void> {
-  if (!ctx.project || !extensionPath) return;
+async function scheduleCompileRefresh(): Promise<void> {
+  if (!projectSession || !ctx.project || !extensionPath) return;
+  const gen = projectSession.getGeneration();
+  const token = projectSession.getActiveToken() ?? new vscode.CancellationTokenSource().token;
+  await projectSession.runJob('compileRefresh', ctx.project.projectRoot, gen, token, async () => {
+    await runSilentCompileRefresh(gen);
+  });
+}
+
+async function runSilentCompileRefresh(pipelineGeneration: number): Promise<void> {
+  if (!ctx.project || !extensionPath || !projectSession) return;
+  if (projectSession.isStale(pipelineGeneration)) return;
   const { ensureCompileDatabase } = await import('./cursor/bootstrapProject');
   const result = await ensureCompileDatabase(
     ctx,
     settings,
     extensionPath,
     (msg) => ctx.outputChannel.appendLine(msg),
-    { force: true },
+    { force: true, token: projectSession.getActiveToken() },
   );
+  if (projectSession.isStale(pipelineGeneration)) return;
   statusBar.setIntelliSense(result.mode);
   void statusBar.update(ctx, settings);
   try {
@@ -196,16 +209,24 @@ async function runSilentCompileRefresh(): Promise<void> {
   }
 }
 
-let warmupInProgress = false;
-
 /**
  * Run the UHT cache warm-up (UBT Editor build) in the background with a progress
  * notification, then regenerate compile_commands from the now-warm cache and
  * upgrade IntelliSense to 'ready' — without ever blocking editor activation.
  */
-async function runBackgroundCacheWarmup(): Promise<void> {
-  if (warmupInProgress || !ctx.project || !extensionPath) return;
-  warmupInProgress = true;
+async function scheduleBackgroundCacheWarmup(pipelineGeneration: number): Promise<void> {
+  if (!projectSession || !ctx.project || !extensionPath) return;
+  const token = projectSession.getActiveToken() ?? new vscode.CancellationTokenSource().token;
+  await projectSession.runJob('warmup', ctx.project.projectRoot, pipelineGeneration, token, async () => {
+    await runBackgroundCacheWarmup(pipelineGeneration, token);
+  });
+}
+
+async function runBackgroundCacheWarmup(
+  pipelineGeneration: number,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  if (!ctx.project || !extensionPath || !projectSession) return;
   const log = (msg: string) => ctx.outputChannel.appendLine(msg);
   try {
     const { runCacheWarmup, ensureCompileDatabase } = await import('./cursor/bootstrapProject');
@@ -223,28 +244,29 @@ async function runBackgroundCacheWarmup(): Promise<void> {
             progress.report({ message: `${p.current}/${p.total} (${pct}%)` });
             statusBar.setBuildProgress(p.current, p.total);
           }
-        });
+        }, token);
+        if (projectSession!.isStale(pipelineGeneration) || token.isCancellationRequested) return;
         statusBar.clearBuildProgress();
         progress.report({ message: 'compile_commands 재생성 중...' });
-        if (ctx.project && extensionPath) {
-          const result = await ensureCompileDatabase(ctx, settings, extensionPath, log, { force: true });
-          const { ensureUhtIntellisense } = await import('./cursor/projectSetup');
-          await ensureUhtIntellisense(ctx.project, extensionPath);
-          statusBar.setIntelliSense(result.mode);
-          void statusBar.update(ctx, settings);
-          try {
-            await vscode.commands.executeCommand('clangd.restart');
-          } catch {
-            // clangd may not be active
-          }
+        const result = await ensureCompileDatabase(ctx, settings, extensionPath, log, {
+          force: true,
+          token,
+        });
+        if (projectSession!.isStale(pipelineGeneration) || token.isCancellationRequested) return;
+        const { ensureUhtIntellisense } = await import('./cursor/projectSetup');
+        await ensureUhtIntellisense(ctx.project!, extensionPath);
+        statusBar.setIntelliSense(result.mode);
+        void statusBar.update(ctx, settings);
+        try {
+          await vscode.commands.executeCommand('clangd.restart');
+        } catch {
+          // clangd may not be active
         }
       },
     );
   } catch (err) {
     log(`[UE5_8 Cursor] Background cache warm-up failed: ${err}`);
     statusBar.clearBuildProgress();
-  } finally {
-    warmupInProgress = false;
   }
 }
 
@@ -259,10 +281,11 @@ async function executeDetectionPipeline(
   options: { allowAutoSetup?: boolean },
   token: vscode.CancellationToken,
 ): Promise<void> {
-  if (token.isCancellationRequested) return;
+  if (token.isCancellationRequested || !projectSession) return;
+  const gen = projectSession.getGeneration();
 
   const projects = await detectProjects();
-  projectSession?.markLoadingProjectModel();
+  projectSession.markLoadingProjectModel();
 
   if (projects.length === 0) {
     ctx.outputChannel.appendLine('[UE5_8 Cursor] No UE 5.8 .uproject found in workspace.');
@@ -286,7 +309,7 @@ async function executeDetectionPipeline(
     return;
   }
 
-  if (token.isCancellationRequested || projectSession?.isStale(projectSession.getGeneration())) return;
+  if (token.isCancellationRequested || projectSession.isStale(gen)) return;
 
   await setContext(ContextKeys.ProjectDetected, true);
   ctx.outputChannel.appendLine(`[UE5_8 Cursor] Project: ${ctx.project.name} (${ctx.project.projectRoot})`);
@@ -317,7 +340,7 @@ async function executeDetectionPipeline(
     }
   }
 
-  if (token.isCancellationRequested || projectSession?.isStale(projectSession.getGeneration())) return;
+  if (token.isCancellationRequested || projectSession.isStale(gen)) return;
 
   await setContext(ContextKeys.EngineFound, !!ctx.engine);
   if (ctx.engine) {
@@ -339,12 +362,12 @@ async function executeDetectionPipeline(
       }
     }
     if (result.warmupPending) {
-      projectSession?.markWarmingUht();
-      void runBackgroundCacheWarmup();
+      projectSession.markWarmingUht();
+      void scheduleBackgroundCacheWarmup(gen);
     }
   }
 
-  projectSession?.markIndexing();
+  projectSession.markIndexing();
   void statusBar.update(ctx, settings);
 
   if (ctx.project && projectSession) {

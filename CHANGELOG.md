@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.2.1 — Reliability Hotfix (Milestone 0)
+
+- WorkspaceMutationTransaction: hash-based backups, journal, commit/rollback, mutex, policy downgrade prevention
+- All bootstrap/setup writes routed through transaction API (settings, MCP, launch, compile DB, rules)
+- ProjectSession: await previous pipeline, write-job serialization, generation stale checks
+- Warm-up and compile refresh moved into session jobs with cancellation propagation
+- SourceWatcher: pending-set batching, `uhtModule` classification, delete handling
+- `addTranslationUnitAction` disabled by default; `ue58rider.experimental.incrementalCompileDb` flag
+- Scaffold cleanup: fake tests removed, EditorBridge offline `capabilities: []`, HLSL behind experimental flag
+- UE58CursorBridge `.uplugin`: ModelContextProtocol entry removed (scaffold, not installed)
+- README status corrected; `verify:ue-project` CLI; mutation/session/watcher regression tests
+
 ## 6.2.0 — Reliable Unreal Workspace (Milestone 0)
 
 - CommandBridge: Bearer token auth, allowlist, request size/schema validation, bridge file cleanup on dispose

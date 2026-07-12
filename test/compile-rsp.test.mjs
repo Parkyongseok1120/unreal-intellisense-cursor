@@ -30,6 +30,16 @@ function loadRspParser() {
       if (id === './compileDatabaseFromBuildCs') {
         return { generateCompileDatabaseFromBuildCs: async () => ({ mode: 'missing' }) };
       }
+      if (id === '../platform/workspaceMutation') {
+        const nodeFs = require('fs');
+        const nodePath = require('path');
+        return {
+          mutateJson: async (_tx, _projectRoot, filePath, value) => {
+            await nodeFs.promises.mkdir(nodePath.dirname(filePath), { recursive: true });
+            await nodeFs.promises.writeFile(filePath, JSON.stringify(value, null, 2) + '\n', 'utf-8');
+          },
+        };
+      }
       return require(id);
     },
   };

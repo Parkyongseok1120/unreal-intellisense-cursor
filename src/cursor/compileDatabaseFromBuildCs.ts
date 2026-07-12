@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { fileExists } from '../platform/paths';
 import { discoverModuleIncludePaths } from './uhtIntellisense';
+import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
 const ENGINE_SEARCH_ROOTS = ['Runtime', 'Developer', 'Editor', 'Programs'] as const;
 
@@ -164,6 +165,7 @@ function flagsToCommand(flags: string[], file: string): string {
 export async function generateCompileDatabaseFromBuildCs(
   projectRoot: string,
   engineRoot: string,
+  tx?: WorkspaceMutationTransaction,
 ): Promise<{ ok: boolean; entryCount: number; error?: string }> {
   if (!(await fileExists(engineRoot))) {
     return { ok: false, entryCount: 0, error: `엔진 경로 없음: ${engineRoot}` };
@@ -223,10 +225,7 @@ export async function generateCompileDatabaseFromBuildCs(
     command: flagsToCommand(flags, file),
   }));
 
-  await fs.promises.writeFile(
-    path.join(projectRoot, 'compile_commands.json'),
-    JSON.stringify(entries, null, 2) + '\n',
-    'utf-8',
-  );
+  const outPath = path.join(projectRoot, 'compile_commands.json');
+  await mutateJson(tx, projectRoot, outPath, entries);
   return { ok: true, entryCount: entries.length };
 }
