@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CLANGD_MANAGED_BEGIN, CLANGD_MANAGED_END, LEGACY_CLANGD_MANAGED_BEGIN, LEGACY_CLANGD_MANAGED_END } from '../constants';
+import { writeProjectFileAtomic } from '../platform/workspaceMutation';
 
 export function buildManagedClangdBlock(options: {
   stubsPath?: string;
@@ -40,13 +41,6 @@ export function buildManagedClangdBlock(options: {
     '    - -W*',
     'Index:',
     '  Background: Build',
-    'Diagnostics:',
-    '  Suppress:',
-    '    - unknown_typename',
-    '    - err_unknown_typename',
-    '    - pp_file_not_found',
-    '    - member_function_call_bad_type',
-    '    - ovl_no_viable_member_function_in_call',
     'Completion:',
     '  AllScopes: true',
     CLANGD_MANAGED_END,
@@ -85,12 +79,24 @@ export async function ensureClangdConfig(
     if (after.length > 0) pieces.push(after);
     const newContent = pieces.join('\n\n') + '\n';
     if (newContent === content) return false;
-    await fs.promises.writeFile(filePath, newContent, 'utf-8');
-    return true;
+    const result = await writeProjectFileAtomic({
+      projectRoot,
+      filePath,
+      content: newContent,
+      policy: 'auto',
+    });
+    if (result.error) throw new Error(result.error);
+    return result.changed;
   }
 
   const trimmed = content.trimEnd();
   const newContent = trimmed.length === 0 ? `${block}\n` : `${trimmed}\n\n${block}\n`;
-  await fs.promises.writeFile(filePath, newContent, 'utf-8');
-  return true;
+  const result = await writeProjectFileAtomic({
+    projectRoot,
+    filePath,
+    content: newContent,
+    policy: 'auto',
+  });
+  if (result.error) throw new Error(result.error);
+  return result.changed;
 }

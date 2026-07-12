@@ -19,6 +19,12 @@ import { UnrealLogViewer } from './logs/unrealLogViewer';
 import { CommandBridge } from './mcp/commandBridge';
 import { configureMcpBridge } from './blueprint/mcpBlueprintBridge';
 import { parseBuildProgress } from './parsers/buildProgressParser';
+import { ProjectSession } from './session/projectSession';
+import { getExtensionVersion } from './version';
+import { buildProjectModel } from './projectModel/projectModelService';
+import { EditorBridgeClient } from './editorBridge/editorBridgeClient';
+import { registerHLSLProviders } from './hlsl/hlslProviders';
+import { UnrealTestExplorer } from './testing/unrealTestExplorer';
 import type { UE5_8CursorContext } from './types';
 
 let ctx: UE5_8CursorContext;
@@ -26,6 +32,9 @@ let settings: UE5_8CursorSettings;
 let statusBar: StatusBarManager;
 let logViewer: UnrealLogViewer;
 let commandBridge: CommandBridge | undefined;
+let projectSession: ProjectSession | undefined;
+let editorBridge: EditorBridgeClient | undefined;
+let testExplorer: UnrealTestExplorer | undefined;
 let contentBrowser: import('./assets/contentBrowserProvider').ContentBrowserProvider | undefined;
 let mcpDiagnostics: import('./mcp/mcpDiagnosticsProvider').McpDiagnosticsProvider | undefined;
 let extensionPath = '';
@@ -37,6 +46,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   settings = new UE5_8CursorSettings();
   statusBar = new StatusBarManager();
   logViewer = new UnrealLogViewer();
+  projectSession = new ProjectSession();
+  editorBridge = new EditorBridgeClient();
+  testExplorer = new UnrealTestExplorer();
   const outputChannel = createOutputChannel();
 
   ctx = {
@@ -47,6 +59,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   extensionContext.subscriptions.push(outputChannel, statusBar, logViewer, ctx.diagnosticCollection);
+  if (projectSession) extensionContext.subscriptions.push(projectSession);
+  if (editorBridge) extensionContext.subscriptions.push(editorBridge);
+  if (testExplorer) extensionContext.subscriptions.push(testExplorer);
+  registerHLSLProviders(extensionContext);
   registerCommands(extensionContext);
 
   const { registerUprojectOpenHandler } = await import('./providers/uprojectOpenHandler');
@@ -117,7 +133,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-  outputChannel.appendLine('[UE5_8 Cursor] Activating UE 5.8 development environment (v6.0)...');
+  outputChannel.appendLine(`[UE5_8 Cursor] Activating UE 5.8 development environment (v${getExtensionVersion(extensionPath)})...`);
   configureMcpBridge(undefined, extensionPath);
   await runDetectionPipeline({ allowAutoSetup: true });
 
@@ -143,6 +159,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export function deactivate(): void {
   commandBridge?.dispose();
+  projectSession?.dispose();
+  editorBridge?.dispose();
+  testExplorer?.dispose();
 }
 
 async function openContentBrowserForProject(options?: { reopen?: boolean }): Promise<void> {
@@ -230,7 +249,20 @@ async function runBackgroundCacheWarmup(): Promise<void> {
 }
 
 async function runDetectionPipeline(options?: { allowAutoSetup?: boolean }): Promise<void> {
+  if (!projectSession) return;
+  await projectSession.runPipeline(async (runOptions, token) => {
+    await executeDetectionPipeline(runOptions, token);
+  }, options);
+}
+
+async function executeDetectionPipeline(
+  options: { allowAutoSetup?: boolean },
+  token: vscode.CancellationToken,
+): Promise<void> {
+  if (token.isCancellationRequested) return;
+
   const projects = await detectProjects();
+  projectSession?.markLoadingProjectModel();
 
   if (projects.length === 0) {
     ctx.outputChannel.appendLine('[UE5_8 Cursor] No UE 5.8 .uproject found in workspace.');
@@ -254,11 +286,22 @@ async function runDetectionPipeline(options?: { allowAutoSetup?: boolean }): Pro
     return;
   }
 
+  if (token.isCancellationRequested || projectSession?.isStale(projectSession.getGeneration())) return;
+
   await setContext(ContextKeys.ProjectDetected, true);
   ctx.outputChannel.appendLine(`[UE5_8 Cursor] Project: ${ctx.project.name} (${ctx.project.projectRoot})`);
 
   configureMcpBridge(ctx.project.projectRoot, extensionPath);
   contentBrowser?.setProjectRoot(ctx.project.projectRoot);
+  void editorBridge?.connect();
+  void testExplorer?.refresh(ctx);
+
+  if (ctx.project) {
+    const model = await buildProjectModel(ctx.project);
+    ctx.outputChannel.appendLine(
+      `[UE5_8 Cursor] Project model: ${model.modules.length} module(s), ${model.plugins.length} plugin(s)`,
+    );
+  }
 
   if (settings.engineRoot) {
     ctx.engine = (await createManualInstallation(settings.engineRoot)) ?? undefined;
@@ -274,6 +317,8 @@ async function runDetectionPipeline(options?: { allowAutoSetup?: boolean }): Pro
     }
   }
 
+  if (token.isCancellationRequested || projectSession?.isStale(projectSession.getGeneration())) return;
+
   await setContext(ContextKeys.EngineFound, !!ctx.engine);
   if (ctx.engine) {
     ctx.outputChannel.appendLine(`[UE5_8 Cursor] Engine: ${ctx.engine.root}`);
@@ -284,30 +329,32 @@ async function runDetectionPipeline(options?: { allowAutoSetup?: boolean }): Pro
   void mcpDiagnostics?.refresh();
 
   if (ctx.project && options?.allowAutoSetup !== false && settings.autoSetupOnOpen && extensionPath) {
+    projectSession?.markRefreshing();
     const { bootstrapProject } = await import('./cursor/bootstrapProject');
     const result = await bootstrapProject(ctx, settings, extensionPath);
-    statusBar.setIntelliSense(result.intelliSense);
+    statusBar.setIntelliSense(result.intelliSense, { provisional: result.intelliSense === 'partial' });
     if (result.errors.length > 0) {
       for (const err of result.errors) {
         ctx.outputChannel.appendLine(`[UE5_8 Cursor] Bootstrap note: ${err}`);
       }
     }
     if (result.warmupPending) {
+      projectSession?.markWarmingUht();
       void runBackgroundCacheWarmup();
     }
   }
 
+  projectSession?.markIndexing();
   void statusBar.update(ctx, settings);
 
-  if (ctx.project) {
-    commandBridge?.dispose();
-    commandBridge = new CommandBridge(ctx.project.projectRoot);
-    try {
-      const port = await commandBridge.start();
-      ctx.outputChannel.appendLine(`[UE5_8 Cursor] MCP command bridge on port ${port}`);
-      extensionContext?.subscriptions.push(commandBridge);
-    } catch (err) {
-      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Command bridge unavailable: ${err}`);
+  if (ctx.project && projectSession) {
+    commandBridge = await projectSession.ensureBridge(ctx.project.projectRoot);
+    if (commandBridge) {
+      const { readBridgePort } = await import('./mcp/commandBridge');
+      const port = await readBridgePort(ctx.project.projectRoot);
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] MCP command bridge on port ${port ?? 'unknown'}`);
+    } else {
+      ctx.outputChannel.appendLine('[UE5_8 Cursor] Command bridge unavailable');
     }
 
     if (settings.autoStartLogViewer) {
@@ -325,7 +372,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     const { setupProject } = await import('./commands/setupCommands');
     const result = await setupProject(ctx, settings, extensionPath);
     if (result) {
-      statusBar.setIntelliSense(result.intelliSense);
+      statusBar.setIntelliSense(result.intelliSense, { provisional: result.intelliSense === 'partial' });
       void statusBar.update(ctx, settings);
     }
   });

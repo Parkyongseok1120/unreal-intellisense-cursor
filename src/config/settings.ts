@@ -103,7 +103,7 @@ export class UE5_8CursorSettings {
   }
 
   get mcpAutoFixUproject(): boolean {
-    return this.cfg.get<boolean>('mcp.autoFixUproject', true);
+    return this.cfg.get<boolean>('mcp.autoFixUproject', false);
   }
 
   get experimentalAssetImportDnD(): boolean {

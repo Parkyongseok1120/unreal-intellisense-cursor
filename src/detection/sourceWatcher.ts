@@ -2,19 +2,17 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import type { UE5_8CursorSettings } from '../config/settings';
 import type { UE5_8CursorContext } from '../types';
+import {
+  classifySourceChange,
+  invalidationLabel,
+  shouldRefreshCompileDatabase,
+  shouldRefreshReflectionOnly,
+} from './invalidation';
+import { addTranslationUnitAction } from '../projectModel/projectModelService';
 
 const DEBOUNCE_MS = 15_000;
 const REFLECTION_DEBOUNCE_MS = 5_000;
-const trackedModules = new Set<string>();
-
-function moduleFromPath(filePath: string, projectRoot: string): string | undefined {
-  const rel = path.relative(projectRoot, filePath).replace(/\\/g, '/');
-  const sourceMatch = rel.match(/^Source\/([^/]+)\//);
-  if (sourceMatch) return sourceMatch[1];
-  const pluginMatch = rel.match(/^Plugins\/[^/]+\/Source\/([^/]+)\//);
-  if (pluginMatch) return pluginMatch[1];
-  return undefined;
-}
+const TU_DEBOUNCE_MS = 3_000;
 
 export function watchSourceChanges(
   ctx: UE5_8CursorContext,
@@ -28,15 +26,22 @@ export function watchSourceChanges(
   const watcher = vscode.workspace.createFileSystemWatcher(pattern);
   const rspPattern = new vscode.RelativePattern(folder, '**/Intermediate/**/*.Shared.rsp');
   const rspWatcher = vscode.workspace.createFileSystemWatcher(rspPattern);
+  const projectPattern = new vscode.RelativePattern(folder, '**/*.{uproject,uplugin,Build.cs,Target.cs}');
+  const projectWatcher = vscode.workspace.createFileSystemWatcher(projectPattern);
+
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let rspDebounceTimer: ReturnType<typeof setTimeout> | undefined;
   let reflectionTimer: ReturnType<typeof setTimeout> | undefined;
+  let tuTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const scheduleRspBootstrap = () => {
+  const scheduleRspBootstrap = (uri: vscode.Uri) => {
     if (!settings.autoRefreshOnSourceChange || !ctx.project) return;
     if (rspDebounceTimer) clearTimeout(rspDebounceTimer);
     rspDebounceTimer = setTimeout(() => {
-      ctx.outputChannel.appendLine('[UE5_8 Cursor] .Shared.rsp detected — refreshing compile_commands...');
+      const event = classifySourceChange(uri.fsPath, false, ctx.project!.projectRoot);
+      ctx.outputChannel.appendLine(
+        `[UE5_8 Cursor] ${invalidationLabel(event.scope)} change — refreshing compile_commands...`,
+      );
       onRefresh();
     }, 5000);
   };
@@ -51,32 +56,49 @@ export function watchSourceChanges(
     }, REFLECTION_DEBOUNCE_MS);
   };
 
+  const scheduleIncrementalTu = async (uri: vscode.Uri) => {
+    if (!ctx.project || !uri.fsPath.endsWith('.cpp')) return;
+    if (tuTimer) clearTimeout(tuTimer);
+    tuTimer = setTimeout(async () => {
+      const added = await addTranslationUnitAction(ctx.project!.projectRoot, uri.fsPath);
+      if (added) {
+        ctx.outputChannel.appendLine(`[UE5_8 Cursor] Added compile action for ${path.basename(uri.fsPath)}`);
+        try {
+          await vscode.commands.executeCommand('clangd.restart');
+        } catch {
+          // clangd may not be active
+        }
+      } else {
+        onRefresh();
+      }
+    }, TU_DEBOUNCE_MS);
+  };
+
   const schedule = (uri: vscode.Uri, isCreate: boolean) => {
     if (!settings.autoRefreshOnSourceChange || !ctx.project) return;
 
-    scheduleReflection(uri);
+    const event = classifySourceChange(uri.fsPath, isCreate, ctx.project.projectRoot);
 
-    if (isCreate && ctx.project) {
-      const mod = moduleFromPath(uri.fsPath, ctx.project.projectRoot);
-      if (mod && trackedModules.has(mod)) {
-        return;
-      }
-      if (mod) trackedModules.add(mod);
+    if (event.scope === 'reflection') {
+      scheduleReflection(uri);
+      if (shouldRefreshReflectionOnly(event)) return;
     }
+
+    if (isCreate && event.scope === 'translationUnit') {
+      void scheduleIncrementalTu(uri);
+      return;
+    }
+
+    if (!shouldRefreshCompileDatabase(event)) return;
 
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      ctx.outputChannel.appendLine('[UE5_8 Cursor] Source change detected — refreshing IntelliSense...');
+      ctx.outputChannel.appendLine(
+        `[UE5_8 Cursor] ${invalidationLabel(event.scope)} change — refreshing IntelliSense...`,
+      );
       onRefresh();
     }, DEBOUNCE_MS);
   };
-
-  if (ctx.project) {
-    trackedModules.clear();
-    for (const mod of ctx.project.modules) {
-      trackedModules.add(mod.name);
-    }
-  }
 
   return vscode.Disposable.from(
     watcher.onDidCreate((uri) => schedule(uri, true)),
@@ -84,13 +106,18 @@ export function watchSourceChanges(
     watcher.onDidDelete((uri) => schedule(uri, false)),
     rspWatcher.onDidCreate(scheduleRspBootstrap),
     rspWatcher.onDidChange(scheduleRspBootstrap),
+    projectWatcher.onDidCreate((uri) => schedule(uri, true)),
+    projectWatcher.onDidChange((uri) => schedule(uri, false)),
+    projectWatcher.onDidDelete((uri) => schedule(uri, false)),
     rspWatcher,
+    projectWatcher,
     watcher,
     {
       dispose: () => {
         if (debounceTimer) clearTimeout(debounceTimer);
         if (rspDebounceTimer) clearTimeout(rspDebounceTimer);
         if (reflectionTimer) clearTimeout(reflectionTimer);
+        if (tuTimer) clearTimeout(tuTimer);
       },
     },
   );

@@ -23,7 +23,9 @@ function ensureIntellisenseArtifacts() {
   );
 }
 
-describe.skipIf(!localGameProjectAvailable)(
+const describeBootstrap = localGameProjectAvailable ? describe : describe.skip;
+
+describeBootstrap(
   'v6 zero-touch bootstrap artifacts (local game project — optional)',
   () => {
   it('project exists', () => {

@@ -3,10 +3,14 @@ import * as path from 'path';
 import type { UEProject, UEInstallation, BuildConfiguration } from '../types';
 import {
   getExplorerFilterSettings,
+  getFilesExclude,
+  getSearchExclude,
+  getWatcherExclude,
   isExplorerFilterApplied,
   stripExplorerFilterMarkers,
 } from './explorerFilter';
 import { GENERATED_SETTINGS_FLAG, GITIGNORE_MARKER, GENERATED_GITIGNORE_LINES } from './generatedArtifacts';
+import { writeProjectFileAtomic } from '../platform/workspaceMutation';
 
 function deepMerge(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
   const result = { ...base };
@@ -110,8 +114,14 @@ export async function ensureWorkspaceSettings(
   const newContent = JSON.stringify(merged, null, 2) + '\n';
   const oldContent = JSON.stringify(existing, null, 2) + '\n';
   if (newContent === oldContent) return false;
-  await fs.promises.writeFile(settingsPath, newContent, 'utf-8');
-  return true;
+  const result = await writeProjectFileAtomic({
+    projectRoot: project.projectRoot,
+    filePath: settingsPath,
+    content: newContent,
+    policy: 'auto',
+  });
+  if (result.error) throw new Error(result.error);
+  return result.changed;
 }
 
 /**
@@ -132,8 +142,14 @@ export async function ensureGeneratedGitignore(projectRoot: string): Promise<boo
 
   const block = '\n' + GENERATED_GITIGNORE_LINES.join('\n') + '\n';
   const newContent = content.endsWith('\n') || content.length === 0 ? content + block : content + '\n' + block;
-  await fs.promises.writeFile(gitignorePath, newContent, 'utf-8');
-  return true;
+  const result = await writeProjectFileAtomic({
+    projectRoot: projectRoot,
+    filePath: gitignorePath,
+    content: newContent,
+    policy: 'auto',
+  });
+  if (result.error) throw new Error(result.error);
+  return result.changed;
 }
 
 export async function applyExplorerFilter(project: UEProject): Promise<boolean> {
@@ -146,12 +162,53 @@ export async function removeExplorerFilter(project: UEProject): Promise<boolean>
   if (!isExplorerFilterApplied(existing)) return false;
 
   const cleaned = stripExplorerFilterMarkers(existing);
-  delete cleaned['files.exclude'];
-  delete cleaned['search.exclude'];
-  delete cleaned['files.watcherExclude'];
+  const mode =
+    (existing['ue58rider.contentBrowser.mode'] as import('./explorerFilter').ContentBrowserMode | undefined) ??
+    'dedicated-view';
+  const managedFiles = getFilesExclude(mode);
+  const managedSearch = getSearchExclude(mode);
+  const managedWatcher = getWatcherExclude(mode);
 
-  await fs.promises.writeFile(settingsPath, JSON.stringify(cleaned, null, 2) + '\n', 'utf-8');
-  return true;
+  const nextFiles = removeManagedExplorerPatterns(
+    cleaned['files.exclude'] as Record<string, boolean> | undefined,
+    managedFiles,
+  );
+  const nextSearch = removeManagedExplorerPatterns(
+    cleaned['search.exclude'] as Record<string, boolean> | undefined,
+    managedSearch,
+  );
+  const nextWatcher = removeManagedExplorerPatterns(
+    cleaned['files.watcherExclude'] as Record<string, boolean> | undefined,
+    managedWatcher,
+  );
+
+  if (nextFiles) cleaned['files.exclude'] = nextFiles;
+  else delete cleaned['files.exclude'];
+  if (nextSearch) cleaned['search.exclude'] = nextSearch;
+  else delete cleaned['search.exclude'];
+  if (nextWatcher) cleaned['files.watcherExclude'] = nextWatcher;
+  else delete cleaned['files.watcherExclude'];
+
+  const result = await writeProjectFileAtomic({
+    projectRoot: project.projectRoot,
+    filePath: settingsPath,
+    content: JSON.stringify(cleaned, null, 2) + '\n',
+    policy: 'auto',
+  });
+  if (result.error) throw new Error(result.error);
+  return result.changed;
+}
+
+function removeManagedExplorerPatterns(
+  existing: Record<string, boolean> | undefined,
+  managed: Record<string, boolean>,
+): Record<string, boolean> | undefined {
+  if (!existing) return undefined;
+  const result = { ...existing };
+  for (const key of Object.keys(managed)) {
+    if (managed[key] === true) delete result[key];
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export async function ensureCursorRules(project: UEProject): Promise<boolean> {
@@ -181,8 +238,14 @@ alwaysApply: false
   } catch {
     // new file
   }
-  await fs.promises.writeFile(rulePath, content, 'utf-8');
-  return true;
+  const result = await writeProjectFileAtomic({
+    projectRoot: project.projectRoot,
+    filePath: rulePath,
+    content,
+    policy: 'auto',
+  });
+  if (result.error) throw new Error(result.error);
+  return result.changed;
 }
 
 /**

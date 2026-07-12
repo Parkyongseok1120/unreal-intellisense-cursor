@@ -5,13 +5,20 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import { EPIC_MCP_DEFAULT_PORT, DEFAULT_MCP_PORT_CANDIDATES } from '../cursor/mcpConfig';
+import { getExtensionVersion } from '../version';
 
 const UE_MCP_PORTS = DEFAULT_MCP_PORT_CANDIDATES;
 const COMMAND_MAP: Record<string, string> = {
   ue_build: 'ue58rider.build',
   ue_live_coding: 'ue58rider.liveCoding',
   ue_refresh_intellisense: 'ue58rider.generateCompileCommands',
+  ue_refresh_mcp_schema: 'ue58rider.refreshMcpSchema',
 };
+
+interface BridgeInfo {
+  port: number;
+  token: string;
+}
 
 interface ToolCallPayload {
   toolset_name: string;
@@ -72,36 +79,43 @@ async function callExtensionBridge(command: string, args: unknown[] = []): Promi
   const workspace = process.env.UE5_8_CURSOR_WORKSPACE;
   if (!workspace) return 'UE5_8_CURSOR_WORKSPACE not set';
 
-  let port: number | undefined;
+  let info: BridgeInfo | undefined;
   const bridgePaths = [
     path.join(workspace, '.ue5_8cursor', 'command-bridge.json'),
     path.join(workspace, '.ue58rider', 'command-bridge.json'),
   ];
   for (const p of bridgePaths) {
     try {
-      const info = JSON.parse(await fs.promises.readFile(p, 'utf-8')) as { port: number };
-      port = info.port;
-      break;
+      const parsed = JSON.parse(await fs.promises.readFile(p, 'utf-8')) as BridgeInfo;
+      if (parsed.port && parsed.token) {
+        info = parsed;
+        break;
+      }
     } catch {
       // try next
     }
   }
-  if (!port) return 'Extension command bridge not running. Open project in Cursor with UE5_8 Cursor active.';
+  if (!info) return 'Extension command bridge not running. Open project in Cursor with UE5_8 Cursor active.';
 
-  const body = JSON.stringify({ command, args });
-  return httpPost(`http://127.0.0.1:${port}/command`, body);
+  const body = JSON.stringify({ command, args, issuedAt: Date.now() });
+  return httpPost(`http://127.0.0.1:${info.port}/command`, body, info.token);
 }
 
-function httpPost(url: string, body: string): Promise<string> {
+function httpPost(url: string, body: string, token?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
+    const headers: Record<string, string | number> = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body),
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
     const req = http.request(
       {
         hostname: u.hostname,
         port: u.port,
         path: u.pathname,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        headers,
       },
       (res) => {
         let data = '';
@@ -115,7 +129,7 @@ function httpPost(url: string, body: string): Promise<string> {
   });
 }
 
-const server = new Server({ name: 'ue5-8-cursor', version: '4.0.0' }, { capabilities: { tools: {} } });
+const server = new Server({ name: 'ue5-8-cursor', version: getExtensionVersion() }, { capabilities: { tools: {} } });
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [

@@ -22,6 +22,7 @@ export class StatusBarManager implements vscode.Disposable {
   private lastMcpCheck = 0;
   private indexCounts = { assets: 0, reflection: 0 };
   private intelliSenseMode: IntelliSenseMode = 'missing';
+  private provisionalDb = false;
 
   constructor() {
     this.mainItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -51,8 +52,9 @@ export class StatusBarManager implements vscode.Disposable {
     this.pollTimer = setInterval(() => void this.pollEditorState(), 5000);
   }
 
-  setIntelliSense(mode: IntelliSenseMode): void {
+  setIntelliSense(mode: IntelliSenseMode, options?: { provisional?: boolean }): void {
     this.intelliSenseMode = mode;
+    this.provisionalDb = options?.provisional ?? mode === 'partial';
     this.updateIntelliSenseItem();
   }
 
@@ -114,8 +116,9 @@ export class StatusBarManager implements vscode.Disposable {
         this.intelliSenseItem.tooltip = 'compile_commands.json + clangd 준비 완료';
         break;
       case 'partial':
-        this.intelliSenseItem.text = '$(warning) IntelliSense: Partial';
-        this.intelliSenseItem.tooltip = '에디터에서 한 번 빌드하면 정확도가 올라갑니다.';
+        this.intelliSenseItem.text = '$(warning) IntelliSense: Provisional';
+        this.intelliSenseItem.tooltip =
+          'synthetic/provisional compile database — clangd advisories may differ from UBT/MSVC build results. Run an Editor build for authoritative flags.';
         break;
       default:
         this.intelliSenseItem.text = '$(error) IntelliSense: Missing';

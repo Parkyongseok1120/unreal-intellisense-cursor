@@ -2,12 +2,12 @@
   "name": "ue5-8-cursor",
   "displayName": "UE5_8 Cursor",
   "description": "Cursor dedicated Unreal Engine 5.8 C++ workflow — IntelliSense, build, Live Coding, MCP",
-  "version": "6.1.1",
+  "version": "6.2.0",
   "publisher": "truesync",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/YongseokPark/ue5-8-cursor.git"
+    "url": "https://github.com/Parkyongseok1120/unreal-intellisense-cursor.git"
   },
   "engines": {
     "vscode": "^1.85.0"
@@ -494,8 +494,8 @@
         },
         "ue58rider.mcp.autoFixUproject": {
           "type": "boolean",
-          "default": true,
-          "description": "Setup 시 .uproject에 MCP 플러그인 항목 자동 추가.",
+          "default": false,
+          "description": "Setup 시 .uproject에 MCP 플러그인 항목 자동 추가 (명시적 동의 필요).",
           "scope": "resource"
         },
         "ue58rider.experimental.assetImportDnD": {

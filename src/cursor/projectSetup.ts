@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import * as path from 'path';
 import { ensureClangdConfig } from './clangdConfig';
 import { ensureUhtStubs, discoverIntermediateIncludePaths, discoverModuleIncludePaths } from './uhtIntellisense';
@@ -11,6 +12,7 @@ import { findActiveMcpPortWithMode } from '../mcp/epicMcpClient';
 import { refreshProjectMcpSchema } from '../mcp/schemaRegistry';
 import { configureMcpBridge } from '../blueprint/mcpBlueprintBridge';
 import { getMissingMcpPlugins, parseUProjectFull, ensureMcpPluginsInUProject } from '../parsers/uprojectParser';
+import { writeProjectFileAtomic } from '../platform/workspaceMutation';
 import type { UEProject } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 
@@ -71,7 +73,15 @@ export async function ensureMcpIntegration(
     const uproject = await parseUProjectFull(project.uprojectPath);
     const missing = getMissingMcpPlugins(uproject.Plugins ?? []);
     if (missing.length > 0 && settings.mcpAutoFixUproject) {
-      await ensureMcpPluginsInUProject(project.uprojectPath);
+      const consent = await vscode.window.showWarningMessage(
+        `UE5_8 Cursor: .uproject에 MCP 플러그인(${missing.join(', ')})을 추가할까요?`,
+        { modal: true },
+        'Allow',
+        'Skip',
+      );
+      if (consent === 'Allow') {
+        await ensureMcpPluginsInUProject(project.uprojectPath);
+      }
     }
   } catch {
     // ignore
