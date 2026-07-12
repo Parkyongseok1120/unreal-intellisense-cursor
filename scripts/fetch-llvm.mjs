@@ -128,7 +128,10 @@ async function main() {
   }
 
   if (!fs.existsSync(path.join(extractDir, 'bin', 'clangd.exe'))) {
-    const nested = await findClangdInTree(extractDir);
+    // A fresh cache has no extract directory yet. Do not attempt a recursive
+    // scan before creating it; that turned a successful download into ENOENT
+    // and made VSIX packaging fail on first use.
+    const nested = fs.existsSync(extractDir) ? await findClangdInTree(extractDir) : undefined;
     if (!nested) {
       log('Extracting LLVM archive...');
       await fs.promises.mkdir(extractDir, { recursive: true });
