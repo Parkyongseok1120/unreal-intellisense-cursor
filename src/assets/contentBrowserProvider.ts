@@ -27,15 +27,30 @@ interface AssetNode {
   entry: AssetIndexEntry;
 }
 
+interface ContentBrowserState {
+  entries: AssetIndexEntry[];
+  classFilter: string;
+  searchQuery: string;
+  tree: FolderNode | undefined;
+}
+
 export class ContentBrowserProvider implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private projectRoot: string | undefined;
-  private entries: AssetIndexEntry[] = [];
-  private classFilter = 'All';
-  private searchQuery = '';
-  private tree: FolderNode | undefined;
+  private readonly states = new Map<string, ContentBrowserState>();
+
+  private get state(): ContentBrowserState {
+    const root = this.projectRoot?.toLowerCase();
+    if (!root) return { entries: [], classFilter: 'All', searchQuery: '', tree: undefined };
+    let state = this.states.get(root);
+    if (!state) {
+      state = { entries: [], classFilter: 'All', searchQuery: '', tree: undefined };
+      this.states.set(root, state);
+    }
+    return state;
+  }
 
   setProjectRoot(root: string | undefined): void {
     this.projectRoot = root;
@@ -43,44 +58,43 @@ export class ContentBrowserProvider implements vscode.TreeDataProvider<TreeNode>
   }
 
   setClassFilter(filter: string): void {
-    this.classFilter = filter;
+    this.state.classFilter = filter;
     this.rebuildTree();
     this._onDidChangeTreeData.fire(undefined);
   }
 
   setSearchQuery(query: string): void {
-    this.searchQuery = query;
+    this.state.searchQuery = query;
     this.rebuildTree();
     this._onDidChangeTreeData.fire(undefined);
   }
 
   getClassFilter(): string {
-    return this.classFilter;
+    return this.state.classFilter;
   }
 
   async reload(): Promise<void> {
     if (!this.projectRoot) {
-      this.entries = [];
-      this.tree = undefined;
       this._onDidChangeTreeData.fire(undefined);
       return;
     }
-    this.entries = await getOrBuildAssetIndex(this.projectRoot);
+    this.state.entries = await getOrBuildAssetIndex(this.projectRoot);
     this.rebuildTree();
     this._onDidChangeTreeData.fire(undefined);
   }
 
   async refresh(): Promise<void> {
     if (!this.projectRoot) return;
-    this.entries = await refreshAssetIndex(this.projectRoot, { enrichMcp: true });
+    this.state.entries = await refreshAssetIndex(this.projectRoot, { enrichMcp: true });
     this.rebuildTree();
     this._onDidChangeTreeData.fire(undefined);
   }
 
   private rebuildTree(): void {
-    let filtered = filterAssetsByClass(this.entries, this.classFilter);
-    if (this.searchQuery.trim()) {
-      filtered = searchAssets(filtered, this.searchQuery);
+    const state = this.state;
+    let filtered = filterAssetsByClass(state.entries, state.classFilter);
+    if (state.searchQuery.trim()) {
+      filtered = searchAssets(filtered, state.searchQuery);
     }
     const root: FolderNode = {
       kind: 'folder',
@@ -125,7 +139,7 @@ export class ContentBrowserProvider implements vscode.TreeDataProvider<TreeNode>
     }
 
     this.sortTree(root);
-    this.tree = root;
+    state.tree = root;
   }
 
   private sortTree(node: FolderNode): void {
@@ -163,8 +177,9 @@ export class ContentBrowserProvider implements vscode.TreeDataProvider<TreeNode>
   }
 
   getChildren(element?: TreeNode): TreeNode[] {
-    if (!this.tree) return [];
-    if (!element) return this.tree.children ?? [];
+    const tree = this.state.tree;
+    if (!tree) return [];
+    if (!element) return tree.children ?? [];
     if (element.kind === 'folder') return element.children ?? [];
     return [];
   }

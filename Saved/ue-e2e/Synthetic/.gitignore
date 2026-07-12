@@ -1,9 +1,0 @@
-
-# UE5_8 Cursor — plugin-generated, do not commit
-.vscode/
-.cursor/
-compile_commands.json
-.clangd
-.clang-format
-.ue5_8cursor/
-.ue58rider/

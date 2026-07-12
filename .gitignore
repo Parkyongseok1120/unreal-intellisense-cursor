@@ -47,6 +47,26 @@ coverage/
 .ue5_8cursor/
 .ue58rider/
 
+# Unreal Engine generated output. Keep plugin source/descriptors under plugins/
+# tracked, but never commit packaged binaries, build caches, or Editor state.
+Saved/
+**/Binaries/
+**/Intermediate/
+**/DerivedDataCache/
+**/.vs/
+*.pdb
+*.dll
+*.lib
+*.exp
+*.obj
+*.modules
+*.target
+*.receipt
+*.sln
+*.sdf
+*.opensdf
+*.VC.db
+
 # Optional: keep test fixtures committed; ignore scratch outputs
 test/**/*.tmp
 test/**/scratch/

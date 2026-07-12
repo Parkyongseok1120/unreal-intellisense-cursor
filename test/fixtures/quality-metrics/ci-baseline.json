@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-12T20:45:55.075Z",
-  "source": "unit-tests",
+  "generatedAt": "2026-07-12T21:58:55.575Z",
+  "source": "ci-merge",
   "areas": {
     "trust": {
       "accuracy": 0.85,
@@ -40,16 +40,15 @@
       }
     },
     "bridge": {
-      "accuracy": 0.68,
-      "completeness": 0.62,
-      "resilience": 0.6,
-      "performance": 0.55,
-      "verification": 0.72,
-      "e2ePassed": false,
+      "accuracy": 1,
+      "completeness": 1,
+      "resilience": 1,
+      "performance": 1,
+      "verification": 1,
+      "e2ePassed": true,
       "details": {
-        "stubsDemoted": true,
-        "schemaCodegen": true,
-        "hasMoreBoolean": true
+        "checks": 4,
+        "passed": 4
       }
     },
     "semantic": {
@@ -117,11 +116,11 @@
       }
     },
     "ci": {
-      "accuracy": 0.62,
-      "completeness": 0.58,
-      "resilience": 0.55,
-      "performance": 0.5,
-      "verification": 0.72,
+      "accuracy": 1,
+      "completeness": 1,
+      "resilience": 1,
+      "performance": 1,
+      "verification": 1,
       "e2ePassed": true,
       "details": {
         "artifactBasedScorecard": true,

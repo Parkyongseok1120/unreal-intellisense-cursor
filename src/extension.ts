@@ -50,6 +50,8 @@ let contentBrowser: import('./assets/contentBrowserProvider').ContentBrowserProv
 let mcpDiagnostics: import('./mcp/mcpDiagnosticsProvider').McpDiagnosticsProvider | undefined;
 let extensionPath = '';
 let extensionContext: vscode.ExtensionContext | undefined;
+let bridgeDispatchRoot: string | undefined;
+let bridgeDispatchChain: Promise<void> = Promise.resolve();
 
 function projectRegistry() {
   return getWorkspaceProjectRegistry();
@@ -58,6 +60,12 @@ function projectRegistry() {
 function resolveRuntime(uri?: vscode.Uri): ProjectRuntime | undefined {
   const reg = projectRegistry();
   if (uri) return reg.getByUri(uri);
+  // HTTP bridge requests have no editor URI. Their project root takes priority
+  // over the focused document while the serialized dispatch is in progress.
+  if (bridgeDispatchRoot) {
+    const bridgeRuntime = reg.getByRoot(bridgeDispatchRoot);
+    if (bridgeRuntime) return bridgeRuntime;
+  }
   const activeUri = vscode.window.activeTextEditor?.document.uri;
   if (activeUri) {
     const byUri = reg.getByUri(activeUri);
@@ -68,6 +76,13 @@ function resolveRuntime(uri?: vscode.Uri): ProjectRuntime | undefined {
 
 function resolveProjectRoot(uri?: vscode.Uri): string | undefined {
   return resolveRuntime(uri)?.project.projectRoot ?? ctx?.project?.projectRoot;
+}
+
+/** Project-scoped view used by commands launched from the active editor. */
+function runtimeContext(uri?: vscode.Uri): UE5_8CursorContext {
+  const runtime = resolveRuntime(uri);
+  if (!runtime) return ctx;
+  return { ...ctx, project: runtime.project, engine: runtime.engine };
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -167,32 +182,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   statusBar.startPolling();
 
-  if (projectSession) {
-    extensionContext.subscriptions.push(registerUhtSaveValidation(ctx, projectSession, settings));
-  }
+  extensionContext.subscriptions.push(registerUhtSaveValidation((uri) => {
+    const runtime = resolveRuntime(uri);
+    return runtime ? { ctx: runtimeContext(uri), session: runtime.session } : undefined;
+  }, settings));
 
   extensionContext.subscriptions.push(
     (await import('./detection/sourceWatcher')).watchSourceChanges(
-      ctx,
       settings,
-      () => {
-        void scheduleCompileRefresh();
+      (uri) => {
+        const runtime = resolveRuntime(uri);
+        return runtime ? { ctx: runtimeContext(uri), key: runtime.project.projectRoot } : undefined;
       },
-      (headers) => {
-        if (!projectSession) return;
+      (runtime) => {
+        const owner = projectRegistry().getByRoot(runtime.ctx.project!.projectRoot);
+        if (owner) void scheduleCompileRefresh(runtime.ctx, owner.session);
+      },
+      (runtime, headers) => {
+        const owner = projectRegistry().getByRoot(runtime.ctx.project!.projectRoot);
+        if (!owner) return;
         for (const h of headers) {
           void import('./uht/uhtValidation').then(({ scheduleUhtValidation }) =>
-            scheduleUhtValidation(ctx, projectSession!, h, settings),
+            scheduleUhtValidation(runtime.ctx, owner.session, h, settings),
           );
         }
       },
-      () => {
-        if (!ctx.project || !projectSession) return;
-        const gen = projectSession.getGeneration();
-        const token = projectSession.getActiveToken() ?? new vscode.CancellationTokenSource().token;
-        void projectSession.runJob('detection', ctx.project.projectRoot, gen, token, async () => {
-          invalidateSemanticGraph(ctx.project!.projectRoot);
-          await refreshSemanticGraph(ctx.project!);
+      (runtime) => {
+        const owner = projectRegistry().getByRoot(runtime.ctx.project!.projectRoot);
+        if (!owner) return;
+        const gen = owner.session.getGeneration();
+        const token = owner.session.getActiveToken() ?? new vscode.CancellationTokenSource().token;
+        void owner.session.runJob('detection', runtime.ctx.project!.projectRoot, gen, token, async () => {
+          invalidateSemanticGraph(runtime.ctx.project!.projectRoot);
+          await refreshSemanticGraph(runtime.ctx.project!);
         });
       },
     ),
@@ -211,12 +233,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   extensionContext.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders((e) => {
       for (const folder of e.removed) {
-        for (const projRoot of projectRegistry().listRoots()) {
-          if (folder.uri.fsPath.startsWith(projRoot) || projRoot.startsWith(folder.uri.fsPath)) {
-            projectRegistry().disposeProject(projRoot);
-          }
-        }
+        projectRegistry().disposeUnder(folder.uri.fsPath);
       }
+    }),
+  );
+  extensionContext.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (!editor) return;
+      const runtime = resolveRuntime(editor.document.uri);
+      if (!runtime) return;
+      projectRegistry().setActive(runtime.project.projectRoot);
+      commandBridge = runtime.session.getBridge();
+      contentBrowser?.setProjectRoot(runtime.project.projectRoot);
+      testExplorer?.setRuntime(runtime.project.projectRoot, runtime.editorBridge);
+      void testExplorer?.refresh(runtimeContext(editor.document.uri));
     }),
   );
 
@@ -244,11 +274,12 @@ export function deactivate(): void {
 }
 
 async function openContentBrowserForProject(options?: { reopen?: boolean }): Promise<void> {
-  if (!ctx.project) return;
+  const commandCtx = runtimeContext();
+  if (!commandCtx.project) return;
   const { openContentBrowserByUiMode, createOpenAssetHandler } = await import('./assets/contentBrowserUi');
   if (options?.reopen !== false || settings.contentBrowserUi !== 'tree') {
     await openContentBrowserByUiMode(
-      ctx.project.projectRoot,
+      commandCtx.project.projectRoot,
       settings,
       createOpenAssetHandler(),
       extensionContext,
@@ -256,29 +287,29 @@ async function openContentBrowserForProject(options?: { reopen?: boolean }): Pro
   }
 }
 
-async function scheduleCompileRefresh(): Promise<void> {
-  if (!projectSession || !ctx.project || !extensionPath) return;
-  const gen = projectSession.getGeneration();
-  const token = projectSession.getActiveToken() ?? new vscode.CancellationTokenSource().token;
-  await projectSession.runJob('compileRefresh', ctx.project.projectRoot, gen, token, async () => {
-    await runSilentCompileRefresh(gen);
+async function scheduleCompileRefresh(commandCtx = runtimeContext(), session = resolveRuntime()?.session ?? projectSession): Promise<void> {
+  if (!session || !commandCtx.project || !extensionPath) return;
+  const gen = session.getGeneration();
+  const token = session.getActiveToken() ?? new vscode.CancellationTokenSource().token;
+  await session.runJob('compileRefresh', commandCtx.project.projectRoot, gen, token, async () => {
+    await runSilentCompileRefresh(commandCtx, session, gen);
   });
 }
 
-async function runSilentCompileRefresh(pipelineGeneration: number): Promise<void> {
-  if (!ctx.project || !extensionPath || !projectSession) return;
-  if (projectSession.isStale(pipelineGeneration)) return;
+async function runSilentCompileRefresh(commandCtx: UE5_8CursorContext, session: ProjectSession, pipelineGeneration: number): Promise<void> {
+  if (!commandCtx.project || !extensionPath) return;
+  if (session.isStale(pipelineGeneration)) return;
   const { ensureCompileDatabase } = await import('./cursor/bootstrapProject');
   const result = await ensureCompileDatabase(
-    ctx,
+    commandCtx,
     settings,
     extensionPath,
-    (msg) => ctx.outputChannel.appendLine(msg),
-    { force: true, token: projectSession.getActiveToken() },
+    (msg) => commandCtx.outputChannel.appendLine(msg),
+    { force: true, token: session.getActiveToken() },
   );
-  if (projectSession.isStale(pipelineGeneration)) return;
+  if (session.isStale(pipelineGeneration)) return;
   statusBar.setIntelliSense(result.mode);
-  void statusBar.update(ctx, settings);
+  void statusBar.update(commandCtx, settings);
   try {
     await vscode.commands.executeCommand('clangd.restart');
   } catch {
@@ -394,21 +425,35 @@ async function executeDetectionPipeline(
   configureMcpBridge(ctx.project.projectRoot, extensionPath);
   contentBrowser?.setProjectRoot(ctx.project.projectRoot);
 
+  let discoveredEngines: Awaited<ReturnType<typeof discoverEngines>> = [];
   if (settings.engineRoot) {
     ctx.engine = (await createManualInstallation(settings.engineRoot)) ?? undefined;
   } else {
-    const engines = await discoverEngines();
-    ctx.outputChannel.appendLine(`[UE5_8 Cursor] Found ${engines.length} UE 5.8 engine(s).`);
-    ctx.engine = await findMatchingEngine(ctx.project, engines);
-    if (!ctx.engine && engines.length === 1) {
-      ctx.engine = engines[0];
+    discoveredEngines = await discoverEngines();
+    ctx.outputChannel.appendLine(`[UE5_8 Cursor] Found ${discoveredEngines.length} UE 5.8 engine(s).`);
+    ctx.engine = await findMatchingEngine(ctx.project, discoveredEngines);
+    if (!ctx.engine && discoveredEngines.length === 1) {
+      ctx.engine = discoveredEngines[0];
       ctx.outputChannel.appendLine(`[UE5_8 Cursor] Engine auto-selected: ${ctx.engine.root}`);
-    } else if (!ctx.engine && engines.length > 1) {
-      ctx.engine = await promptSelectEngine(engines);
+    } else if (!ctx.engine && discoveredEngines.length > 1) {
+      ctx.engine = await promptSelectEngine(discoveredEngines);
     }
   }
 
-  const runtime = projectRegistry().ensure(ctx.project, ctx.engine, extensionContext);
+  // Register every discovered project. Providers resolve a runtime from the
+  // active document URI, so secondary workspace folders must exist here even
+  // when the UI chooses a different primary project.
+  for (const project of projects) {
+    const runtimeEngine =
+      project.projectRoot === ctx.project.projectRoot
+        ? ctx.engine
+        : settings.engineRoot
+          ? ctx.engine
+          : await findMatchingEngine(project, discoveredEngines);
+    projectRegistry().ensure(project, runtimeEngine, extensionContext);
+  }
+
+  const runtime = projectRegistry().getByRoot(ctx.project.projectRoot)!;
   projectRegistry().setActive(ctx.project.projectRoot);
   // This pipeline was started by the current global session. Replacing it while
   // the run is in flight makes later generation checks compare against a fresh
@@ -419,7 +464,7 @@ async function executeDetectionPipeline(
   if (editorBridge) {
     const bridgeInfo = await withBridgeTimeout(editorBridge.connect(ctx.project.projectRoot), 5000);
     if (bridgeInfo) {
-      testExplorer?.setBridge(editorBridge);
+      testExplorer?.setRuntime(ctx.project.projectRoot, editorBridge);
       ctx.outputChannel.appendLine(`[UE5_8 Cursor] ${formatBridgeStatus(bridgeInfo)}`);
       statusBar.setBridgeStatus(bridgeInfo);
       if (bridgeInfo.connected) {
@@ -435,6 +480,7 @@ async function executeDetectionPipeline(
       }
     }
   }
+  testExplorer?.setRuntime(ctx.project.projectRoot, editorBridge);
   void testExplorer?.refresh(ctx);
 
   if (ctx.project) {
@@ -484,14 +530,21 @@ async function executeDetectionPipeline(
   projectSession.markIndexing();
   void statusBar.update(ctx, settings);
 
-  if (ctx.project && projectSession) {
-    commandBridge = await projectSession.ensureBridge(ctx.project.projectRoot);
-    if (commandBridge) {
-      const { readBridgePort } = await import('./mcp/commandBridge');
-      const port = await readBridgePort(ctx.project.projectRoot);
-      ctx.outputChannel.appendLine(`[UE5_8 Cursor] MCP command bridge on port ${port ?? 'unknown'}`);
-    } else {
-      ctx.outputChannel.appendLine('[UE5_8 Cursor] Command bridge unavailable');
+  if (ctx.project) {
+    // CommandBridge is owned by each project runtime. Every discovered project
+    // gets a separate authenticated endpoint and bridge file under its root.
+    for (const project of projects) {
+      const projectRuntime = projectRegistry().getByRoot(project.projectRoot);
+      if (!projectRuntime) continue;
+      const bridge = await projectRuntime.session.ensureBridge(project.projectRoot);
+      if (project.projectRoot === ctx.project.projectRoot) commandBridge = bridge;
+      if (bridge) {
+        const { readBridgePort } = await import('./mcp/commandBridge');
+        const port = await readBridgePort(project.projectRoot);
+        ctx.outputChannel.appendLine(`[UE5_8 Cursor] MCP command bridge (${project.name}) on port ${port ?? 'unknown'}`);
+      } else {
+        ctx.outputChannel.appendLine(`[UE5_8 Cursor] Command bridge unavailable for ${project.name}`);
+      }
     }
 
     if (settings.autoStartLogViewer) {
@@ -505,9 +558,30 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     extensionContext.subscriptions.push(vscode.commands.registerCommand(id, fn));
   };
 
+  extensionContext.subscriptions.push(vscode.commands.registerCommand(
+    'ue58rider.executeProjectBridgeCommand',
+    async (request: { projectRoot?: string; command?: string; args?: unknown[] }) => {
+      if (!request?.projectRoot || !request.command || !projectRegistry().getByRoot(request.projectRoot)) return;
+      // Command handlers were intentionally written around runtimeContext().
+      // Serialize bridge invocations so this temporary context cannot leak from
+      // one project's authenticated endpoint into another project's command.
+      const dispatch = bridgeDispatchChain.then(async () => {
+        const previous = bridgeDispatchRoot;
+        bridgeDispatchRoot = request.projectRoot;
+        try {
+          await vscode.commands.executeCommand(request.command!, ...(request.args ?? []));
+        } finally {
+          bridgeDispatchRoot = previous;
+        }
+      });
+      bridgeDispatchChain = dispatch.catch(() => {});
+      await dispatch;
+    },
+  ));
+
   reg(Commands.SetupProject, async () => {
     const { setupProject } = await import('./commands/setupCommands');
-    const result = await setupProject(ctx, settings, extensionPath);
+    const result = await setupProject(runtimeContext(), settings, extensionPath);
     if (result) {
       statusBar.setIntelliSense(result.intelliSense, { provisional: result.intelliSense === 'partial' });
       void statusBar.update(ctx, settings);
@@ -516,35 +590,36 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
 
   reg(Commands.Build, async () => {
     const { executeBuild } = await import('./commands/buildCommands');
-    await executeBuild(ctx, settings, statusBar);
+    await executeBuild(runtimeContext(), settings, statusBar);
   });
 
   reg(Commands.Rebuild, async () => {
     const { executeRebuild } = await import('./commands/buildCommands');
-    await executeRebuild(ctx, settings, statusBar);
+    await executeRebuild(runtimeContext(), settings, statusBar);
   });
 
   reg(Commands.Clean, async () => {
     const { executeClean } = await import('./commands/buildCommands');
-    await executeClean(ctx, settings, statusBar);
+    await executeClean(runtimeContext(), settings, statusBar);
   });
 
   reg(Commands.LaunchEditor, async () => {
     const { launchEditorDetached } = await import('./commands/launchCommands');
-    await launchEditorDetached(ctx);
-    if (ctx.project && settings.autoStartLogViewer) {
-      setTimeout(() => void logViewer.start(ctx.project!), 3000);
+    const commandCtx = runtimeContext();
+    await launchEditorDetached(commandCtx);
+    if (commandCtx.project && settings.autoStartLogViewer) {
+      setTimeout(() => void logViewer.start(commandCtx.project!), 3000);
     }
   });
 
   reg(Commands.LiveCoding, async () => {
     const { triggerLiveCoding } = await import('./commands/liveCodingCommand');
-    await triggerLiveCoding(ctx, settings);
+    await triggerLiveCoding(runtimeContext(), settings);
   });
 
   reg(Commands.GenerateCompileCommands, async () => {
     const { generateCompileCommands } = await import('./commands/setupCommands');
-    const mode = await generateCompileCommands(ctx, settings, extensionPath);
+    const mode = await generateCompileCommands(runtimeContext(), settings, extensionPath);
     statusBar.setIntelliSense(mode);
     void statusBar.update(ctx, settings);
   });
@@ -610,22 +685,22 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
 
   reg(Commands.DebugLaunchEditor, async () => {
     const { debugLaunchEditor } = await import('./commands/debugCommands');
-    await debugLaunchEditor(ctx, settings);
+    await debugLaunchEditor(runtimeContext(), settings);
   });
 
   reg(Commands.DebugAttachEditor, async () => {
     const { debugAttachEditor } = await import('./commands/debugCommands');
-    await debugAttachEditor(ctx);
+    await debugAttachEditor(runtimeContext());
   });
 
   reg(Commands.DebugLaunchGame, async () => {
     const { debugLaunchGame } = await import('./commands/debugCommands');
-    await debugLaunchGame(ctx, settings);
+    await debugLaunchGame(runtimeContext(), settings);
   });
 
   reg(Commands.DebugPIE, async () => {
     const { debugPIE } = await import('./commands/debugCommands');
-    await debugPIE(ctx, settings);
+    await debugPIE(runtimeContext(), settings);
   });
 
   reg(Commands.DebugMultiplayer, async () => {
@@ -644,7 +719,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     );
     if (!mode) return;
     const { launchMultiplayerDebug } = await import('./debug/multiplayerRun');
-    await launchMultiplayerDebug(ctx, settings, {
+    await launchMultiplayerDebug(runtimeContext(), settings, {
       players: Number(players),
       listenServer: mode.id === 'listen',
       dedicatedServer: mode.id === 'dedicated',
@@ -653,30 +728,30 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
 
   reg(Commands.NewCppClass, async () => {
     const { runClassWizard } = await import('./commands/classWizardCommand');
-    await runClassWizard(ctx, settings);
+    await runClassWizard(runtimeContext(), settings);
   });
 
   reg(Commands.OpenBlueprint, async (assetPath?: string) => {
     const { openBlueprintInEditor } = await import('./blueprint/blueprintCodeLens');
     if (!assetPath) return;
-    await openBlueprintInEditor(ctx, assetPath);
+    await openBlueprintInEditor(runtimeContext(), assetPath);
   });
 
   reg(Commands.FindBlueprints, async (className?: string) => {
     const { findAndPickBlueprint } = await import('./blueprint/blueprintCodeLens');
     if (!className) return;
-    await findAndPickBlueprint(ctx, className);
+    await findAndPickBlueprint(runtimeContext(), className);
   });
 
   reg(Commands.CreateBlueprintSubclass, async (className?: string) => {
     const { createBlueprintSubclass } = await import('./blueprint/blueprintCodeLens');
     if (!className) return;
-    await createBlueprintSubclass(ctx, className);
+    await createBlueprintSubclass(runtimeContext(), className);
   });
 
   reg(Commands.JumpToCppFromBlueprint, async () => {
     const { jumpToCppFromBlueprint } = await import('./blueprint/blueprintCodeLens');
-    await jumpToCppFromBlueprint(ctx);
+    await jumpToCppFromBlueprint(runtimeContext());
   });
 
   reg(Commands.SetupMcp, async () => {
@@ -685,16 +760,17 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   });
 
   reg(Commands.InstallCursorBridgePlugin, async () => {
-    if (!ctx.project) {
+    const commandCtx = runtimeContext();
+    if (!commandCtx.project) {
       vscode.window.showWarningMessage('UE5_8 Cursor: open a UE project first.');
       return;
     }
-    if (isCursorBridgePluginInstalled(ctx.project)) {
+    if (isCursorBridgePluginInstalled(commandCtx.project)) {
       vscode.window.showInformationMessage('UE5_8 Cursor: UE58CursorBridge is already installed.');
       return;
     }
     const files = await listCursorBridgePluginFiles(extensionPath);
-    const preview = formatInstallPreview(ctx.project, extensionPath, files);
+    const preview = formatInstallPreview(commandCtx.project, extensionPath, files);
     const consent = await vscode.window.showWarningMessage(
       'Install UE58CursorBridge editor plugin into this project?',
       { modal: true, detail: preview },
@@ -703,7 +779,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     );
     if (consent !== 'Install') return;
 
-    const result = await installCursorBridgePlugin(ctx.project, {
+    const result = await installCursorBridgePlugin(commandCtx.project, {
       consentGranted: true,
       extensionPath,
       enableInUproject: true,
@@ -724,19 +800,21 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   });
 
   reg(Commands.RefreshUhtIntellisense, async () => {
-    if (!ctx.project) return;
+    const commandCtx = runtimeContext();
+    if (!commandCtx.project) return;
     const { ensureUhtIntellisense } = await import('./cursor/projectSetup');
-    await ensureUhtIntellisense(ctx.project, extensionPath);
+    await ensureUhtIntellisense(commandCtx.project, extensionPath);
     const { refreshAllIndexes } = await import('./assets/indexCoordinator');
-    await refreshAllIndexes(ctx.project.projectRoot);
+    await refreshAllIndexes(commandCtx.project.projectRoot);
     void statusBar.update(ctx, settings);
     vscode.commands.executeCommand('clangd.restart');
     vscode.window.showInformationMessage('UE5_8 Cursor: UHT IntelliSense + 인덱스 갱신 완료');
   });
 
   reg(Commands.StartLogViewer, async () => {
-    if (!ctx.project) return;
-    await logViewer.start(ctx.project);
+    const commandCtx = runtimeContext();
+    if (!commandCtx.project) return;
+    await logViewer.start(commandCtx.project);
   });
 
   reg(Commands.StopLogViewer, () => {
@@ -749,9 +827,10 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   });
 
   reg(Commands.OpenMultiRootWorkspace, async () => {
-    if (!ctx.project) return;
+    const commandCtx = runtimeContext();
+    if (!commandCtx.project) return;
     const { ensureMultiRootWorkspace } = await import('./cursor/multiRootWorkspace');
-    const wsPath = await ensureMultiRootWorkspace(ctx.project);
+    const wsPath = await ensureMultiRootWorkspace(commandCtx.project);
     if (wsPath) {
       const open = await vscode.window.showInformationMessage(
         `UE5_8 Cursor: ${path.basename(wsPath)} 생성됨`,
@@ -787,9 +866,10 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   });
 
   reg(Commands.RefreshAssetIndex, async () => {
-    if (!ctx.project) return;
+    const commandCtx = runtimeContext();
+    if (!commandCtx.project) return;
     const { refreshAllIndexes } = await import('./assets/indexCoordinator');
-    const result = await refreshAllIndexes(ctx.project.projectRoot, { enrichMcp: true });
+    const result = await refreshAllIndexes(commandCtx.project.projectRoot, { enrichMcp: true });
     await contentBrowser?.refresh();
     void statusBar.update(ctx, settings);
     vscode.window.showInformationMessage(
@@ -800,17 +880,19 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   reg(Commands.OpenAsset, async (assetPath?: string | { entry?: { assetPath: string } }) => {
     const path =
       typeof assetPath === 'string' ? assetPath : assetPath?.entry?.assetPath;
-    if (!path || !ctx.project || !ctx.engine) return;
+    const commandCtx = runtimeContext();
+    if (!path || !commandCtx.project || !commandCtx.engine) return;
     const { openAssetInEditor } = await import('./blueprint/blueprintEditor');
-    await openAssetInEditor(ctx.engine, ctx.project, path);
+    await openAssetInEditor(commandCtx.engine, commandCtx.project, path);
   });
 
   reg(Commands.FindAssetReferences, async (assetPath?: string | { entry?: { assetPath: string } }) => {
     const path =
       typeof assetPath === 'string' ? assetPath : assetPath?.entry?.assetPath;
-    if (!path || !ctx.project) return;
+    const commandCtx = runtimeContext();
+    if (!path || !commandCtx.project) return;
     const { showReferenceGraphPanel } = await import('./assets/referenceGraphPanel');
-    await showReferenceGraphPanel(ctx.project.projectRoot, path, (p) => {
+    await showReferenceGraphPanel(commandCtx.project.projectRoot, path, (p) => {
       void vscode.commands.executeCommand(Commands.OpenAsset, p);
     });
   });
@@ -820,9 +902,10 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   });
 
   reg(Commands.ShowMcpDiagnostics, async () => {
-    if (!ctx.project) return;
+    const commandCtx = runtimeContext();
+    if (!commandCtx.project) return;
     const { showMcpDiagnostics } = await import('./mcp/mcpDiagnosticsProvider');
-    await showMcpDiagnostics(ctx.project.projectRoot, ctx.outputChannel);
+    await showMcpDiagnostics(commandCtx.project.projectRoot, ctx.outputChannel);
     await mcpDiagnostics?.refresh();
   });
 
@@ -848,10 +931,11 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   });
 
   reg(Commands.ShowContentWebview, async () => {
-    if (!ctx.project) return;
+    const commandCtx = runtimeContext();
+    if (!commandCtx.project) return;
     const { showContentBrowserWebview } = await import('./assets/contentBrowserWebview');
     await showContentBrowserWebview(
-      ctx.project.projectRoot,
+      commandCtx.project.projectRoot,
       (p) => void vscode.commands.executeCommand(Commands.OpenAsset, p),
       extensionContext,
       settings,

@@ -14,3 +14,9 @@ package-lock.json
 *.vsix
 !bin/**
 .llvm-cache/**
+Saved/**
+**/Binaries/**
+**/Intermediate/**
+**/DerivedDataCache/**
+**/.ue5_8cursor/**
+**/.ue58rider/**

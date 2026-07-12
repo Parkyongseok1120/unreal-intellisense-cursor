@@ -1,8 +1,0 @@
-{
-	"SourceFiles": [
-		"C:\\Users\\sster\\Documents\\Github\\unreal-intellisense-cursor\\Saved\\ue-e2e\\Synthetic\\Source\\GameModuleEditor\\GameModuleEditor.Build.cs",
-		"C:\\Users\\sster\\Documents\\Github\\unreal-intellisense-cursor\\Saved\\ue-e2e\\Synthetic\\Source\\GameModule\\GameModule.Build.cs",
-		"C:\\Users\\sster\\Documents\\Github\\unreal-intellisense-cursor\\Saved\\ue-e2e\\Synthetic\\Plugins\\UE58CursorBridge\\Source\\UE58CursorBridge\\UE58CursorBridge.Build.cs"
-	],
-	"EngineVersion": "5.8.0"
-}

@@ -75,6 +75,16 @@ export class WorkspaceProjectRegistry {
     }
   }
 
+  /** Dispose every runtime contained by a removed workspace folder. */
+  disposeUnder(workspaceRoot: string): void {
+    const root = this.canonical(workspaceRoot);
+    for (const projectRoot of [...this.runtimes.keys()]) {
+      if (projectRoot === root || projectRoot.startsWith(`${root}${path.sep}`)) {
+        this.disposeProject(projectRoot);
+      }
+    }
+  }
+
   listRoots(): string[] {
     return [...this.runtimes.keys()];
   }

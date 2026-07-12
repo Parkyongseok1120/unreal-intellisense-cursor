@@ -32,6 +32,30 @@ describe('workspace project registry', () => {
     assert.ok(src.includes('ensure('));
     assert.ok(src.includes('disposeProject'));
     assert.ok(src.includes('getByUri'));
+    assert.ok(src.includes('disposeUnder'));
+    assert.ok(src.includes('b.length - a.length'));
+  });
+});
+
+describe('Gate 2 project-scoped runtime state', () => {
+  it('keeps watcher, UHT, bridge views, and log cursors project-keyed', () => {
+    const read = (file) => fs.readFileSync(path.join(root, 'src', ...file.split('/')), 'utf-8');
+    const watcher = read('detection/sourceWatcher.ts');
+    const uht = read('uht/uhtValidation.ts');
+    const content = read('assets/contentBrowserProvider.ts');
+    const tests = read('testing/unrealTestExplorer.ts');
+    const logs = read('logs/unrealLogViewer.ts');
+    const extension = read('extension.ts');
+    const commandBridge = read('mcp/commandBridge.ts');
+    assert.ok(watcher.includes('resolveRuntime: (uri: vscode.Uri)'));
+    assert.ok(watcher.includes('const states = new Map<string, PendingBatch>()'));
+    assert.ok(uht.includes('const validationStates = new Map<string, ValidationState>()'));
+    assert.ok(content.includes('private readonly states = new Map<string, ContentBrowserState>()'));
+    assert.ok(tests.includes('private readonly runtimeStates = new Map<string, TestRuntimeState>()'));
+    assert.ok(logs.includes('private readonly states = new Map<string, LogRuntimeState>()'));
+    assert.ok(extension.includes('projectRuntime.session.ensureBridge(project.projectRoot)'));
+    assert.ok(extension.includes('ue58rider.executeProjectBridgeCommand'));
+    assert.ok(commandBridge.includes('projectRoot: this.projectRoot'));
   });
 });
 

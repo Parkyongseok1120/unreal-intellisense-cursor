@@ -117,13 +117,21 @@ async function main() {
       return parsed.port && parsed.token && parsed.projectId === 'Synthetic' ? parsed : undefined;
     }, 'Editor Bridge descriptor');
     const checks = [];
-    const handshake = await rpc(descriptor, 'handshake', { client: 'ue-e2e', version: 1 });
+    // The descriptor is written while the Editor finishes its project-target
+    // discovery. On a cold machine that can temporarily block HTTP dispatch,
+    // so wait for a responsive endpoint rather than treating the first 10 s
+    // request timeout as a bridge failure.
+    const rpcReady = (method, params = {}) => waitFor(
+      () => rpc(descriptor, method, params),
+      `Editor Bridge ${method} RPC`,
+    );
+    const handshake = await rpcReady('handshake', { client: 'ue-e2e', version: 1 });
     checks.push(handshake?.ok === true && Array.isArray(handshake.capabilities));
-    const ping = await rpc(descriptor, 'ping');
+    const ping = await rpcReady('ping');
     checks.push(ping?.pong === true);
-    const assets = await rpc(descriptor, 'assetRegistry.list', { limit: 1 });
+    const assets = await rpcReady('assetRegistry.list', { limit: 1 });
     checks.push(Array.isArray(assets?.assets) && typeof assets?.hasMore === 'boolean');
-    const tests = await rpc(descriptor, 'automation.list');
+    const tests = await rpcReady('automation.list');
     checks.push(Array.isArray(tests?.tests));
     const ratio = checks.filter(Boolean).length / checks.length;
     const metrics = { version: 1, generatedAt: new Date().toISOString(), source: 'ue-editor-e2e', areas: {

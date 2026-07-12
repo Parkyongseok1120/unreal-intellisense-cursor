@@ -93,7 +93,14 @@ export class CommandBridge implements vscode.Disposable {
 
           try {
             const { command, args } = validation.request;
-            await vscode.commands.executeCommand(command, ...(args ?? []));
+            // Keep the authenticated endpoint's owning .uproject attached to
+            // the command. Generic VS Code commands otherwise resolve from the
+            // currently focused editor and can target a different workspace.
+            await vscode.commands.executeCommand('ue58rider.executeProjectBridgeCommand', {
+              projectRoot: this.projectRoot,
+              command,
+              args: args ?? [],
+            });
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true }));
           } catch (err) {
