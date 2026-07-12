@@ -65,22 +65,35 @@ export async function parseUhtManifestInputFiles(manifestPath: string): Promise<
 
 export async function findUhtManifest(project: UEProject): Promise<string | undefined> {
   const base = path.join(project.projectRoot, 'Intermediate', 'Build', 'Win64');
+  const manifestName = `${project.name}Editor.uhtmanifest`;
   const candidates = [
-    path.join(base, `${project.name}Editor`, 'Development', `${project.name}Editor.uhtmanifest`),
-    path.join(base, 'UnrealEditor', 'Development', `${project.name}Editor.uhtmanifest`),
+    path.join(base, `${project.name}Editor`, 'Development', manifestName),
+    path.join(base, 'UnrealEditor', 'Development', manifestName),
+    path.join(base, 'x64', `${project.name}Editor`, 'Development', manifestName),
+    path.join(base, 'x64', 'UnrealEditor', 'Development', manifestName),
   ];
   for (const c of candidates) {
     if (await fileExists(c)) return c;
   }
+  return findFileBelow(base, manifestName, 5);
+}
+
+async function findFileBelow(dir: string, fileName: string, depth: number): Promise<string | undefined> {
+  if (depth < 0) return undefined;
+  let entries: fs.Dirent[];
   try {
-    const entries = await fs.promises.readdir(base, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const manifest = path.join(base, entry.name, 'Development', `${project.name}Editor.uhtmanifest`);
-      if (await fileExists(manifest)) return manifest;
-    }
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch {
-    // no intermediate
+    return undefined;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isFile() && entry.name.toLowerCase() === fileName.toLowerCase()) return full;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const found = await findFileBelow(path.join(dir, entry.name), fileName, depth - 1);
+    if (found) return found;
   }
   return undefined;
 }

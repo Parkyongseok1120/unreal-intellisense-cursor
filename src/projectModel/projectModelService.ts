@@ -9,6 +9,8 @@ import { buildReflectionIndex, type UClassReflection } from '../uht/reflectionIn
 import { findUhtManifest, parseUhtManifestInputFiles } from '../uht/uhtRunner';
 import { ensureDataDir } from '../platform/dataDir';
 import * as fs from 'fs';
+import { parseWindowsCommandLine, resolveCompilePath, canonicalCompilePath } from './windowsCommandLine';
+import { normalizeParityArgs } from './rspActionImporter';
 
 export const SEMANTIC_GRAPH_VERSION = 2;
 const SEMANTIC_GRAPH_FILE = 'semantic-graph.json';
@@ -86,6 +88,9 @@ export interface CompileAction {
   file: string;
   arguments: string[];
   hash: string;
+  directory?: string;
+  targetKey?: string;
+  synthetic?: boolean;
 }
 
 function normalizeArgs(args: string[]): string {
@@ -102,11 +107,6 @@ function hashString(input: string): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-function commandToArgs(command: string): string[] {
-  const matches = command.match(/(?:[^\s"]+|"[^"]*")+/g);
-  return matches?.map((m) => m.replace(/^"|"$/g, '')) ?? [];
 }
 
 export async function buildProjectModel(project: UEProject): Promise<ProjectModelGraph> {
@@ -358,16 +358,19 @@ export async function collectCompileActionsFromProject(projectRoot: string): Pro
       file?: string;
       arguments?: string[];
       command?: string;
+      directory?: string;
     }>;
     return raw
       .filter((e) => e.file)
       .map((e) => {
-        const args = e.arguments ?? (e.command ? commandToArgs(e.command) : []);
+        const directory = e.directory ? path.resolve(e.directory) : projectRoot;
+        const args = e.arguments ?? (e.command ? parseWindowsCommandLine(e.command) : []);
         const normalized = normalizeArgs(args);
         return {
-          file: path.normalize(e.file!),
+          file: resolveCompilePath(e.file!, directory, projectRoot),
           arguments: args,
           hash: hashString(normalized),
+          directory,
         };
       });
   } catch {
@@ -428,7 +431,7 @@ export async function addTranslationUnitAction(
 
   const moduleDir = path.dirname(normalized);
   const sibling = entries.find((e) => path.dirname(path.normalize(e.file)) === moduleDir);
-  const source = templateAction ?? (sibling ? { file: sibling.file, arguments: sibling.arguments ?? commandToArgs(sibling.command ?? '') } : undefined);
+  const source = templateAction ?? (sibling ? { file: sibling.file, arguments: sibling.arguments ?? parseWindowsCommandLine(sibling.command ?? '') } : undefined);
   if (!source) return false;
 
   const args = [...(source.arguments ?? [])];
@@ -449,17 +452,44 @@ export async function addTranslationUnitAction(
   return true;
 }
 
-export function compareActionHashes(expected: CompileAction[], actual: CompileAction[]): {
+export function compareActionHashes(
+  expected: CompileAction[],
+  actual: CompileAction[],
+  options?: { mode?: 'flags' | 'tu' | 'both' },
+): {
   matched: number;
   total: number;
   parity: number;
+  tuLinked?: number;
+  tuTotal?: number;
+  tuRate?: number;
 } {
-  const actualByFile = new Map(actual.map((a) => [path.normalize(a.file).toLowerCase(), a.hash]));
+  const mode = options?.mode ?? 'flags';
+  const actualByFile = new Map(actual.map((a) => [canonicalCompilePath(a.file, a.directory ?? ''), a]));
+  const semanticHash = (action: CompileAction): string =>
+    action.arguments.length > 0 ? hashString(normalizeParityArgs(action.arguments)) : action.hash;
   let matched = 0;
   for (const exp of expected) {
-    const hash = actualByFile.get(path.normalize(exp.file).toLowerCase());
-    if (hash === exp.hash) matched++;
+    const act = actualByFile.get(canonicalCompilePath(exp.file, exp.directory ?? ''));
+    if (act && semanticHash(act) === semanticHash(exp)) matched++;
   }
   const total = expected.length;
-  return { matched, total, parity: total === 0 ? 0 : matched / total };
+  const parity = total === 0 ? 0 : matched / total;
+
+  let tuLinked = 0;
+  if (mode === 'tu' || mode === 'both') {
+    for (const exp of expected) {
+      if (actualByFile.has(canonicalCompilePath(exp.file, exp.directory ?? ''))) tuLinked++;
+    }
+  }
+  const tuTotal = expected.length;
+  const tuRate = tuTotal === 0 ? 0 : tuLinked / tuTotal;
+
+  if (mode === 'tu') {
+    return { matched: tuLinked, total: tuTotal, parity: tuRate, tuLinked, tuTotal, tuRate };
+  }
+  if (mode === 'both') {
+    return { matched, total, parity, tuLinked, tuTotal, tuRate };
+  }
+  return { matched, total, parity };
 }

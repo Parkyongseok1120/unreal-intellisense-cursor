@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import type { UEProject } from '../types';
+import type { BuildConfiguration, BuildPlatform, BuildTargetType, UEInstallation, UEProject } from '../types';
 import type { UClassReflection } from '../uht/generatedHeaderParser';
 import {
   buildSemanticGraph,
@@ -21,7 +21,29 @@ let cachedGraph: SemanticGraph | undefined;
 let cachedProjectRoot: string | undefined;
 let cachedSnapshot: BuildSnapshot | undefined;
 
-export async function getOrBuildSemanticGraph(project: UEProject): Promise<SemanticGraph> {
+export interface SemanticRefreshOptions {
+  engine?: UEInstallation;
+  targetType?: BuildTargetType;
+  platform?: BuildPlatform;
+  configuration?: BuildConfiguration;
+  architecture?: string;
+}
+
+function snapshotOptions(project: UEProject, options?: SemanticRefreshOptions) {
+  return {
+    project,
+    engine: options?.engine,
+    targetType: options?.targetType,
+    platform: options?.platform,
+    configuration: options?.configuration,
+    architecture: options?.architecture,
+  };
+}
+
+export async function getOrBuildSemanticGraph(
+  project: UEProject,
+  options?: SemanticRefreshOptions,
+): Promise<SemanticGraph> {
   if (cachedGraph && cachedProjectRoot === project.projectRoot) {
     return cachedGraph;
   }
@@ -35,11 +57,14 @@ export async function getOrBuildSemanticGraph(project: UEProject): Promise<Seman
     return loaded;
   }
 
-  return refreshSemanticGraph(project);
+  return refreshSemanticGraph(project, options);
 }
 
-export async function refreshSemanticGraph(project: UEProject): Promise<SemanticGraph> {
-  const snapshot = await buildCompileSnapshot(project);
+export async function refreshSemanticGraph(
+  project: UEProject,
+  options?: SemanticRefreshOptions,
+): Promise<SemanticGraph> {
+  const snapshot = await buildCompileSnapshot(snapshotOptions(project, options));
   await saveBuildSnapshot(project.projectRoot, snapshot);
   cachedSnapshot = snapshot;
 
@@ -97,15 +122,23 @@ export async function getReflectionClasses(projectRoot: string): Promise<UClassR
 
 export type IntelliSenseStatus = 'ready' | 'partial' | 'stale' | 'missing';
 
-export async function computeCompileParity(project: UEProject): Promise<{
+export async function computeCompileParity(
+  project: UEProject,
+  options?: SemanticRefreshOptions,
+): Promise<{
   matched: number;
   total: number;
   parity: number;
   synthetic: boolean;
   status: IntelliSenseStatus;
   provenance: string;
+  tuLinkage?: number;
+  flagParity?: number;
 }> {
-  const snapshot = cachedSnapshot ?? (await loadBuildSnapshot(project.projectRoot)) ?? (await buildCompileSnapshot(project));
+  const snapshot =
+    cachedSnapshot ??
+    (await loadBuildSnapshot(project.projectRoot)) ??
+    (await buildCompileSnapshot(snapshotOptions(project, options)));
   const result = snapshot.parity ?? {
     matched: 0,
     total: snapshot.ideActions?.length ?? 0,
@@ -113,13 +146,20 @@ export async function computeCompileParity(project: UEProject): Promise<{
   };
 
   const graph = cachedGraph ?? (await loadSemanticGraph(project.projectRoot));
-  const status = await snapshotFreshness(project.projectRoot, graph?.fingerprint);
+  const status = await snapshotFreshness(
+    project.projectRoot,
+    graph?.fingerprint,
+    options?.engine,
+    snapshotOptions(project, options),
+  );
 
   return {
     ...result,
     synthetic: snapshot.synthetic,
     status,
     provenance: snapshot.provenance,
+    tuLinkage: snapshot.tuLinkage?.rate,
+    flagParity: snapshot.flagParity?.parity,
   };
 }
 

@@ -3,48 +3,21 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import vm from 'node:vm';
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
+import { loadTsModule } from './helpers/loadTsModule.mjs';
 
 function loadRspParser() {
-  const ts = require('typescript');
-  const sourcePath = path.join(process.cwd(), 'src', 'cursor', 'compileDatabaseFromRsp.ts');
-  const source = fs.readFileSync(sourcePath, 'utf-8');
-  const js = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2020,
-      esModuleInterop: true,
-    },
-  }).outputText;
-
-  const module = { exports: {} };
-  const sandbox = {
-    exports: module.exports,
-    module,
-    require: (id) => {
-      if (id === 'fs' || id === 'path') return require(id);
-      if (id === '../platform/paths') return { fileExists: () => false };
-      if (id === './compileDatabaseFromBuildCs') {
-        return { generateCompileDatabaseFromBuildCs: async () => ({ mode: 'missing' }) };
-      }
-      if (id === '../platform/workspaceMutation') {
-        const nodeFs = require('fs');
-        const nodePath = require('path');
-        return {
-          mutateJson: async (_tx, _projectRoot, filePath, value) => {
-            await nodeFs.promises.mkdir(nodePath.dirname(filePath), { recursive: true });
-            await nodeFs.promises.writeFile(filePath, JSON.stringify(value, null, 2) + '\n', 'utf-8');
-          },
-        };
-      }
-      return require(id);
-    },
-  };
-  vm.runInNewContext(js, sandbox, { filename: sourcePath });
-  return module.exports;
+  return loadTsModule('src/cursor/compileDatabaseFromRsp.ts', {
+    '../platform/paths': () => ({ fileExists: async () => false }),
+    './compileDatabaseFromBuildCs': () => ({
+      generateCompileDatabaseFromBuildCs: async () => ({ ok: false }),
+    }),
+    '../platform/workspaceMutation': () => ({
+      mutateJson: async (_tx, _projectRoot, filePath, value) => {
+        await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.promises.writeFile(filePath, JSON.stringify(value, null, 2) + '\n', 'utf-8');
+      },
+    }),
+  });
 }
 
 describe('parseSharedRspToClangFlags', () => {

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-12T21:58:55.575Z",
+  "generatedAt": "2026-07-12T22:42:28.325Z",
   "source": "ci-merge",
   "areas": {
     "trust": {
@@ -27,16 +27,20 @@
       }
     },
     "buildSnapshot": {
-      "accuracy": 0.78,
-      "completeness": 0.75,
-      "resilience": 0.72,
-      "performance": 0.74,
-      "verification": 0.82,
+      "accuracy": 0.84,
+      "completeness": 0.82,
+      "resilience": 0.8,
+      "performance": 0.78,
+      "verification": 0.88,
       "e2ePassed": true,
       "details": {
         "buildSnapshotV3": true,
+        "snapshotKeyComposite": true,
         "rspMerkle": true,
-        "inputsRevalidate": true
+        "objRspTuMapping": true,
+        "inputsRevalidate": true,
+        "atomicSave": true,
+        "v2Rejected": true
       }
     },
     "bridge": {

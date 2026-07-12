@@ -214,7 +214,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const token = owner.session.getActiveToken() ?? new vscode.CancellationTokenSource().token;
         void owner.session.runJob('detection', runtime.ctx.project!.projectRoot, gen, token, async () => {
           invalidateSemanticGraph(runtime.ctx.project!.projectRoot);
-          await refreshSemanticGraph(runtime.ctx.project!);
+          await refreshSemanticGraph(runtime.ctx.project!, {
+            engine: runtime.ctx.engine,
+            targetType: settings.buildTarget,
+            platform: settings.platform,
+            configuration: settings.buildConfiguration,
+          });
         });
       },
     ),
@@ -484,11 +489,21 @@ async function executeDetectionPipeline(
   void testExplorer?.refresh(ctx);
 
   if (ctx.project) {
-    const graph = await refreshSemanticGraph(ctx.project);
+    const graph = await refreshSemanticGraph(ctx.project, {
+      engine: ctx.engine,
+      targetType: settings.buildTarget,
+      platform: settings.platform,
+      configuration: settings.buildConfiguration,
+    });
     ctx.outputChannel.appendLine(
       `[UE5_8 Cursor] Semantic graph: ${graph.modules.length} module(s), ${graph.reflection.length} class(es), ${graph.plugins.length} plugin(s)`,
     );
-    const parity = await computeCompileParity(ctx.project);
+    const parity = await computeCompileParity(ctx.project, {
+      engine: ctx.engine,
+      targetType: settings.buildTarget,
+      platform: settings.platform,
+      configuration: settings.buildConfiguration,
+    });
     statusBar.setCompileParity(parity.parity, parity.synthetic, {
       status: parity.status,
       provenance: parity.provenance,
