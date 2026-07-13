@@ -2,7 +2,7 @@
   "name": "ue5-8-cursor",
   "displayName": "UE5_8 Cursor",
   "description": "Cursor dedicated Unreal Engine 5.8 C++ workflow — IntelliSense, build, Live Coding, MCP",
-  "version": "7.0.5",
+  "version": "7.0.7",
   "publisher": "truesync",
   "license": "MIT",
   "repository": {
@@ -423,6 +423,12 @@
           "type": "boolean",
           "default": true,
           "description": "UE 최적화 .clangd 설정 적용.",
+          "scope": "resource"
+        },
+        "ue58rider.clangd.lazyPluginIndexing": {
+          "type": "boolean",
+          "default": true,
+          "description": "열지 않은 프로젝트 플러그인은 clangd 백그라운드 인덱싱에서 제외하고, 처음 열 때 해당 플러그인만 인덱싱합니다.",
           "scope": "resource"
         },
         "ue58rider.liveCoding.method": {

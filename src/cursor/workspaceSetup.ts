@@ -46,8 +46,16 @@ export function recommendedClangdJobs(
   cpuCount = os.cpus().length,
 ): number {
   const gib = 1024 ** 3;
-  const memoryBound = totalMemory < 16 * gib ? 2 : totalMemory < 32 * gib ? 3 : totalMemory < 64 * gib ? 4 : 6;
+  const memoryBound = totalMemory < 16 * gib ? 2 : totalMemory < 48 * gib ? 3 : totalMemory < 96 * gib ? 4 : 6;
   return Math.max(2, Math.min(memoryBound, Math.max(2, Math.floor(cpuCount / 2))));
+}
+
+export function recommendedPchStorage(_totalMemory = os.totalmem()): 'disk' {
+  // UE's SharedPCH fan-out is large enough that clangd's in-memory PCH cache
+  // can consume 8–12 GiB even on a 32 GiB workstation. Disk storage keeps the
+  // cache reusable across restarts without competing with UBT/UnrealEditor.
+  // Do not infer "memory" from installed RAM: available memory is volatile.
+  return 'disk';
 }
 
 export function buildUeSettings(options: {
@@ -68,7 +76,7 @@ export function buildUeSettings(options: {
       '--compile-commands-dir=${workspaceFolder}',
       '--completion-style=detailed',
       '--header-insertion=never',
-      '--pch-storage=disk',
+      `--pch-storage=${recommendedPchStorage()}`,
       '--limit-results=500',
       `-j=${recommendedClangdJobs()}`,
     ],

@@ -1,5 +1,12 @@
 # Changelog
 
+## 7.0.7 — clangd Startup Performance
+
+- Uses disk-backed clangd PCH storage on every machine to prevent Unreal SharedPCH memory spikes.
+- Defers background indexing for unopened project plugins while preserving their authoritative compile commands for foreground parsing.
+- Promotes a plugin root and restarts clangd only when a user opens one of its source files.
+- Status bar distinguishes the ready project model, usable project source, and deferred plugin index plan.
+
 ## 7.0.0 — Rider 60% UE Workflow Release (Trust Reset)
 
 - **Gate 0 Trust Reset:** Inaccurate TypeHierarchy/Reference/DocumentSymbol providers gated off by default; UE inspections default off (5 safe rules when enabled); TestController no false-pass; failed-test set; capability-gated Bridge client

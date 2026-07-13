@@ -57,6 +57,11 @@ export class UE5_8CursorSettings {
     return this.cfg.get<boolean>('upsertClangdConfig', true);
   }
 
+  /** Skip unopened project plugins during clangd background indexing. */
+  get clangdLazyPluginIndexing(): boolean {
+    return this.cfg.get<boolean>('clangd.lazyPluginIndexing', true);
+  }
+
   get liveCodingMethod(): 'keystroke' | 'disabled' {
     return this.cfg.get<'keystroke' | 'disabled'>('liveCoding.method', 'keystroke');
   }

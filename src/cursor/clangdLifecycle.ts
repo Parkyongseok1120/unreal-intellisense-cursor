@@ -19,8 +19,8 @@ async function effectiveFingerprint(projectRoot: string): Promise<string> {
   const parts: string[] = [];
   for (const file of files) {
     try {
-      const stat = await fs.promises.stat(file);
-      parts.push(`${file}:${stat.size}:${stat.mtimeMs}`);
+      const content = await fs.promises.readFile(file);
+      parts.push(`${file}:${crypto.createHash('sha256').update(content).digest('hex')}`);
     } catch {
       parts.push(`${file}:missing`);
     }

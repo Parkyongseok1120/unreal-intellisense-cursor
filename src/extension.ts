@@ -53,6 +53,7 @@ let extensionPath = '';
 let extensionContext: vscode.ExtensionContext | undefined;
 let bridgeDispatchRoot: string | undefined;
 let bridgeDispatchChain: Promise<void> = Promise.resolve();
+const pluginIndexRestartTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function projectRegistry() {
   return getWorkspaceProjectRegistry();
@@ -84,6 +85,35 @@ function runtimeContext(uri?: vscode.Uri): UE5_8CursorContext {
   const runtime = resolveRuntime(uri);
   if (!runtime) return ctx;
   return { ...ctx, project: runtime.project, engine: runtime.engine };
+}
+
+async function promoteOpenedPluginDocument(document: vscode.TextDocument): Promise<void> {
+  if (document.uri.scheme !== 'file' || !settings.clangdLazyPluginIndexing || !extensionPath) return;
+  const runtime = resolveRuntime(document.uri);
+  if (!runtime) return;
+
+  const { promotePluginIndexing } = await import('./cursor/clangdConfig');
+  const promotion = await promotePluginIndexing(runtime.project.projectRoot, document.uri.fsPath, {
+    lazyPluginIndexing: settings.clangdLazyPluginIndexing,
+  });
+  if (!promotion.changed || !promotion.pluginRoot) return;
+
+  const { getCompileDbIndexPlan } = await import('./cursor/bootstrapProject');
+  statusBar.setIndexPlan(await getCompileDbIndexPlan(runtime.project.projectRoot), promotion.promotedPluginRoots.length);
+  ctx.outputChannel.appendLine(
+    `[UE5_8 Cursor] Plugin indexing promoted: ${promotion.pluginRoot} (${promotion.promotedPluginRoots.length} active plugin root(s)).`,
+  );
+
+  const existingTimer = pluginIndexRestartTimers.get(runtime.project.projectRoot);
+  if (existingTimer) clearTimeout(existingTimer);
+  pluginIndexRestartTimers.set(runtime.project.projectRoot, setTimeout(() => {
+    pluginIndexRestartTimers.delete(runtime.project.projectRoot);
+    void requestClangdRestart(
+      runtime.project.projectRoot,
+      `plugin indexing promotion (${promotion.pluginRoot})`,
+      (message) => ctx.outputChannel.appendLine(message),
+    );
+  }, 300));
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -253,7 +283,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       contentBrowser?.setProjectRoot(runtime.project.projectRoot);
       testExplorer?.setRuntime(runtime.project.projectRoot, runtime.editorBridge);
       void testExplorer?.refresh(runtimeContext(editor.document.uri));
+      void promoteOpenedPluginDocument(editor.document);
     }),
+  );
+  extensionContext.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((document) => void promoteOpenedPluginDocument(document)),
   );
 
   extensionContext.subscriptions.push(watchForProjectChanges(() => runDetectionPipeline()));
@@ -268,6 +302,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   outputChannel.appendLine('[UE5_8 Cursor] Ready.');
+  if (vscode.window.activeTextEditor) {
+    void promoteOpenedPluginDocument(vscode.window.activeTextEditor.document);
+  }
 }
 
 export function deactivate(): void {
@@ -364,7 +401,7 @@ async function runBackgroundCacheWarmup(
         });
         if (projectSession!.isStale(pipelineGeneration) || token.isCancellationRequested) return;
         const { ensureUhtIntellisense } = await import('./cursor/projectSetup');
-        await ensureUhtIntellisense(ctx.project!, extensionPath);
+        await ensureUhtIntellisense(ctx.project!, extensionPath, undefined, { lazyPluginIndexing: settings.clangdLazyPluginIndexing });
         statusBar.setIntelliSense(result.mode);
         void statusBar.update(ctx, settings);
         await requestClangdRestart(ctx.project!.projectRoot, 'UHT cache warm-up', log);
@@ -523,6 +560,7 @@ async function executeDetectionPipeline(
     projectSession?.markRefreshing();
     const { bootstrapProject } = await import('./cursor/bootstrapProject');
     const result = await bootstrapProject(ctx, settings, extensionPath);
+    statusBar.setIndexPlan(result.indexPlan);
     statusBar.setIntelliSense(result.intelliSense, { provisional: result.intelliSense === 'partial' });
     if (result.errors.length > 0) {
       for (const err of result.errors) {
@@ -591,6 +629,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     const { setupProject } = await import('./commands/setupCommands');
     const result = await setupProject(runtimeContext(), settings, extensionPath);
     if (result) {
+      statusBar.setIndexPlan(result.indexPlan);
       statusBar.setIntelliSense(result.intelliSense, { provisional: result.intelliSense === 'partial' });
       void statusBar.update(ctx, settings);
     }
@@ -628,6 +667,11 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   reg(Commands.GenerateCompileCommands, async () => {
     const { generateCompileCommands } = await import('./commands/setupCommands');
     const mode = await generateCompileCommands(runtimeContext(), settings, extensionPath);
+    const commandCtx = runtimeContext();
+    if (commandCtx.project) {
+      const { getCompileDbIndexPlan } = await import('./cursor/bootstrapProject');
+      statusBar.setIndexPlan(await getCompileDbIndexPlan(commandCtx.project.projectRoot));
+    }
     statusBar.setIntelliSense(mode);
     void statusBar.update(ctx, settings);
   });
@@ -811,7 +855,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     const commandCtx = runtimeContext();
     if (!commandCtx.project) return;
     const { ensureUhtIntellisense } = await import('./cursor/projectSetup');
-    await ensureUhtIntellisense(commandCtx.project, extensionPath);
+    await ensureUhtIntellisense(commandCtx.project, extensionPath, undefined, { lazyPluginIndexing: settings.clangdLazyPluginIndexing });
     const { refreshAllIndexes } = await import('./assets/indexCoordinator');
     await refreshAllIndexes(commandCtx.project.projectRoot);
     void statusBar.update(ctx, settings);

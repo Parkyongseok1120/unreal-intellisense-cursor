@@ -20,6 +20,7 @@ import type { CancellationToken } from 'vscode';
 import { resolveSnapshotKey } from '../projectModel/snapshotKey';
 import { readCompileDatabaseMetadata, writeCompileDatabaseMetadata } from '../projectModel/compileDatabaseMetadata';
 import { requestClangdRestart } from './clangdLifecycle';
+import { sanitizeCompileCommand, type RawCompileDatabaseEntry } from '../projectModel/compileCommandSanitizer';
 
 export type IntelliSenseMode = 'ready' | 'partial' | 'missing';
 
@@ -28,9 +29,15 @@ export interface BootstrapResult {
   compileDbSource?: 'rsp' | 'ubt' | 'buildcs';
   compileDbEntries?: number;
   clangdPath?: string;
+  indexPlan?: CompileDbIndexPlan;
   /** True when a UHT cache warm-up (UBT Editor build) should run in the background. */
   warmupPending?: boolean;
   errors: string[];
+}
+
+export interface CompileDbIndexPlan {
+  projectTus: number;
+  pluginTus: number;
 }
 
 function extractClangDatabasePath(output: string): string | undefined {
@@ -259,10 +266,10 @@ export async function ensureCompileDatabase(
 
   const rsp = await generateCompileDatabaseFromRsp(projectRoot, ctx.engine.root, options?.tx, snapshotKey);
   if (rsp.ok) {
-    const entries = JSON.parse(await fs.promises.readFile(compileDb, 'utf-8')) as CompileDbEntry[];
+    const entries = await normalizeUbtCompileDatabase(projectRoot, options?.tx);
     await writeCompileDatabaseMetadata(projectRoot, 'rsp', entries, snapshotKey, options?.tx);
-    log(`[UE5_8 Cursor] compile_commands from module RSP fallback (${rsp.entryCount} entries; partial until UBT actions are available)`);
-    return { mode: 'partial', source: 'rsp', entries: rsp.entryCount };
+    log(`[UE5_8 Cursor] compile_commands from module RSP fallback (${entries.length} entries; partial until UBT actions are available)`);
+    return { mode: 'partial', source: 'rsp', entries: entries.length };
   }
 
   if (hasCompileDb && !existingSynthetic && existingMetadata?.authoritative) {
@@ -272,10 +279,10 @@ export async function ensureCompileDatabase(
 
   const synthetic = await generateCompileDatabaseFromBuildCs(projectRoot, ctx.engine.root, options?.tx);
   if (synthetic.ok) {
-    const entries = JSON.parse(await fs.promises.readFile(compileDb, 'utf-8')) as CompileDbEntry[];
+    const entries = await normalizeUbtCompileDatabase(projectRoot, options?.tx);
     await writeCompileDatabaseMetadata(projectRoot, 'buildcs', entries, snapshotKey, options?.tx);
-    log(`[UE5_8 Cursor] compile_commands from Build.cs synthetic (${synthetic.entryCount} entries)`);
-    return { mode: 'partial', source: 'buildcs', entries: synthetic.entryCount };
+    log(`[UE5_8 Cursor] compile_commands from Build.cs synthetic (${entries.length} entries)`);
+    return { mode: 'partial', source: 'buildcs', entries: entries.length };
   }
 
   return { mode: 'missing' };
@@ -305,7 +312,7 @@ export async function bootstrapProject(
 
   const result = await runWithTransaction(ctx.project.projectRoot, async (tx) => {
     if (settings.upsertClangdConfig && extensionPath) {
-      await ensureUhtIntellisense(ctx.project!, extensionPath, tx);
+      await ensureUhtIntellisense(ctx.project!, extensionPath, tx, { lazyPluginIndexing: settings.clangdLazyPluginIndexing });
       const layouts = await discoverModuleLayouts(ctx.project!.projectRoot);
       if (layouts.length > 0) {
         log(`[UE5_8 Cursor] Module Public/Private: ${layouts.map((l) => l.moduleName).join(', ')}`);
@@ -352,7 +359,7 @@ export async function bootstrapProject(
         tx,
       });
       if (settings.upsertClangdConfig && extensionPath) {
-        await ensureUhtIntellisense(ctx.project!, extensionPath, tx);
+        await ensureUhtIntellisense(ctx.project!, extensionPath, tx, { lazyPluginIndexing: settings.clangdLazyPluginIndexing });
       }
     }
 
@@ -362,11 +369,17 @@ export async function bootstrapProject(
       log('[UE5_8 Cursor] IntelliSense partial — launch editor once for full accuracy');
     }
 
+    const indexPlan = await getCompileDbIndexPlan(ctx.project!.projectRoot);
+    if (indexPlan.pluginTus > 0 && settings.clangdLazyPluginIndexing) {
+      log(`[UE5_8 Cursor] Project source indexing: ${indexPlan.projectTus} TU(s); ${indexPlan.pluginTus} plugin TU(s) deferred until opened.`);
+    }
+
     return {
       intelliSense: warmupPending && compileResult.mode === 'missing' ? 'partial' : compileResult.mode,
       compileDbSource: compileResult.source,
       compileDbEntries: compileResult.entries,
       clangdPath,
+      indexPlan,
       warmupPending,
       errors,
     };
@@ -379,7 +392,25 @@ export async function bootstrapProject(
   return result;
 }
 
-type CompileDbEntry = { directory?: string; file?: string; command?: string; arguments?: string[] };
+type CompileDbEntry = RawCompileDatabaseEntry;
+
+export async function getCompileDbIndexPlan(projectRoot: string): Promise<CompileDbIndexPlan> {
+  const filePath = path.join(projectRoot, 'compile_commands.json');
+  try {
+    const entries = JSON.parse(await fs.promises.readFile(filePath, 'utf-8')) as CompileDbEntry[];
+    if (!Array.isArray(entries)) return { projectTus: 0, pluginTus: 0 };
+    let projectTus = 0;
+    let pluginTus = 0;
+    for (const entry of entries) {
+      if (!entry?.file) continue;
+      if (/[\\/]Plugins[\\/]/i.test(entry.file)) pluginTus++;
+      else projectTus++;
+    }
+    return { projectTus, pluginTus };
+  } catch {
+    return { projectTus: 0, pluginTus: 0 };
+  }
+}
 
 function isProjectTranslationUnit(projectRoot: string, filePath: string): boolean {
   const absolute = path.resolve(projectRoot, filePath);
@@ -400,12 +431,25 @@ async function normalizeUbtCompileDatabase(projectRoot: string, tx?: WorkspaceMu
   const seen = new Set<string>();
   const entries: CompileDbEntry[] = [];
   for (const entry of raw as CompileDbEntry[]) {
-    if (!entry?.file || !isProjectTranslationUnit(projectRoot, entry.file)) continue;
-    const canonical = path.resolve(entry.directory ?? projectRoot, entry.file).toLowerCase();
+    if (!entry?.file) continue;
+    const absoluteFile = path.isAbsolute(entry.file)
+      ? path.normalize(entry.file)
+      : path.resolve(entry.directory ?? projectRoot, entry.file);
+    if (!isProjectTranslationUnit(projectRoot, absoluteFile)) continue;
+    const canonical = absoluteFile.toLowerCase();
     if (seen.has(canonical)) continue;
+    const sanitized = sanitizeCompileCommand({ ...entry, file: absoluteFile });
+    if (!sanitized) continue;
     seen.add(canonical);
-    entries.push(entry);
+    entries.push(sanitized);
   }
+  // clangd indexes in database order. Put the game's primary Source tree
+  // before plugin sources so interactive project files become usable first.
+  entries.sort((a, b) => {
+    const aPlugin = /[\\/]Plugins[\\/]/i.test(a.file ?? '') ? 1 : 0;
+    const bPlugin = /[\\/]Plugins[\\/]/i.test(b.file ?? '') ? 1 : 0;
+    return aPlugin - bPlugin || (a.file ?? '').localeCompare(b.file ?? '');
+  });
   if (entries.length > 0) await mutateJson(tx, projectRoot, filePath, entries);
   return entries;
 }

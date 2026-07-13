@@ -72,7 +72,7 @@ export async function generateCompileCommands(
       );
       mode = result.mode;
       if (extensionPath && settings.upsertClangdConfig && ctx.project) {
-        await ensureUhtIntellisense(ctx.project, extensionPath);
+        await ensureUhtIntellisense(ctx.project, extensionPath, undefined, { lazyPluginIndexing: settings.clangdLazyPluginIndexing });
       }
       await requestClangdRestart(ctx.project!.projectRoot, 'manual compile database refresh', (msg) => ctx.outputChannel.appendLine(msg));
       if (result.mode === 'ready') {

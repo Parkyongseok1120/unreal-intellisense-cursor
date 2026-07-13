@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { loadTsModule } from './helpers/loadTsModule.mjs';
 
 const clangdConfig = loadTsModule('src/cursor/clangdConfig.ts', {
-  '../platform/workspaceMutation': () => ({ mutateText: async () => {} }),
+  '../platform/workspaceMutation': () => ({ mutateJson: async () => {}, mutateText: async () => {} }),
 });
 const workspaceSetup = loadTsModule('src/cursor/workspaceSetup.ts', {
   './explorerFilter': () => ({ getExplorerFilterSettings: () => ({}), getFilesExclude: () => ({}), getSearchExclude: () => ({}), getWatcherExclude: () => ({}), isExplorerFilterApplied: () => false, stripExplorerFilterMarkers: (x) => x }),
@@ -19,14 +19,16 @@ const multiRootWorkspace = loadTsModule('src/cursor/multiRootWorkspace.ts', {
 describe('clangd settings scale safely for UE projects', () => {
   it('caps worker count by memory instead of using all CPU cores', () => {
     assert.equal(workspaceSetup.recommendedClangdJobs(8 * 1024 ** 3, 32), 2);
-    assert.equal(workspaceSetup.recommendedClangdJobs(32 * 1024 ** 3, 32), 4);
+    assert.equal(workspaceSetup.recommendedClangdJobs(32 * 1024 ** 3, 32), 3);
     assert.equal(workspaceSetup.recommendedClangdJobs(128 * 1024 ** 3, 64), 6);
   });
 
-  it('uses disk-backed PCH and leaves clang-tidy opt-in during indexing', () => {
+  it('uses disk PCH storage to bound UE clangd memory and leaves clang-tidy disabled', () => {
     const settings = workspaceSetup.buildUeSettings({});
     const args = settings['clangd.arguments'];
-    assert.ok(args.includes('--pch-storage=disk'));
+    assert.equal(workspaceSetup.recommendedPchStorage(8 * 1024 ** 3), 'disk');
+    assert.equal(workspaceSetup.recommendedPchStorage(32 * 1024 ** 3), 'disk');
+    assert.ok(args.some((arg) => arg.startsWith('--pch-storage=')));
     assert.ok(args.includes('--compile-commands-dir=${workspaceFolder}'));
     assert.ok(args.includes('--background-index-priority=low'));
     assert.equal(args.includes('--clang-tidy'), false);
@@ -42,8 +44,26 @@ describe('clangd settings scale safely for UE projects', () => {
     assert.ok(block.includes('/Yu*'), 'MSVC PCH selection must not be passed to clangd');
     assert.match(block, /UnusedIncludes: None/);
     assert.match(block, /MissingIncludes: None/);
+    assert.match(block, /ClangTidy:[\s\S]*Remove: "\*"/);
     assert.equal(block.includes('Intermediate/Inc/M199'), false);
     assert.ok(block.length < 1_000, `managed clangd block too large: ${block.length}`);
+  });
+
+  it('defers unopened plugins and promotes only the plugin opened by the user', () => {
+    const block = clangdConfig.buildManagedClangdBlock({
+      lazyPluginIndexing: true,
+      promotedPluginRoots: ['Plugins/FM0D-Plugin'],
+    });
+    assert.match(block, /PathMatch: Plugins\/\.\*/);
+    assert.match(block, /Background: Skip/);
+    assert.match(block, /PathMatch: Plugins\/FM0D\\-Plugin\/\.\*/);
+    assert.match(block, /Background: Build/);
+    assert.ok(block.lastIndexOf('# <<< end-ue5_8cursor-managed >>>') > block.lastIndexOf('Plugins/FM0D'));
+    assert.equal(
+      clangdConfig.pluginRootForFile('C:/Game', 'C:/Game/Plugins/Marketplace/Foo/Source/Foo/Private/Test.cpp'),
+      'Plugins/Marketplace/Foo',
+    );
+    assert.equal(clangdConfig.pluginRootForFile('C:/Game', 'C:/Game/Source/Game/Private/Test.cpp'), undefined);
   });
 
   it('places clangd settings in the multi-root workspace scope', () => {

@@ -20,6 +20,7 @@ export async function ensureUhtIntellisense(
   project: UEProject,
   extensionPath: string,
   tx?: WorkspaceMutationTransaction,
+  options: { lazyPluginIndexing?: boolean } = {},
 ): Promise<{ stubs: boolean; clangd: boolean }> {
   const stubsPath = await ensureUhtStubs(project.projectRoot, extensionPath);
   const [intermediateIncludes, moduleIncludes] = await Promise.all([
@@ -30,6 +31,7 @@ export async function ensureUhtIntellisense(
     stubsPath,
     intermediateIncludes: [...moduleIncludes, ...intermediateIncludes],
     tx,
+    lazyPluginIndexing: options.lazyPluginIndexing,
   });
   return { stubs: true, clangd };
 }

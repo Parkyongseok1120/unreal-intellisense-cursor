@@ -3,7 +3,7 @@ import { parseBuildProgress } from '../parsers/buildProgressParser';
 import { probeMcpEndpoint } from '../cursor/mcpConfig';
 import { getIndexCounts } from '../assets/indexCoordinator';
 import { Commands } from '../constants';
-import type { IntelliSenseMode } from '../cursor/bootstrapProject';
+import type { CompileDbIndexPlan, IntelliSenseMode } from '../cursor/bootstrapProject';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 
@@ -28,6 +28,8 @@ export class StatusBarManager implements vscode.Disposable {
   private modelStatus: 'ready' | 'partial' | 'stale' | 'missing' = 'missing';
   private modelProvenance = 'unknown';
   private bridgeConnected = false;
+  private indexPlan: CompileDbIndexPlan | undefined;
+  private promotedPluginCount = 0;
 
   constructor() {
     this.mainItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -75,6 +77,12 @@ export class StatusBarManager implements vscode.Disposable {
   setBridgeStatus(info: { connected: boolean }): void {
     this.bridgeConnected = info.connected;
     this.updateMcpItem();
+  }
+
+  setIndexPlan(plan: CompileDbIndexPlan | undefined, promotedPluginCount = this.promotedPluginCount): void {
+    this.indexPlan = plan;
+    this.promotedPluginCount = promotedPluginCount;
+    this.updateIntelliSenseItem();
   }
 
   setBuildProgress(current: number, total: number): void {
@@ -134,11 +142,33 @@ export class StatusBarManager implements vscode.Disposable {
       ? `Compile parity: ${parityPct}% (synthetic DB — advisory only)`
       : `Compile parity: ${parityPct}%`;
     const modelNote = `Model: ${this.modelStatus} (${this.modelProvenance})`;
+    const indexNote = this.indexPlan
+      ? this.indexPlan.pluginTus > 0
+        ? [
+            `Project model: ready`,
+            `Project source indexing: ${this.indexPlan.projectTus} TU(s)`,
+            `Project usable: yes`,
+            `Plugin indexing: lazy (${this.indexPlan.pluginTus} TU(s), ${this.promotedPluginCount} promoted)`,
+          ].join('\n')
+        : [
+            `Project model: ready`,
+            `Project source indexing: ${this.indexPlan.projectTus} TU(s)`,
+            `Project usable: yes`,
+            `Plugin indexing: none`,
+          ].join('\n')
+      : undefined;
 
     switch (this.intelliSenseMode) {
       case 'ready':
-        this.intelliSenseItem.text = `$(check) IntelliSense: Ready`;
-        this.intelliSenseItem.tooltip = `compile_commands.json + clangd ready.\n${modelNote}\n${parityNote}`;
+        this.intelliSenseItem.text = this.indexPlan?.pluginTus
+          ? '$(check) IntelliSense: Project Ready'
+          : '$(check) IntelliSense: Ready';
+        this.intelliSenseItem.tooltip = [
+          'compile_commands.json + clangd ready.',
+          modelNote,
+          parityNote,
+          indexNote,
+        ].filter((line): line is string => !!line).join('\n');
         break;
       case 'partial':
         this.intelliSenseItem.text = `$(warning) IntelliSense: ${this.modelStatus === 'stale' ? 'Stale' : 'Provisional'}`;
