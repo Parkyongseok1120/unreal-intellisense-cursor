@@ -2,7 +2,7 @@
   "name": "ue5-8-cursor",
   "displayName": "UE5_8 Cursor",
   "description": "Cursor dedicated Unreal Engine 5.8 C++ workflow — IntelliSense, build, Live Coding, MCP",
-  "version": "7.0.7",
+  "version": "7.0.8",
   "publisher": "truesync",
   "license": "MIT",
   "repository": {
@@ -317,6 +317,24 @@
         "title": "Show Content Browser (Grid)",
         "category": "UE5_8 Cursor",
         "icon": "$(layout-grid)"
+      },
+      {
+        "command": "ue58rider.captureDiagnosticBaseline",
+        "title": "Capture Diagnostic Baseline",
+        "category": "UE5_8 Cursor",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "ue58rider.benchmarkIntelliSense",
+        "title": "Benchmark IntelliSense (Active Symbol)",
+        "category": "UE5_8 Cursor",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "ue58rider.showIntelliSenseMetrics",
+        "title": "Show Latest IntelliSense Metrics",
+        "category": "UE5_8 Cursor",
+        "icon": "$(graph)"
       }
     ],
     "viewsContainers": {

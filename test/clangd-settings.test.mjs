@@ -18,9 +18,10 @@ const multiRootWorkspace = loadTsModule('src/cursor/multiRootWorkspace.ts', {
 
 describe('clangd settings scale safely for UE projects', () => {
   it('caps worker count by memory instead of using all CPU cores', () => {
-    assert.equal(workspaceSetup.recommendedClangdJobs(8 * 1024 ** 3, 32), 2);
-    assert.equal(workspaceSetup.recommendedClangdJobs(32 * 1024 ** 3, 32), 3);
-    assert.equal(workspaceSetup.recommendedClangdJobs(128 * 1024 ** 3, 64), 6);
+    assert.equal(workspaceSetup.recommendedClangdJobs(8 * 1024 ** 3, 32, 8 * 1024 ** 3), 2);
+    assert.equal(workspaceSetup.recommendedClangdJobs(32 * 1024 ** 3, 32, 32 * 1024 ** 3), 3);
+    assert.equal(workspaceSetup.recommendedClangdJobs(128 * 1024 ** 3, 64, 128 * 1024 ** 3), 6);
+    assert.equal(workspaceSetup.recommendedClangdJobs(32 * 1024 ** 3, 32, 4 * 1024 ** 3), 1);
   });
 
   it('uses disk PCH storage to bound UE clangd memory and leaves clang-tidy disabled', () => {

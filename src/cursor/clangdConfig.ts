@@ -11,6 +11,7 @@ import { mutateJson, mutateText, type WorkspaceMutationTransaction } from '../pl
 
 const PLUGIN_INDEX_STATE_FILE = 'clangd-plugin-index.json';
 const MAX_PROMOTED_PLUGIN_ROOTS = 12;
+const promotionQueues = new Map<string, Promise<unknown>>();
 
 interface PluginIndexState {
   version: 1;
@@ -61,6 +62,23 @@ export async function promotePluginIndexing(
   projectRoot: string,
   filePath: string,
   options: { tx?: WorkspaceMutationTransaction; lazyPluginIndexing?: boolean } = {},
+): Promise<{ changed: boolean; pluginRoot?: string; promotedPluginRoots: string[] }> {
+  const key = path.resolve(projectRoot).toLowerCase();
+  const previous = promotionQueues.get(key) ?? Promise.resolve();
+  const run = previous.then(() => promotePluginIndexingUnlocked(projectRoot, filePath, options));
+  const queued = run.catch(() => {});
+  promotionQueues.set(key, queued);
+  try {
+    return await run;
+  } finally {
+    if (promotionQueues.get(key) === queued) promotionQueues.delete(key);
+  }
+}
+
+async function promotePluginIndexingUnlocked(
+  projectRoot: string,
+  filePath: string,
+  options: { tx?: WorkspaceMutationTransaction; lazyPluginIndexing?: boolean },
 ): Promise<{ changed: boolean; pluginRoot?: string; promotedPluginRoots: string[] }> {
   const pluginRoot = pluginRootForFile(projectRoot, filePath);
   const state = await readPluginIndexState(projectRoot);

@@ -4,6 +4,7 @@ import { probeMcpEndpoint } from '../cursor/mcpConfig';
 import { getIndexCounts } from '../assets/indexCoordinator';
 import { Commands } from '../constants';
 import type { CompileDbIndexPlan, IntelliSenseMode } from '../cursor/bootstrapProject';
+import type { IntelliSenseIndexPhase } from '../telemetry/intellisenseMetrics';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 
@@ -30,6 +31,9 @@ export class StatusBarManager implements vscode.Disposable {
   private bridgeConnected = false;
   private indexPlan: CompileDbIndexPlan | undefined;
   private promotedPluginCount = 0;
+  private indexingPhase: IntelliSenseIndexPhase | undefined;
+  private projectUsableMeasured = false;
+  private privateMemoryBudget: 'pass' | 'fail' | 'pending' = 'pending';
 
   constructor() {
     this.mainItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -82,6 +86,18 @@ export class StatusBarManager implements vscode.Disposable {
   setIndexPlan(plan: CompileDbIndexPlan | undefined, promotedPluginCount = this.promotedPluginCount): void {
     this.indexPlan = plan;
     this.promotedPluginCount = promotedPluginCount;
+    this.updateIntelliSenseItem();
+  }
+
+  setIndexingPhase(
+    phase: IntelliSenseIndexPhase | undefined,
+    options?: { projectUsableMeasured?: boolean; privateMemoryBudget?: 'pass' | 'fail' | 'pending' },
+  ): void {
+    this.indexingPhase = phase;
+    if (options?.projectUsableMeasured !== undefined) {
+      this.projectUsableMeasured = options.projectUsableMeasured;
+    }
+    if (options?.privateMemoryBudget !== undefined) this.privateMemoryBudget = options.privateMemoryBudget;
     this.updateIntelliSenseItem();
   }
 
@@ -142,27 +158,43 @@ export class StatusBarManager implements vscode.Disposable {
       ? `Compile parity: ${parityPct}% (synthetic DB — advisory only)`
       : `Compile parity: ${parityPct}%`;
     const modelNote = `Model: ${this.modelStatus} (${this.modelProvenance})`;
+    const phaseLabel: Record<IntelliSenseIndexPhase, string> = {
+      'project-model-ready': 'Project model ready',
+      'project-source-indexing': 'Project source indexing',
+      'project-usable': 'Project usable',
+      'plugin-indexing': 'Plugin indexing',
+      'fully-indexed': 'Fully indexed',
+    };
+    const usable = this.projectUsableMeasured;
     const indexNote = this.indexPlan
       ? this.indexPlan.pluginTus > 0
-        ? [
+          ? [
             `Project model: ready`,
-            `Project source indexing: ${this.indexPlan.projectTus} TU(s)`,
-            `Project usable: yes`,
+            `Project source: ${this.indexPlan.projectTus} TU(s) (${this.indexingPhase ? phaseLabel[this.indexingPhase] : 'state pending'})`,
+            `Project usable: ${usable ? 'measured' : 'pending navigation benchmark'}`,
             `Plugin indexing: lazy (${this.indexPlan.pluginTus} TU(s), ${this.promotedPluginCount} promoted)`,
+            `Private memory budget (4 GiB): ${this.privateMemoryBudget}`,
           ].join('\n')
         : [
             `Project model: ready`,
-            `Project source indexing: ${this.indexPlan.projectTus} TU(s)`,
-            `Project usable: yes`,
+            `Project source: ${this.indexPlan.projectTus} TU(s) (${this.indexingPhase ? phaseLabel[this.indexingPhase] : 'state pending'})`,
+            `Project usable: ${usable ? 'measured' : 'pending navigation benchmark'}`,
             `Plugin indexing: none`,
+            `Private memory budget (4 GiB): ${this.privateMemoryBudget}`,
           ].join('\n')
       : undefined;
 
     switch (this.intelliSenseMode) {
       case 'ready':
-        this.intelliSenseItem.text = this.indexPlan?.pluginTus
-          ? '$(check) IntelliSense: Project Ready'
-          : '$(check) IntelliSense: Ready';
+        this.intelliSenseItem.text = this.privateMemoryBudget === 'fail'
+          ? '$(warning) IntelliSense: Memory Budget'
+          : this.indexingPhase === 'project-source-indexing'
+          ? '$(loading~spin) IntelliSense: Project Indexing'
+          : this.indexingPhase === 'plugin-indexing'
+            ? '$(loading~spin) IntelliSense: Plugin Indexing'
+            : this.indexPlan?.pluginTus
+              ? '$(check) IntelliSense: Project Ready'
+              : '$(check) IntelliSense: Ready';
         this.intelliSenseItem.tooltip = [
           'compile_commands.json + clangd ready.',
           modelNote,

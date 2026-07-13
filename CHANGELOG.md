@@ -1,5 +1,14 @@
 # Changelog
 
+## 7.0.8 — Gate 4: Diagnostic Trust and Measured Indexing
+
+- Adds persistent diagnostic baselines under `.ue5_8cursor/metrics/`, including source, code, severity, trust classification, matching UBT evidence, and the last UBT build outcome.
+- Separates UBT, UHT, clangd advisory, project-plugin, engine-header, and extension-heuristic diagnostics without pretending they have equal authority.
+- Adds an IntelliSense metrics run with compile database/model/useful-navigation/full-index timings, process working set/private memory peaks, cache-completion heuristic, F12 first/warm measurements, and plugin-promotion latency.
+- Shows distinct project model/source/usable/plugin/full-index states and surfaces a measured 4 GiB private-memory budget breach rather than reporting a false ready state.
+- Uses installed and currently available memory to select the clangd worker profile; disk PCH remains the default.
+- Serializes rapid plugin promotion requests and records an authoritative module TU or an explicit provisional reason for direct header opens.
+
 ## 7.0.7 — clangd Startup Performance
 
 - Uses disk-backed clangd PCH storage on every machine to prevent Unreal SharedPCH memory spikes.

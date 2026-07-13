@@ -38,6 +38,11 @@ import { registerHLSLProviders } from './hlsl/hlslProviders';
 import { UnrealTestExplorer } from './testing/unrealTestExplorer';
 import type { UE5_8CursorContext } from './types';
 import { requestClangdRestart } from './cursor/clangdLifecycle';
+import {
+  disposeIntelliSenseMetrics,
+  getIntelliSenseMetricsTracker,
+  startIntelliSenseMetricsRun,
+} from './telemetry/intellisenseMetrics';
 
 let ctx: UE5_8CursorContext;
 let settings: UE5_8CursorSettings;
@@ -54,6 +59,7 @@ let extensionContext: vscode.ExtensionContext | undefined;
 let bridgeDispatchRoot: string | undefined;
 let bridgeDispatchChain: Promise<void> = Promise.resolve();
 const pluginIndexRestartTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const headerCompileContextLog = new Map<string, string>();
 
 function projectRegistry() {
   return getWorkspaceProjectRegistry();
@@ -93,6 +99,7 @@ async function promoteOpenedPluginDocument(document: vscode.TextDocument): Promi
   if (!runtime) return;
 
   const { promotePluginIndexing } = await import('./cursor/clangdConfig');
+  const promotionStarted = performance.now();
   const promotion = await promotePluginIndexing(runtime.project.projectRoot, document.uri.fsPath, {
     lazyPluginIndexing: settings.clangdLazyPluginIndexing,
   });
@@ -103,6 +110,9 @@ async function promoteOpenedPluginDocument(document: vscode.TextDocument): Promi
   ctx.outputChannel.appendLine(
     `[UE5_8 Cursor] Plugin indexing promoted: ${promotion.pluginRoot} (${promotion.promotedPluginRoots.length} active plugin root(s)).`,
   );
+  const metrics = getIntelliSenseMetricsTracker(runtime.project.projectRoot);
+  metrics?.markPluginPromotion(Math.round(performance.now() - promotionStarted));
+  statusBar.setIndexingPhase('plugin-indexing');
 
   const existingTimer = pluginIndexRestartTimers.get(runtime.project.projectRoot);
   if (existingTimer) clearTimeout(existingTimer);
@@ -114,6 +124,33 @@ async function promoteOpenedPluginDocument(document: vscode.TextDocument): Promi
       (message) => ctx.outputChannel.appendLine(message),
     );
   }, 300));
+}
+
+async function reportHeaderCompileContext(document: vscode.TextDocument): Promise<void> {
+  if (document.uri.scheme !== 'file' || !/\.(?:h|hpp|inl)$/i.test(document.uri.fsPath)) return;
+  const runtime = resolveRuntime(document.uri);
+  if (!runtime) return;
+  const { resolveHeaderCompileContext } = await import('./projectModel/headerCompileContext');
+  const resolved = await resolveHeaderCompileContext(runtime.project.projectRoot, document.uri.fsPath);
+  const key = document.uri.fsPath.toLowerCase();
+  const fingerprint = `${resolved.provenance}:${resolved.translationUnit ?? ''}`;
+  if (headerCompileContextLog.get(key) === fingerprint) return;
+  if (resolved.provenance === 'authoritative-module-tu') {
+    const { applyAuthoritativeHeaderCompileContext } = await import('./cursor/clangdHeaderContext');
+    const applied = await applyAuthoritativeHeaderCompileContext(runtime.project.projectRoot, resolved);
+    if (applied.applied) {
+      headerCompileContextLog.set(key, fingerprint);
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Header compile context applied: ${document.uri.fsPath} <- ${resolved.translationUnit}`);
+    } else {
+      // Do not cache an unavailable/starting client. The next focus event can
+      // safely retry without inventing a fallback command.
+      headerCompileContextLog.delete(key);
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Header compile context provisional: ${document.uri.fsPath}. ${applied.reason}`);
+    }
+  } else {
+    headerCompileContextLog.set(key, fingerprint);
+    ctx.outputChannel.appendLine(`[UE5_8 Cursor] Header compile context provisional: ${document.uri.fsPath}. ${resolved.reason}`);
+  }
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -284,10 +321,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       testExplorer?.setRuntime(runtime.project.projectRoot, runtime.editorBridge);
       void testExplorer?.refresh(runtimeContext(editor.document.uri));
       void promoteOpenedPluginDocument(editor.document);
+      void reportHeaderCompileContext(editor.document);
     }),
   );
   extensionContext.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument((document) => void promoteOpenedPluginDocument(document)),
+    vscode.workspace.onDidOpenTextDocument((document) => {
+      void promoteOpenedPluginDocument(document);
+      void reportHeaderCompileContext(document);
+    }),
   );
 
   extensionContext.subscriptions.push(watchForProjectChanges(() => runDetectionPipeline()));
@@ -304,6 +345,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   outputChannel.appendLine('[UE5_8 Cursor] Ready.');
   if (vscode.window.activeTextEditor) {
     void promoteOpenedPluginDocument(vscode.window.activeTextEditor.document);
+    void reportHeaderCompileContext(vscode.window.activeTextEditor.document);
   }
 }
 
@@ -313,6 +355,7 @@ export function deactivate(): void {
   editorBridge?.dispose();
   testExplorer?.dispose();
   disposeUhtDiagnostics();
+  disposeIntelliSenseMetrics();
   disposeWorkspaceProjectRegistry();
 }
 
@@ -558,9 +601,27 @@ async function executeDetectionPipeline(
 
   if (ctx.project && options?.allowAutoSetup !== false && settings.autoSetupOnOpen && extensionPath) {
     projectSession?.markRefreshing();
+    const metricsProjectRoot = ctx.project.projectRoot;
+    const metrics = await startIntelliSenseMetricsRun(metricsProjectRoot, {
+      onPhase: (phase, snapshot) => {
+        if (resolveRuntime()?.project.projectRoot === metricsProjectRoot) {
+          statusBar.setIndexingPhase(phase, {
+            projectUsableMeasured: snapshot.timings.projectUsableMs !== undefined,
+            privateMemoryBudget: snapshot.acceptance.privateMemory,
+          });
+        }
+      },
+    });
     const { bootstrapProject } = await import('./cursor/bootstrapProject');
     const result = await bootstrapProject(ctx, settings, extensionPath);
+    metrics.markCompileDatabaseReady();
+    if (result.indexPlan) metrics.markProjectModelReady(result.indexPlan);
     statusBar.setIndexPlan(result.indexPlan);
+    const metricsSnapshot = metrics.snapshot();
+    statusBar.setIndexingPhase(metricsSnapshot.phase, {
+      projectUsableMeasured: metricsSnapshot.timings.projectUsableMs !== undefined,
+      privateMemoryBudget: metricsSnapshot.acceptance.privateMemory,
+    });
     statusBar.setIntelliSense(result.intelliSense, { provisional: result.intelliSense === 'partial' });
     if (result.errors.length > 0) {
       for (const err of result.errors) {
@@ -665,15 +726,54 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   });
 
   reg(Commands.GenerateCompileCommands, async () => {
-    const { generateCompileCommands } = await import('./commands/setupCommands');
-    const mode = await generateCompileCommands(runtimeContext(), settings, extensionPath);
     const commandCtx = runtimeContext();
+    const metrics = commandCtx.project
+      ? startIntelliSenseMetricsRun(commandCtx.project.projectRoot, {
+        onPhase: (phase, snapshot) => statusBar.setIndexingPhase(phase, {
+          projectUsableMeasured: snapshot.timings.projectUsableMs !== undefined,
+          privateMemoryBudget: snapshot.acceptance.privateMemory,
+        }),
+      })
+      : undefined;
+    const { generateCompileCommands } = await import('./commands/setupCommands');
+    const mode = await generateCompileCommands(commandCtx, settings, extensionPath);
     if (commandCtx.project) {
       const { getCompileDbIndexPlan } = await import('./cursor/bootstrapProject');
-      statusBar.setIndexPlan(await getCompileDbIndexPlan(commandCtx.project.projectRoot));
+      const plan = await getCompileDbIndexPlan(commandCtx.project.projectRoot);
+      metrics?.markCompileDatabaseReady();
+      metrics?.markProjectModelReady(plan);
+      statusBar.setIndexPlan(plan);
+      const snapshot = metrics?.snapshot();
+      statusBar.setIndexingPhase(snapshot?.phase, {
+        projectUsableMeasured: snapshot?.timings.projectUsableMs !== undefined,
+        privateMemoryBudget: snapshot?.acceptance.privateMemory,
+      });
     }
     statusBar.setIntelliSense(mode);
     void statusBar.update(ctx, settings);
+  });
+
+  reg(Commands.CaptureDiagnosticBaseline, async () => {
+    const { captureDiagnosticsForProject } = await import('./commands/gate4Commands');
+    await captureDiagnosticsForProject(runtimeContext());
+  });
+
+  reg(Commands.BenchmarkIntelliSense, async () => {
+    const { benchmarkActiveDefinition } = await import('./commands/gate4Commands');
+    const commandCtx = runtimeContext();
+    await benchmarkActiveDefinition(commandCtx);
+    if (commandCtx.project) {
+      const snapshot = getIntelliSenseMetricsTracker(commandCtx.project.projectRoot)?.snapshot();
+      statusBar.setIndexingPhase(snapshot?.phase, {
+        projectUsableMeasured: snapshot?.timings.projectUsableMs !== undefined,
+        privateMemoryBudget: snapshot?.acceptance.privateMemory,
+      });
+    }
+  });
+
+  reg(Commands.ShowIntelliSenseMetrics, async () => {
+    const { showLatestIntelliSenseMetrics } = await import('./commands/gate4Commands');
+    await showLatestIntelliSenseMetrics(runtimeContext());
   });
 
   reg(Commands.SwitchHeaderSource, async () => {

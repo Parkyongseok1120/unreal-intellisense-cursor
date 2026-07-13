@@ -44,10 +44,14 @@ async function readSettingsFile(settingsPath: string): Promise<Record<string, un
 export function recommendedClangdJobs(
   totalMemory = os.totalmem(),
   cpuCount = os.cpus().length,
+  availableMemory = os.freemem(),
 ): number {
   const gib = 1024 ** 3;
-  const memoryBound = totalMemory < 16 * gib ? 2 : totalMemory < 48 * gib ? 3 : totalMemory < 96 * gib ? 4 : 6;
-  return Math.max(2, Math.min(memoryBound, Math.max(2, Math.floor(cpuCount / 2))));
+  // Installed capacity selects the base profile, while currently available
+  // RAM prevents a new clangd index from competing with UnrealEditor/UBT.
+  const installedProfile = totalMemory < 24 * gib ? 2 : totalMemory < 48 * gib ? 3 : totalMemory < 96 * gib ? 4 : 6;
+  const availabilityCap = availableMemory < 6 * gib ? 1 : availableMemory < 12 * gib ? 2 : availableMemory < 24 * gib ? 3 : installedProfile;
+  return Math.max(1, Math.min(installedProfile, availabilityCap, Math.max(1, Math.floor(cpuCount / 2))));
 }
 
 export function recommendedPchStorage(_totalMemory = os.totalmem()): 'disk' {

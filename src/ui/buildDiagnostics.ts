@@ -12,13 +12,14 @@ export function publishBuildDiagnostics(ctx: UE5_8CursorContext, output: string)
     const uri = vscode.Uri.file(filePath);
     const key = uri.fsPath;
     const list = byFile.get(key) ?? [];
-    list.push(
-      new vscode.Diagnostic(
-        new vscode.Range(Math.max(0, d.line - 1), Math.max(0, d.column - 1), Math.max(0, d.line - 1), d.column + 80),
-        `${d.code}: ${d.message}`,
-        d.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning,
-      ),
+    const diagnostic = new vscode.Diagnostic(
+      new vscode.Range(Math.max(0, d.line - 1), Math.max(0, d.column - 1), Math.max(0, d.line - 1), d.column + 80),
+      `${d.code}: ${d.message}`,
+      d.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning,
     );
+    diagnostic.source = 'UBT';
+    diagnostic.code = d.code;
+    list.push(diagnostic);
     byFile.set(key, list);
   }
 

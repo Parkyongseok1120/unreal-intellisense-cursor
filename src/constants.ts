@@ -55,6 +55,9 @@ export const Commands = {
   SearchAssets: `${EXTENSION_ID}.searchAssets`,
   CopyAssetPath: `${EXTENSION_ID}.copyAssetPath`,
   ShowContentWebview: `${EXTENSION_ID}.showContentWebview`,
+  CaptureDiagnosticBaseline: `${EXTENSION_ID}.captureDiagnosticBaseline`,
+  BenchmarkIntelliSense: `${EXTENSION_ID}.benchmarkIntelliSense`,
+  ShowIntelliSenseMetrics: `${EXTENSION_ID}.showIntelliSenseMetrics`,
 } as const;
 
 export const ContextKeys = {

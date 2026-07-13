@@ -16,6 +16,7 @@ async function runUbt(
     vscode.window.showErrorMessage('UE5_8 Cursor: 프로젝트 또는 엔진이 없습니다.');
     return false;
   }
+  const projectRoot = ctx.project.projectRoot;
 
   clearBuildDiagnostics(ctx);
   statusBar?.clearBuildProgress();
@@ -41,6 +42,16 @@ async function runUbt(
       });
 
       success = result.exitCode === 0;
+      const { recordUbtBuildEvidence } = await import('../diagnostics/ubtBuildEvidence');
+      try {
+        await recordUbtBuildEvidence(projectRoot, {
+          title,
+          success,
+          exitCode: result.exitCode,
+        });
+      } catch (error) {
+        ctx.outputChannel.appendLine(`[UE5_8 Cursor] Could not save UBT evidence: ${String(error)}`);
+      }
       publishBuildDiagnostics(ctx, fullOutput);
       statusBar?.clearBuildProgress();
 

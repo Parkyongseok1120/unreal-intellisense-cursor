@@ -41,6 +41,10 @@ function loadTsModule(relativePath, extraRequires = {}) {
     __filename: sourcePath,
     process,
     Buffer,
+    setInterval,
+    clearInterval,
+    setTimeout,
+    clearTimeout,
   };
   vm.runInNewContext(js, sandbox, { filename: sourcePath });
   return module.exports;
