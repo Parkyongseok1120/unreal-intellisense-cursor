@@ -24,6 +24,7 @@ import { getWorkspaceProjectRegistry, disposeWorkspaceProjectRegistry, type Proj
 import { getExtensionVersion } from './version';
 import { refreshSemanticGraph, computeCompileParity, invalidateSemanticGraph } from './semantic/semanticService';
 import { registerSemanticNavigation } from './semantic/semanticNavigation';
+import { registerUeNavigationCommands } from './navigation/ueNavigationCommands';
 import { EditorBridgeClient, formatBridgeStatus, withBridgeTimeout } from './editorBridge/editorBridgeClient';
 import {
   formatInstallPreview,
@@ -177,6 +178,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (testExplorer) extensionContext.subscriptions.push(testExplorer);
 
   registerSemanticNavigation(extensionContext, () => resolveRuntime()?.project, settings);
+  registerUeNavigationCommands(extensionContext, () => resolveRuntime()?.project);
 
   if (settings.experimentalHlsl) {
     registerHLSLProviders(extensionContext);
@@ -842,7 +844,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
 
   reg(Commands.DebugAttachEditor, async () => {
     const { debugAttachEditor } = await import('./commands/debugCommands');
-    await debugAttachEditor(runtimeContext());
+    await debugAttachEditor(runtimeContext(), settings);
   });
 
   reg(Commands.DebugLaunchGame, async () => {

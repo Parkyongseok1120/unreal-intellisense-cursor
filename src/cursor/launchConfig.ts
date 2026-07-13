@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { UEInstallation, UEProject, BuildConfiguration } from '../types';
-import { buildSymbolSearchPaths, resolveGameExecutable, resolveNatvisPath } from '../platform/debug';
+import { buildSymbolSearchPaths, resolveEditorProgramPath, resolveGameExecutable, resolveNatvisPath } from '../platform/debug';
 import { buildCommandLine, resolveTargetName } from '../build/ubt';
 import { getDebuggerType, getDebuggerMIMode } from '../platform/platform';
 import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
@@ -54,10 +54,11 @@ export function buildTasksJson(input: DebugConfigInput): object {
 }
 
 export function buildLaunchJson(input: DebugConfigInput): object {
-  const { project, engine, debugConfiguration } = input;
+  const { project, engine, debugConfiguration, platform } = input;
   const natvis = resolveNatvisPath(engine.root);
   const symbols = buildSymbolSearchPaths(project, engine);
-  const gameExe = resolveGameExecutable(project);
+  const gameExe = resolveGameExecutable(project, debugConfiguration, platform as 'Win64');
+  const editorProgram = resolveEditorProgramPath(engine.root, debugConfiguration, platform as 'Win64');
   const editorTarget = resolveTargetName(project, 'Editor');
   const gameTarget = resolveTargetName(project, 'Game');
   const dbgType = getDebuggerType();
@@ -83,7 +84,7 @@ export function buildLaunchJson(input: DebugConfigInput): object {
     configurations: [
       makeConfig(`UE5_8: Launch ${editorTarget} (${debugConfiguration})`, {
         request: 'launch',
-        program: engine.editorPath,
+        program: editorProgram,
         args: [project.uprojectPath],
         cwd: project.projectRoot,
         stopAtEntry: false,
@@ -92,7 +93,7 @@ export function buildLaunchJson(input: DebugConfigInput): object {
       makeConfig('UE5_8: Attach to Unreal Editor', {
         request: 'attach',
         processId: '${command:pickProcess}',
-        program: engine.editorPath,
+        program: editorProgram,
       }),
       makeConfig(`UE5_8: Launch ${gameTarget} Standalone (${debugConfiguration})`, {
         request: 'launch',
@@ -104,7 +105,7 @@ export function buildLaunchJson(input: DebugConfigInput): object {
       }),
       makeConfig(`UE5_8: Play In Editor (${debugConfiguration})`, {
         request: 'launch',
-        program: engine.editorPath,
+        program: editorProgram,
         args: ['-game', `-project=${project.uprojectPath}`],
         cwd: project.projectRoot,
         stopAtEntry: false,
@@ -147,8 +148,17 @@ export async function ensureDebugConfigs(
   }
 
   try {
-    const existing = await fs.promises.readFile(tasksPath, 'utf-8');
-    tasksChanged = existing !== tasksContent;
+    const existing = JSON.parse(await fs.promises.readFile(tasksPath, 'utf-8')) as {
+      tasks?: Array<{ label?: string }>;
+    };
+    const userTasks = (existing.tasks ?? []).filter((t) => !t.label?.startsWith('ue58rider:'));
+    const mergedTasks = {
+      ...generatedTasks,
+      tasks: [...(generatedTasks as { tasks: unknown[] }).tasks, ...userTasks],
+    };
+    tasksContent = JSON.stringify(mergedTasks, null, 2) + '\n';
+    const raw = await fs.promises.readFile(tasksPath, 'utf-8');
+    tasksChanged = raw !== tasksContent;
   } catch {
     tasksChanged = true;
   }
@@ -156,8 +166,9 @@ export async function ensureDebugConfigs(
   if (launchChanged) {
     await mutateJson(tx, input.project.projectRoot, launchPath, JSON.parse(launchContent));
   }
+
   if (tasksChanged) {
-    await mutateJson(tx, input.project.projectRoot, tasksPath, generatedTasks);
+    await mutateJson(tx, input.project.projectRoot, tasksPath, JSON.parse(tasksContent));
   }
 
   return { launch: launchChanged, tasks: tasksChanged };

@@ -1,8 +1,14 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import { spawnAsync } from './process';
 import { fileExists } from './paths';
-import { getHostPlatform, resolveBinariesPlatformDir, getSymbolPathSeparator } from './platform';
-import type { UEInstallation, UEProject } from '../types';
+import {
+  getHostPlatform,
+  resolveBinariesPlatformDir,
+  getSymbolPathSeparator,
+  resolveEditorPath,
+} from './platform';
+import type { BuildConfiguration, BuildPlatform, UEInstallation, UEProject } from '../types';
 
 export interface EditorProcess {
   pid: number;
@@ -25,10 +31,36 @@ export function resolveServerExecutable(project: UEProject): string {
   return path.join(project.projectRoot, 'Binaries', platDir, `${project.name}Server${ext}`);
 }
 
-export function resolveGameExecutable(project: UEProject): string {
+export function resolveEditorProgramPath(
+  engineRoot: string,
+  configuration: BuildConfiguration = 'Development',
+  platform: BuildPlatform = 'Win64',
+): string {
+  const host = getHostPlatform();
+  const platDir = resolveBinariesPlatformDir();
+  const binDir = path.join(engineRoot, 'Engine', 'Binaries', platDir);
+
+  if (host === 'win32' && configuration !== 'Development' && configuration !== 'Shipping') {
+    const candidate = path.join(binDir, `UnrealEditor-${platform}-${configuration}.exe`);
+    if (fs.existsSync(candidate)) return path.normalize(candidate);
+  }
+
+  return resolveEditorPath(engineRoot);
+}
+
+export function resolveGameExecutable(
+  project: UEProject,
+  configuration: BuildConfiguration = 'Development',
+  platform: BuildPlatform = 'Win64',
+): string {
   const platDir = resolveBinariesPlatformDir();
   const ext = getHostPlatform() === 'win32' ? '.exe' : '';
-  return path.join(project.projectRoot, 'Binaries', platDir, `${project.name}${ext}`);
+  const binDir = path.join(project.projectRoot, 'Binaries', platDir);
+  if (getHostPlatform() === 'win32' && configuration !== 'Development' && configuration !== 'Shipping') {
+    const candidate = path.join(binDir, `${project.name}-${platform}-${configuration}${ext}`);
+    if (fs.existsSync(candidate)) return path.normalize(candidate);
+  }
+  return path.join(binDir, `${project.name}${ext}`);
 }
 
 export function buildSymbolSearchPaths(project: UEProject, engine: UEInstallation): string {

@@ -4,7 +4,6 @@ import type { UEProject } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 import type { UeClassSymbol } from '../projectModel/projectModelService';
 import {
-  findGeneratedPair,
   getOrBuildSemanticGraph,
   querySymbol,
 } from './semanticService';
@@ -39,6 +38,9 @@ export class UeSemanticDefinitionProvider implements vscode.DefinitionProvider {
     const sym = authoritativeSymbols(graph).find((s) => s.name === word);
     if (sym?.sourceFile) {
       const uri = vscode.Uri.file(sym.sourceFile);
+      if (sym.sourceLine !== undefined && sym.sourceLine >= 0) {
+        return new vscode.Location(uri, new vscode.Position(sym.sourceLine, 0));
+      }
       const target = await vscode.workspace.openTextDocument(uri);
       const pos = findWordPosition(target, word);
       if (pos) return new vscode.Location(uri, pos);
@@ -52,21 +54,6 @@ export class UeSemanticDefinitionProvider implements vscode.DefinitionProvider {
       if (pos) return new vscode.Location(uri, pos);
     }
 
-    const pair = findGeneratedPair(graph, document.fileName);
-    if (pair?.generated && document.fileName.endsWith('.h')) {
-      const uri = vscode.Uri.file(pair.generated);
-      try {
-        const target = await vscode.workspace.openTextDocument(uri);
-        const pos = findWordPosition(target, word);
-        if (pos) return new vscode.Location(uri, pos);
-      } catch {
-        // fall through to clangd
-      }
-    }
-
-    // Do not invoke vscode.executeDefinitionProvider here. That command invokes
-    // all matching providers, including this one, and can recurse indefinitely.
-    // Returning undefined lets VS Code collect clangd/cpptools results.
     return undefined;
   }
 }
@@ -269,10 +256,6 @@ export function registerSemanticNavigation(
       vscode.languages.registerWorkspaceSymbolProvider(new UeSemanticWorkspaceSymbolProvider(getProject)),
       vscode.languages.registerTypeHierarchyProvider(selector, new UeSemanticTypeHierarchyProvider(getProject)),
       vscode.languages.registerInlayHintsProvider(selector, new UeSemanticInlayHintsProvider(getProject)),
-    );
-  } else {
-    context.subscriptions.push(
-      vscode.languages.registerDefinitionProvider(selector, new UeSemanticDefinitionProvider(getProject)),
     );
   }
 }

@@ -1,9 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveBinariesPlatformDir } from '../platform/platform';
 
-/** .generated.h 및 Intermediate/Inc 심볼 정의로 이동 */
+/** Adjacent .generated.h include navigation from project headers */
 export class GeneratedHeaderDefinitionProvider implements vscode.DefinitionProvider {
   constructor(private readonly getProjectRoot: () => string | undefined) {}
 
@@ -28,14 +27,6 @@ export class GeneratedHeaderDefinitionProvider implements vscode.DefinitionProvi
         const pos = findSymbolInDocument(genDoc, word);
         if (pos) return new vscode.Location(vscode.Uri.file(genPath), pos);
       }
-    }
-
-    // Search Intermediate/Inc
-    const incHits = await findInIntermediateInc(projectRoot, headerBase, word);
-    for (const hit of incHits) {
-      const doc = await vscode.workspace.openTextDocument(hit);
-      const pos = findSymbolInDocument(doc, word);
-      if (pos) return new vscode.Location(vscode.Uri.file(hit), pos);
     }
 
     return undefined;
@@ -64,39 +55,4 @@ function findSymbolInDocument(doc: vscode.TextDocument, symbol: string): vscode.
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-async function findInIntermediateInc(
-  projectRoot: string,
-  moduleBase: string,
-  symbol: string,
-): Promise<string[]> {
-  const hits: string[] = [];
-  const plat = resolveBinariesPlatformDir();
-  const incRoots = [
-    path.join(projectRoot, 'Intermediate', 'Build'),
-    path.join(projectRoot, 'Intermediate', 'Build', plat),
-  ];
-
-  for (const root of incRoots) {
-    await searchGenHeaders(root, moduleBase, hits, 8);
-  }
-  return hits;
-}
-
-async function searchGenHeaders(dir: string, moduleBase: string, hits: string[], depth: number): Promise<void> {
-  if (depth <= 0) return;
-  try {
-    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    for (const e of entries) {
-      const full = path.join(dir, e.name);
-      if (e.isFile() && e.name.endsWith('.generated.h') && e.name.includes(moduleBase)) {
-        hits.push(full);
-      } else if (e.isDirectory() && (e.name === 'Inc' || e.name.includes('Editor'))) {
-        await searchGenHeaders(full, moduleBase, hits, depth - 1);
-      }
-    }
-  } catch {
-    // ignore
-  }
 }

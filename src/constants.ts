@@ -58,6 +58,8 @@ export const Commands = {
   CaptureDiagnosticBaseline: `${EXTENSION_ID}.captureDiagnosticBaseline`,
   BenchmarkIntelliSense: `${EXTENSION_ID}.benchmarkIntelliSense`,
   ShowIntelliSenseMetrics: `${EXTENSION_ID}.showIntelliSenseMetrics`,
+  GoToDefinition: `${EXTENSION_ID}.goToDefinition`,
+  GoToImplementation: `${EXTENSION_ID}.goToImplementation`,
 } as const;
 
 export const ContextKeys = {

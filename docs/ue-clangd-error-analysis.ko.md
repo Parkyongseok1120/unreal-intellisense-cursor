@@ -90,7 +90,8 @@ flowchart TD
 - 예: `UStaticMesh::StaticClass()` — MSVC/UHT는 `StaticMesh.generated.h` 통해 제공
 - `compile_commands`에 `-include SharedPCH...h`, `-include Definitions.<Module>.h`, Engine UHT `-I` 포함 가능
 - **SharedPCH는 MSVC precompiled header** — clangd `-include`로 넣어도 **clang ↔ MSVC PCH 형식 불일치**
-- [UHTIDEStubs.h](../templates/UHTIDEStubs.h)는 `UCLASS`/`GENERATED_BODY` **매크로 스텁만** — 엔진 클래스 `StaticClass()` 본문 없음
+- [UHTIDEStubs.h](../templates/UHTIDEStubs.h)는 clangd 전용 **UHT 매크로 스텁**이며, v4부터 `DECLARE_CLASS2` 재정의로 `StaticClass()` 등 IDE 전용 본문도 포함합니다. UBT 빌드에는 사용되지 않습니다.
+- F12가 스텁으로 가는 경우: UE5_8 Cursor가 `ue58rider.goToDefinition`(F12)에서 스텁 경로를 필터하고, UFUNCTION 메서드는 paired `.h`/`.cpp`, 프로젝트 `StaticClass()`는 `*.generated.h`로 우선 라우팅합니다.
 - [uobject-lsp-research.md](uobject-lsp-research.md): clangd는 UHT 미실행 → Rider 수준 UObject 분석 불가
 
 ---

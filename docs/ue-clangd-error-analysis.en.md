@@ -90,7 +90,8 @@ flowchart TD
 - Example: `UStaticMesh::StaticClass()` — MSVC/UHT provides it via `StaticMesh.generated.h`
 - `compile_commands` may include `-include SharedPCH...h`, `-include Definitions.<Module>.h`, Engine UHT `-I`
 - **SharedPCH is an MSVC precompiled header** — clang **does not fully consume** MSVC PCH via `-include`
-- [UHTIDEStubs.h](../templates/UHTIDEStubs.h) stubs **`UCLASS` / `GENERATED_BODY` macros only** — no engine `StaticClass()` bodies
+- [UHTIDEStubs.h](../templates/UHTIDEStubs.h) stubs **UHT macros** for clangd; v4 also redefines `DECLARE_CLASS2` with IDE-only `StaticClass()` bodies (not used by UBT).
+- F12 navigating to the stub file is handled by `ue58rider.goToDefinition`, which filters stub paths and prefers paired `.h`/`.cpp` and project `*.generated.h` for `StaticClass()`.
 - [uobject-lsp-research.md](uobject-lsp-research.md): clangd does not run UHT — no Rider-level UObject semantics
 
 ---

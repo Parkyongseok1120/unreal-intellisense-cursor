@@ -2,7 +2,7 @@
   "name": "ue5-8-cursor",
   "displayName": "UE5_8 Cursor",
   "description": "Cursor dedicated Unreal Engine 5.8 C++ workflow — IntelliSense, build, Live Coding, MCP",
-  "version": "7.0.8",
+  "version": "7.0.10",
   "publisher": "truesync",
   "license": "MIT",
   "repository": {
@@ -114,6 +114,16 @@
         "title": "Switch Header / Source",
         "category": "UE5_8 Cursor",
         "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "ue58rider.goToDefinition",
+        "title": "Go to Definition (UE)",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.goToImplementation",
+        "title": "Go to Implementation (UE)",
+        "category": "UE5_8 Cursor"
       },
       {
         "command": "ue58rider.selectEngine",
@@ -736,6 +746,16 @@
       {
         "command": "ue58rider.switchHeaderSource",
         "key": "alt+o",
+        "when": "editorLangId == cpp && ue58rider.projectDetected"
+      },
+      {
+        "command": "ue58rider.goToDefinition",
+        "key": "f12",
+        "when": "editorLangId == cpp && ue58rider.projectDetected"
+      },
+      {
+        "command": "ue58rider.goToImplementation",
+        "key": "ctrl+f12",
         "when": "editorLangId == cpp && ue58rider.projectDetected"
       },
       {
