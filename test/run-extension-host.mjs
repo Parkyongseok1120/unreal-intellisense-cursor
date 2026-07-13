@@ -35,6 +35,9 @@ async function main() {
       extensionDevelopmentPath,
       extensionTestsPath,
       launchArgs,
+      extensionTestsEnv: {
+        VSCODE_TEST_RUNNER: '1',
+      },
     });
     console.log('[ext-host] OK');
   } catch (err) {

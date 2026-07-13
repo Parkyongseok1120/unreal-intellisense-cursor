@@ -857,7 +857,7 @@
     "typecheck": "tsc --noEmit",
     "package": "vsce package --target win32-x64",
     "prepackage": "npm run build && node scripts/fetch-llvm.mjs",
-    "test": "node --test test/*.test.mjs",
+    "test": "node scripts/run-tests.mjs",
     "test:ext-host": "node test/run-extension-host.mjs",
     "benchmark:navigation": "node scripts/benchmark-navigation.mjs",
     "benchmark:uht": "node scripts/benchmark-uht.mjs",

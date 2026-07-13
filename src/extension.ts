@@ -60,6 +60,11 @@ let mcpDiagnostics: import('./mcp/mcpDiagnosticsProvider').McpDiagnosticsProvide
 let extensionPath = '';
 let extensionContext: vscode.ExtensionContext | undefined;
 const pluginIndexRestartTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function isExtensionTestHost(): boolean {
+  if (process.env.VSCODE_TEST_RUNNER) return true;
+  return extensionContext?.extensionMode === vscode.ExtensionMode.Test;
+}
 let sourceWatcherDisposable: vscode.Disposable | undefined;
 const settingsChangeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const headerContextSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -451,7 +456,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   outputChannel.appendLine(`[UE5_8 Cursor] Activating UE 5.8 development environment (v${getExtensionVersion(extensionPath)})...`);
   configureMcpBridge(undefined, extensionPath);
-  await runDetectionPipeline({ allowAutoSetup: true });
+  if (isExtensionTestHost()) {
+    void runDetectionPipeline({ allowAutoSetup: false });
+  } else {
+    await runDetectionPipeline({ allowAutoSetup: true });
+  }
 
   for (const root of projectRegistry().listRoots()) {
     const recovery = await recoverIncompleteMutations(root);
@@ -460,7 +469,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   }
 
-  if (settings.showWelcomeOnFirstOpen && !extensionContext.globalState.get('ue58rider.welcomeShown')) {
+  if (settings.showWelcomeOnFirstOpen && !isExtensionTestHost() && !extensionContext.globalState.get('ue58rider.welcomeShown')) {
     extensionContext.globalState.update('ue58rider.welcomeShown', true);
     const { showWelcomePanel } = await import('./ui/welcomePanel');
     void showWelcomePanel(settings);
@@ -611,7 +620,7 @@ async function connectProjectBridge(projectRoot: string, options: { primary: boo
     const { isBridgePluginReady, maybePromptRestartEditor } = await import('./editorBridge/bridgePluginInstall');
     const pluginReady = isBridgePluginReady(projectRoot);
     statusBar.setBridgePluginMissing(!bridgeInfo.connected && !pluginReady);
-    if (!bridgeInfo.connected) {
+    if (!bridgeInfo.connected && !isExtensionTestHost()) {
       await maybePromptRestartEditor(bridgeInfo.connected, pluginReady, ctx.outputChannel);
     }
   } else if (bridgeInfo.connected) {
@@ -771,6 +780,8 @@ async function executeDetectionPipeline(
   let primaryProject: UEProject | undefined;
   if (settings.projectFile) {
     primaryProject = projects.find((p) => p.uprojectPath === settings.projectFile) ?? projects[0];
+  } else if (isExtensionTestHost()) {
+    primaryProject = projects[0];
   } else {
     primaryProject = await resolvePrimaryProject(projects);
   }
@@ -790,7 +801,7 @@ async function executeDetectionPipeline(
   configureMcpBridge(primaryProject.projectRoot, extensionPath);
   contentBrowser?.setProjectRoot(primaryProject.projectRoot);
 
-  if (extensionPath && extensionContext) {
+  if (extensionPath && extensionContext && !isExtensionTestHost()) {
     const { maybePromptInstallBridgePlugin } = await import('./editorBridge/bridgePluginInstall');
     await maybePromptInstallBridgePlugin(
       { ...ctx, project: primaryProject },
@@ -801,6 +812,14 @@ async function executeDetectionPipeline(
   }
 
   if (token.isCancellationRequested || session.isStale(gen)) return;
+
+  if (isExtensionTestHost()) {
+    projectRegistry().ensure(primaryProject, undefined, extensionContext);
+    projectRegistry().setActive(primaryProject.projectRoot);
+    await setContext(ContextKeys.EngineFound, false);
+    void statusBar.update(runtimeContext(), settings);
+    return;
+  }
 
   let primaryEngine: UEInstallation | undefined;
   let discoveredEngines: Awaited<ReturnType<typeof discoverEngines>> = [];
@@ -814,7 +833,9 @@ async function executeDetectionPipeline(
       primaryEngine = discoveredEngines[0];
       ctx.outputChannel.appendLine(`[UE5_8 Cursor] Engine auto-selected: ${primaryEngine.root}`);
     } else if (!primaryEngine && discoveredEngines.length > 1) {
-      primaryEngine = await promptSelectEngine(discoveredEngines);
+      primaryEngine = isExtensionTestHost()
+        ? discoveredEngines[0]
+        : await promptSelectEngine(discoveredEngines);
     }
   }
 

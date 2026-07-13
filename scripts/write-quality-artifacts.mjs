@@ -5,6 +5,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
+import { listTestFiles } from './run-tests.mjs';
 
 const root = process.cwd();
 const outDir = path.join(root, 'Saved', 'quality-metrics');
@@ -16,13 +17,6 @@ try {
   typecheckOk = true;
 } catch {
   typecheckOk = false;
-}
-
-function listTestFiles() {
-  return fs
-    .readdirSync(path.join(root, 'test'))
-    .filter((name) => name.endsWith('.test.mjs'))
-    .map((name) => path.join('test', name));
 }
 
 function parseJsonReporter(output) {

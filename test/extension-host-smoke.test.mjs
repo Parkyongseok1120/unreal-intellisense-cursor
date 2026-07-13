@@ -19,4 +19,14 @@ describe('extension host smoke', () => {
     assert.match(text, /activate/);
     assert.match(text, /deactivate/);
   });
+
+  it('skips modal bootstrap paths in ExtensionMode.Test', () => {
+    const extSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'extension.ts'), 'utf8');
+    assert.ok(extSrc.includes('ExtensionMode.Test'));
+    assert.ok(extSrc.includes('isExtensionTestHost'));
+    const fixtureSettings = path.join(process.cwd(), 'test', 'fixtures', 'synthetic-ue-project', '.vscode', 'settings.json');
+    assert.ok(fs.existsSync(fixtureSettings));
+    const settings = JSON.parse(fs.readFileSync(fixtureSettings, 'utf8'));
+    assert.equal(settings['ue58rider.autoSetupOnOpen'], false);
+  });
 });
