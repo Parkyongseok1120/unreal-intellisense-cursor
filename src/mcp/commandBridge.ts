@@ -26,6 +26,7 @@ export class CommandBridge implements vscode.Disposable {
   private port = 0;
   private readonly token: string;
   private startPromise: Promise<number> | undefined;
+  private disposed = false;
 
   constructor(private readonly projectRoot: string) {
     this.token = crypto.randomBytes(32).toString('hex');
@@ -36,6 +37,9 @@ export class CommandBridge implements vscode.Disposable {
   }
 
   async start(): Promise<number> {
+    if (this.disposed) {
+      throw new Error('UE5_8 Cursor: command bridge disposed');
+    }
     if (this.server) return this.port;
     if (this.startPromise) return this.startPromise;
 
@@ -49,11 +53,22 @@ export class CommandBridge implements vscode.Disposable {
 
   private async startInternal(): Promise<number> {
     for (let i = 0; i < PORT_RANGE; i++) {
+      if (this.disposed) {
+        throw new Error('UE5_8 Cursor: command bridge disposed during start');
+      }
       const port = BASE_PORT + i;
       const server = await this.tryListen(port);
+      if (this.disposed) {
+        if (server) await this.closeServer(server);
+        throw new Error('UE5_8 Cursor: command bridge disposed during start');
+      }
       if (!server) continue;
       try {
         await this.writeBridgeFile(port);
+        if (this.disposed) {
+          await this.closeServer(server);
+          throw new Error('UE5_8 Cursor: command bridge disposed during start');
+        }
         this.server = server;
         this.port = port;
         return port;
@@ -106,7 +121,7 @@ export class CommandBridge implements vscode.Disposable {
         });
 
         req.on('end', async () => {
-          if (tooLarge || res.writableEnded) return;
+          if (tooLarge || res.writableEnded || this.disposed) return;
 
           const body = Buffer.concat(chunks).toString('utf-8');
           const validation = validateCommandBridgeRequest(body);
@@ -160,6 +175,8 @@ export class CommandBridge implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.startPromise = undefined;
     const server = this.server;
     this.server = undefined;
     this.port = 0;

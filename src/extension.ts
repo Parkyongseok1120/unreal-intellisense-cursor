@@ -30,7 +30,7 @@ import { refreshSemanticGraph, computeCompileParity, invalidateSemanticGraph } f
 import { registerSemanticNavigation } from './semantic/semanticNavigation';
 import { registerUeNavigationCommands } from './navigation/ueNavigationCommands';
 import { EditorBridgeClient, formatBridgeStatus } from './editorBridge/editorBridgeClient';
-import { recoverIncompleteMutations } from './platform/workspaceMutation';
+import { recoverIncompleteMutations, releaseActiveMutationSessions } from './platform/workspaceMutation';
 import { disposeBridgeConnectedSetup } from './editorBridge/bridgeConnectedSetup';
 import {
   formatInstallPreview,
@@ -278,6 +278,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (testExplorer) extensionContext.subscriptions.push(testExplorer);
 
   const { startBridgeReconnectWatcher } = await import('./editorBridge/bridgeReconnectWatcher');
+  const {
+    setupBridgeConnectedServices,
+  } = await import('./editorBridge/bridgeConnectedSetup');
   extensionContext.subscriptions.push(
     startBridgeReconnectWatcher({
       listProjectRoots: () => projectRegistry().listRoots(),
@@ -289,11 +292,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           testExplorer?.setRuntime(root, projectRegistry().getByRoot(root)?.editorBridge);
           void testExplorer?.refresh(runtimeContext());
         }
-        const { setupBridgeConnectedServices } = await import('./editorBridge/bridgeConnectedSetup');
         await setupBridgeConnectedServices(root, bridgeGetterForProject(root), ctx.diagnosticCollection, bridgeConnectedSetupOptions());
       },
       onEditorIdentityChanged: async (root) => {
-        const { disposeBridgeConnectedSetup } = await import('./editorBridge/bridgeConnectedSetup');
         disposeBridgeConnectedSetup(root);
       },
       onDisconnect: (root) => {
@@ -302,9 +303,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           testExplorer?.setRuntime(root, projectRegistry().getByRoot(root)?.editorBridge);
           void testExplorer?.refresh(runtimeContext());
         }
-        void import('./editorBridge/bridgeConnectedSetup').then(({ disposeBridgeConnectedSetup }) =>
-          disposeBridgeConnectedSetup(root),
-        );
+        disposeBridgeConnectedSetup(root);
       },
     }),
   );
@@ -562,6 +561,7 @@ export function deactivate(): void {
   for (const timer of headerContextSaveTimers.values()) clearTimeout(timer);
   headerContextSaveTimers.clear();
   sourceWatcherDisposable?.dispose();
+  releaseActiveMutationSessions();
   disposeBridgeConnectedSetup();
   for (const projectRoot of projectRegistry().listRoots()) cleanupProjectExtensionState(projectRoot);
   for (const timer of pluginIndexRestartTimers.values()) clearTimeout(timer);

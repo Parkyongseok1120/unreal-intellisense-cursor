@@ -220,6 +220,14 @@ async function loadJournal(projectRoot: string): Promise<MutationJournal | undef
   }
 }
 
+async function saveJournal(projectRoot: string, journal: MutationJournal): Promise<void> {
+  const finalPath = journalPath(projectRoot);
+  const tempPath = `${finalPath}.${journal.sessionId || 'recovery'}.tmp`;
+  await fs.promises.mkdir(path.dirname(finalPath), { recursive: true });
+  await fs.promises.writeFile(tempPath, JSON.stringify(journal, null, 2) + '\n', 'utf-8');
+  await atomicReplace(tempPath, finalPath);
+}
+
 async function rollbackJournalRecords(
   projectRoot: string,
   journal: MutationJournal,
@@ -255,6 +263,19 @@ async function rollbackJournalRecords(
     }
   }
 
+  const ok = failedFiles.length === 0 && conflictFiles.length === 0;
+  if (!ok) {
+    journal.state = 'rollback-conflict';
+    await saveJournal(projectRoot, journal);
+    return {
+      ok: false,
+      restoredFiles,
+      deletedFiles,
+      failedFiles,
+      conflictFiles,
+    };
+  }
+
   try {
     await fs.promises.unlink(journalPath(projectRoot));
   } catch {
@@ -262,7 +283,7 @@ async function rollbackJournalRecords(
   }
 
   return {
-    ok: failedFiles.length === 0 && conflictFiles.length === 0,
+    ok: true,
     restoredFiles,
     deletedFiles,
     failedFiles,
@@ -280,7 +301,7 @@ export async function recoverIncompleteMutations(projectRoot: string): Promise<M
   if (!journal) {
     return { recovered: true, rolledBack: false, conflict: false };
   }
-  if (journal.state === 'committed') {
+  if (journal.state === 'committed' || journal.state === 'committing') {
     try {
       await fs.promises.unlink(journalPath(projectRoot));
     } catch {
@@ -290,7 +311,9 @@ export async function recoverIncompleteMutations(projectRoot: string): Promise<M
       recovered: true,
       rolledBack: false,
       conflict: false,
-      message: 'Cleared committed mutation journal',
+      message: journal.state === 'committed'
+        ? 'Cleared committed mutation journal'
+        : 'Cleared in-progress commit journal without rollback',
     };
   }
   if (journal.state === 'rollback-conflict') {
@@ -310,13 +333,12 @@ export async function recoverIncompleteMutations(projectRoot: string): Promise<M
     return { recovered: true, rolledBack: false, conflict: false };
   }
   const result = await rollbackJournalRecords(projectRoot, journal);
-  if (result.conflictFiles?.length) {
-    await forceRollbackAndClear(projectRoot);
+  if (result.conflictFiles?.length || result.failedFiles?.length) {
     return {
       recovered: false,
       rolledBack: false,
       conflict: true,
-      message: `Mutation recovery conflict on: ${result.conflictFiles.join(', ')}`,
+      message: `Mutation recovery conflict on: ${[...(result.conflictFiles ?? []), ...(result.failedFiles ?? [])].join(', ')}`,
     };
   }
   try {
@@ -820,6 +842,11 @@ export async function forceRollbackAndClear(projectRoot: string): Promise<Mutati
 /** @deprecated Use forceRollbackAndClear — this dropped rollback guarantees. */
 export function clearMutationSession(projectRoot: string): void {
   activeTransactions.delete(sessionKey(projectRoot));
+}
+
+/** Drop in-memory transaction handles on extension shutdown (journals remain for recovery). */
+export function releaseActiveMutationSessions(): void {
+  activeTransactions.clear();
 }
 
 /** Remove only extension-managed explorer filter patterns, preserving user entries. */

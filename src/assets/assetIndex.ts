@@ -3,6 +3,30 @@ import * as path from 'path';
 import { ensureDataDir } from '../platform/dataDir';
 import { probeMcpEndpoint } from '../cursor/mcpConfig';
 
+const assetIndexLocks = new Map<string, Promise<void>>();
+
+async function withAssetIndexLock<T>(projectRoot: string, fn: () => Promise<T>): Promise<T> {
+  const key = path.resolve(projectRoot).toLowerCase();
+  const prev = assetIndexLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chain = prev.then(() => gate);
+  assetIndexLocks.set(key, chain);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    void chain.finally(() => {
+      if (assetIndexLocks.get(key) === chain) {
+        assetIndexLocks.delete(key);
+      }
+    });
+  }
+}
+
 export interface AssetIndexEntry {
   diskPath: string;
   assetPath: string;
@@ -201,7 +225,9 @@ export async function saveAssetIndex(projectRoot: string, entries: AssetIndexEnt
     entries,
   };
   const filePath = path.join(dir, CACHE_FILE);
-  await fs.promises.writeFile(filePath, JSON.stringify(cache, null, 2) + '\n', 'utf-8');
+  const tempPath = `${filePath}.${process.pid}.tmp`;
+  await fs.promises.writeFile(tempPath, JSON.stringify(cache, null, 2) + '\n', 'utf-8');
+  await fs.promises.rename(tempPath, filePath);
   return filePath;
 }
 
@@ -256,41 +282,43 @@ export async function applyBridgeAssetDelta(
   projectRoot: string,
   delta: { added: Array<{ assetPath: string; className?: string }>; removed: string[]; updated: Array<{ assetPath: string; className?: string }> },
 ): Promise<AssetIndexEntry[]> {
-  const entries = await loadAssetIndex(projectRoot);
-  const byPath = new Map(entries.map((e) => [e.assetPath.toLowerCase(), e]));
+  return withAssetIndexLock(projectRoot, async () => {
+    const entries = await loadAssetIndex(projectRoot);
+    const byPath = new Map(entries.map((e) => [e.assetPath.toLowerCase(), e]));
 
-  for (const removed of delta.removed) {
-    byPath.delete(removed.toLowerCase());
-  }
-
-  const upsert = (asset: { assetPath: string; className?: string }) => {
-    const key = asset.assetPath.toLowerCase();
-    const name = asset.assetPath.split('/').pop()?.split('.')[0] ?? 'Asset';
-    const existing = byPath.get(key);
-    if (existing) {
-      existing.packageClass = asset.className ?? existing.packageClass;
-      existing.source = 'bridge';
-      existing.confidence = 'authoritative';
-      return;
+    for (const removed of delta.removed) {
+      byPath.delete(removed.toLowerCase());
     }
-    byPath.set(key, {
-      diskPath: '',
-      assetPath: asset.assetPath,
-      fileName: name,
-      assetName: name,
-      packageClass: asset.className,
-      inferredClass: asset.className ?? inferClassFromName(name),
-      source: 'bridge',
-      confidence: 'authoritative',
-    });
-  };
 
-  for (const asset of delta.added) upsert(asset);
-  for (const asset of delta.updated) upsert(asset);
+    const upsert = (asset: { assetPath: string; className?: string }) => {
+      const key = asset.assetPath.toLowerCase();
+      const name = asset.assetPath.split('/').pop()?.split('.')[0] ?? 'Asset';
+      const existing = byPath.get(key);
+      if (existing) {
+        existing.packageClass = asset.className ?? existing.packageClass;
+        existing.source = 'bridge';
+        existing.confidence = 'authoritative';
+        return;
+      }
+      byPath.set(key, {
+        diskPath: '',
+        assetPath: asset.assetPath,
+        fileName: name,
+        assetName: name,
+        packageClass: asset.className,
+        inferredClass: asset.className ?? inferClassFromName(name),
+        source: 'bridge',
+        confidence: 'authoritative',
+      });
+    };
 
-  const merged = [...byPath.values()].sort((a, b) => a.assetPath.localeCompare(b.assetPath));
-  await saveAssetIndex(projectRoot, merged);
-  return merged;
+    for (const asset of delta.added) upsert(asset);
+    for (const asset of delta.updated) upsert(asset);
+
+    const merged = [...byPath.values()].sort((a, b) => a.assetPath.localeCompare(b.assetPath));
+    await saveAssetIndex(projectRoot, merged);
+    return merged;
+  });
 }
 
 export async function enrichAssetFromMcp(entry: AssetIndexEntry): Promise<AssetIndexEntry> {
@@ -388,27 +416,29 @@ export async function refreshAssetIndex(
     authoritativeBridge?: boolean;
   } = {},
 ): Promise<AssetIndexEntry[]> {
-  const existing = await loadAssetIndexCache(projectRoot);
-  let entries: AssetIndexEntry[];
+  return withAssetIndexLock(projectRoot, async () => {
+    const existing = await loadAssetIndexCache(projectRoot);
+    let entries: AssetIndexEntry[];
 
-  if (!options.forceFull && existing && existing.version >= CACHE_VERSION && existing.entries.length > 0) {
-    entries = await incrementalRefresh(projectRoot, existing);
-  } else {
-    entries = await buildAssetIndex(projectRoot);
-  }
+    if (!options.forceFull && existing && existing.version >= CACHE_VERSION && existing.entries.length > 0) {
+      entries = await incrementalRefresh(projectRoot, existing);
+    } else {
+      entries = await buildAssetIndex(projectRoot);
+    }
 
-  if (options.enrichMcp) {
-    entries = await enrichBatch(entries);
-  }
+    if (options.enrichMcp) {
+      entries = await enrichBatch(entries);
+    }
 
-  if (options.authoritativeBridge && options.bridgeAssets !== undefined) {
-    entries = replaceBridgeAuthoritative(entries, options.bridgeAssets);
-  } else if (options.bridgeAssets?.length) {
-    entries = await mergeBridgeAssets(entries, options.bridgeAssets);
-  }
+    if (options.authoritativeBridge && options.bridgeAssets !== undefined) {
+      entries = replaceBridgeAuthoritative(entries, options.bridgeAssets);
+    } else if (options.bridgeAssets?.length) {
+      entries = await mergeBridgeAssets(entries, options.bridgeAssets);
+    }
 
-  await saveAssetIndex(projectRoot, entries);
-  return entries;
+    await saveAssetIndex(projectRoot, entries);
+    return entries;
+  });
 }
 
 export async function getOrBuildAssetIndex(projectRoot: string): Promise<AssetIndexEntry[]> {

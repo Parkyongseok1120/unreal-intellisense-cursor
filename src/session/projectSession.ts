@@ -162,23 +162,36 @@ export class ProjectSession implements vscode.Disposable {
     if (this.disposed) return undefined;
     if (this.bridgeStartPromise) return this.bridgeStartPromise;
     if (this.bridge && this.bridgeProjectRoot === projectRoot) return this.bridge;
-    this.bridge?.dispose();
-    this.bridge = new CommandBridge(projectRoot);
-    this.bridgeProjectRoot = projectRoot;
-    this.bridgeStartPromise = (async () => {
+    let inflight!: Promise<CommandBridge | undefined>;
+    inflight = (async (): Promise<CommandBridge | undefined> => {
+      this.bridge?.dispose();
+      const bridge = new CommandBridge(projectRoot);
+      this.bridge = bridge;
+      this.bridgeProjectRoot = projectRoot;
       try {
-        await this.bridge!.start();
-        return this.bridge;
+        await bridge.start();
+        if (this.disposed) {
+          bridge.dispose();
+          this.bridge = undefined;
+          this.bridgeProjectRoot = undefined;
+          return undefined;
+        }
+        return bridge;
       } catch {
-        this.bridge?.dispose();
-        this.bridge = undefined;
-        this.bridgeProjectRoot = undefined;
+        bridge.dispose();
+        if (this.bridge === bridge) {
+          this.bridge = undefined;
+          this.bridgeProjectRoot = undefined;
+        }
         return undefined;
       } finally {
-        this.bridgeStartPromise = undefined;
+        if (this.bridgeStartPromise === inflight) {
+          this.bridgeStartPromise = undefined;
+        }
       }
     })();
-    return this.bridgeStartPromise;
+    this.bridgeStartPromise = inflight;
+    return inflight;
   }
 
   getBridge(): CommandBridge | undefined {

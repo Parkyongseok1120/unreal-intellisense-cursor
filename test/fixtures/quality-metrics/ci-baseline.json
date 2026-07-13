@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-13T17:38:01.755Z",
+  "generatedAt": "2026-07-13T18:00:09.290Z",
   "source": "ci-merge",
   "areas": {
     "trust": {
@@ -98,16 +98,16 @@
       "completeness": 0.82,
       "resilience": 0.8,
       "performance": 0.76,
-      "verification": 0.9973890339425587,
+      "verification": 0.9974160206718347,
       "e2ePassed": true,
       "details": {
         "automationCompletionTicker": true,
         "executionId": true,
         "debugProfile": true,
         "projectRuntimeTests": false,
-        "unitPass": 382,
+        "unitPass": 386,
         "unitFail": 0,
-        "unitTotal": 383
+        "unitTotal": 387
       }
     },
     "workflow": {

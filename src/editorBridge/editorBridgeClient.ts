@@ -122,7 +122,15 @@ export class EditorBridgeClient implements vscode.Disposable {
     return this.connectionState === 'disposed';
   }
 
+  private abortActiveRpcs(): void {
+    for (const controller of this.activeRpcControllers) controller.abort();
+    this.activeRpcControllers.clear();
+  }
+
   async connect(projectRoot?: string, timeoutMs = 5000): Promise<EditorBridgeInfo> {
+    if (this.isDisposed()) {
+      return this.info;
+    }
     const root = projectRoot ?? this.projectRoot;
     if (
       root
@@ -136,6 +144,7 @@ export class EditorBridgeClient implements vscode.Disposable {
 
     const gen = ++this.connectionGeneration;
     this.connectAbort?.abort();
+    this.abortActiveRpcs();
     const controller = new AbortController();
     this.connectAbort = controller;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -576,8 +585,7 @@ export class EditorBridgeClient implements vscode.Disposable {
     this.connectionGeneration++;
     this.connectionState = 'disconnecting';
     this.connectAbort?.abort();
-    for (const controller of this.activeRpcControllers) controller.abort();
-    this.activeRpcControllers.clear();
+    this.abortActiveRpcs();
     this.connectionState = 'disposed';
     this.resetOffline('disposed');
   }

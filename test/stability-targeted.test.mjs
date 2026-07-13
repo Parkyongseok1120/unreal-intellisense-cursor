@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -28,6 +29,18 @@ const sourceWatcherSrc = fs.readFileSync(
   path.join(process.cwd(), 'src/detection/sourceWatcher.ts'),
   'utf-8',
 );
+const assetIndexSrc = fs.readFileSync(
+  path.join(process.cwd(), 'src/assets/assetIndex.ts'),
+  'utf-8',
+);
+const processSrc = fs.readFileSync(
+  path.join(process.cwd(), 'src/platform/process.ts'),
+  'utf-8',
+);
+
+function sha256Text(text) {
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
 
 describe('stability targeted — workspaceMutation', () => {
   it('rejects concurrent begin() for the same project root', async () => {
@@ -109,6 +122,80 @@ describe('stability targeted — workspaceMutation', () => {
     const content = JSON.parse(await fs.promises.readFile(filePath, 'utf-8'));
     assert.equal(content.a, 2);
   });
+
+  it('recovery preserves journal when orphan rollback hits user conflict', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ue58-recovery-conflict-'));
+    const filePath = path.join(root, '.vscode', 'settings.json');
+    const backupDir = path.join(root, '.ue5_8cursor', 'backups', 'crash');
+    await fs.promises.mkdir(backupDir, { recursive: true });
+
+    const original = JSON.stringify({ a: 1 }, null, 2) + '\n';
+    const written = JSON.stringify({ a: 2 }, null, 2) + '\n';
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, written, 'utf-8');
+    const backupPath = path.join(backupDir, 'vscode-settings.json');
+    await fs.promises.writeFile(backupPath, original, 'utf-8');
+    await fs.promises.writeFile(filePath, JSON.stringify({ a: 999 }, null, 2) + '\n', 'utf-8');
+
+    const journalPath = path.join(root, '.ue5_8cursor', 'mutation-journal.json');
+    await fs.promises.mkdir(path.dirname(journalPath), { recursive: true });
+    await fs.promises.writeFile(
+      journalPath,
+      JSON.stringify({
+        sessionId: 'crash',
+        projectRoot: root,
+        backupDir,
+        state: 'active',
+        records: [{
+          absoluteTargetPath: filePath,
+          relativeTargetPath: '.vscode/settings.json',
+          existedBefore: true,
+          backupPath,
+          postWriteSha256: sha256Text(written),
+          status: 'pending',
+          createdDirs: [],
+        }],
+        startedAt: Date.now(),
+      }, null, 2) + '\n',
+      'utf-8',
+    );
+
+    const recovery = await mutation.recoverIncompleteMutations(root);
+    assert.equal(recovery.conflict, true);
+    assert.equal(recovery.rolledBack, false);
+    assert.equal(fs.existsSync(journalPath), true);
+    const journal = JSON.parse(await fs.promises.readFile(journalPath, 'utf-8'));
+    assert.equal(journal.state, 'rollback-conflict');
+  });
+
+  it('clears committing journal on recovery without rolling back files', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ue58-committing-journal-'));
+    const filePath = path.join(root, '.vscode', 'settings.json');
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify({ kept: true }, null, 2) + '\n', 'utf-8');
+
+    const journalPath = path.join(root, '.ue5_8cursor', 'mutation-journal.json');
+    await fs.promises.mkdir(path.dirname(journalPath), { recursive: true });
+    await fs.promises.writeFile(
+      journalPath,
+      JSON.stringify({
+        sessionId: 'committing',
+        projectRoot: root,
+        backupDir: path.join(root, '.ue5_8cursor', 'backups', '1'),
+        records: [{ absoluteTargetPath: filePath, relativeTargetPath: '.vscode/settings.json', existedBefore: true, status: 'committed', createdDirs: [] }],
+        startedAt: Date.now(),
+        state: 'committing',
+      }, null, 2) + '\n',
+      'utf-8',
+    );
+
+    const recovery = await mutation.recoverIncompleteMutations(root);
+    assert.equal(recovery.recovered, true);
+    assert.equal(recovery.rolledBack, false);
+    assert.equal(fs.existsSync(journalPath), false);
+    const content = JSON.parse(await fs.promises.readFile(filePath, 'utf-8'));
+    assert.equal(content.kept, true);
+  });
 });
 
 describe('stability targeted — asset authoritative sync', () => {
@@ -150,6 +237,8 @@ describe('stability targeted — lifecycle contracts', () => {
   it('closes command bridge server when descriptor write fails', () => {
     assert.ok(commandBridgeSrc.includes('await this.closeServer(server)'));
     assert.ok(commandBridgeSrc.includes('startPromise'));
+    assert.ok(commandBridgeSrc.includes('private disposed = false'));
+    assert.ok(commandBridgeSrc.includes('if (this.disposed)'));
     assert.ok(commandBridgeSrc.includes('bodyBytes += chunk.length'));
     assert.ok(commandBridgeSrc.includes('res.writeHead(413'));
     assert.match(commandBridgeSrc, /writeBridgeFile[\s\S]*?catch[\s\S]*?closeServer/s);
@@ -158,7 +247,7 @@ describe('stability targeted — lifecycle contracts', () => {
   it('aborts active RPC controllers on EditorBridge dispose', () => {
     assert.ok(editorBridgeClientSrc.includes('activeRpcControllers'));
     assert.ok(editorBridgeClientSrc.includes('connectionGeneration++'));
-    assert.ok(editorBridgeClientSrc.includes('for (const controller of this.activeRpcControllers) controller.abort()'));
+    assert.ok(editorBridgeClientSrc.includes('abortActiveRpcs()'));
     assert.ok(editorBridgeClientSrc.includes('Superseded connection'));
     assert.ok(editorBridgeClientSrc.includes('private isDisposed(): boolean'));
   });
@@ -166,14 +255,30 @@ describe('stability targeted — lifecycle contracts', () => {
   it('skips full reconnect when connected descriptor identity is unchanged', () => {
     assert.ok(reconnectWatcherSrc.includes('bridge.ping'));
     assert.ok(reconnectWatcherSrc.includes('descriptorKey === state.lastDescriptorKey'));
+    assert.ok(reconnectWatcherSrc.includes('pingFailStreak'));
     assert.ok(editorBridgeClientSrc.includes('async ping(timeoutMs'));
   });
 
   it('serializes bridge setup through setupInflight promise map', () => {
     assert.ok(bridgeSetupSrc.includes('setupInflight'));
+    assert.ok(bridgeSetupSrc.includes('setupEpochByProject'));
     assert.ok(bridgeSetupSrc.includes('if (inflight)'));
     assert.ok(bridgeSetupSrc.includes('setupInflight.set(key, run)'));
     assert.ok(bridgeSetupSrc.includes('authoritativeBridge: true'));
+    assert.ok(bridgeSetupSrc.includes('currentSetupEpoch(key) !== deltaEpoch'));
+  });
+
+  it('serializes asset index writes through per-project lock', () => {
+    assert.ok(assetIndexSrc.includes('withAssetIndexLock'));
+    assert.match(assetIndexSrc, /applyBridgeAssetDelta[\s\S]*withAssetIndexLock/s);
+    assert.match(assetIndexSrc, /refreshAssetIndex[\s\S]*withAssetIndexLock/s);
+  });
+
+  it('decodes process output with StringDecoder for UTF-8 chunk boundaries', () => {
+    assert.ok(processSrc.includes("import { StringDecoder } from 'string_decoder'"));
+    assert.ok(processSrc.includes('stdoutDecoder.write(data)'));
+    assert.ok(processSrc.includes('stderrDecoder.write(data)'));
+    assert.ok(processSrc.includes('stdoutDecoder.end()'));
   });
 
   it('reschedules source watcher flush when events arrive during in-flight batch', () => {
@@ -181,5 +286,15 @@ describe('stability targeted — lifecycle contracts', () => {
     assert.ok(sourceWatcherSrc.includes('tuReschedule'));
     assert.ok(sourceWatcherSrc.includes('compileReschedule'));
     assert.match(sourceWatcherSrc, /finally[\s\S]*reflectionReschedule[\s\S]*flushReflectionBatch/s);
+  });
+
+  it('persists committing journal before in-memory commit and releases sessions on deactivate', () => {
+    const mutationSrc = fs.readFileSync(path.join(process.cwd(), 'src/platform/workspaceMutation.ts'), 'utf-8');
+    const extensionSrc = fs.readFileSync(path.join(process.cwd(), 'src/extension.ts'), 'utf-8');
+    assert.match(mutationSrc, /await this\.persistJournal\('committing'\)[\s\S]*this\.committed = true/s);
+    assert.ok(mutationSrc.includes('releaseActiveMutationSessions'));
+    assert.ok(extensionSrc.includes('releaseActiveMutationSessions()'));
+    assert.ok(commandBridgeSrc.includes('this.disposed) return'));
+    assert.ok(assetIndexSrc.includes('await fs.promises.rename(tempPath, filePath)'));
   });
 });

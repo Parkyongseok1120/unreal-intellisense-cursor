@@ -52,15 +52,21 @@ export class UnrealTestExplorer implements vscode.Disposable {
     this.controller.createRunProfile('Rerun Failed', vscode.TestRunProfileKind.Run, (request, token) => this.rerunFailed(request, token), false);
   }
 
-  private get state(): TestRuntimeState {
-    const key = this.activeProjectRoot?.toLowerCase();
-    if (!key) return { bridge: undefined, tests: [], offlineMessage: 'Editor Bridge offline; automation tests unavailable.', failedTests: new Set() };
+  private runtimeStateFor(projectRoot: string): TestRuntimeState {
+    const key = projectRoot.toLowerCase();
     let state = this.runtimeStates.get(key);
     if (!state) {
       state = { bridge: undefined, tests: [], offlineMessage: 'Editor Bridge offline; automation tests unavailable.', failedTests: new Set() };
       this.runtimeStates.set(key, state);
     }
     return state;
+  }
+
+  private get state(): TestRuntimeState {
+    if (!this.activeProjectRoot) {
+      return { bridge: undefined, tests: [], offlineMessage: 'Editor Bridge offline; automation tests unavailable.', failedTests: new Set() };
+    }
+    return this.runtimeStateFor(this.activeProjectRoot);
   }
 
   setRuntime(projectRoot: string | undefined, bridge: EditorBridgeClient | undefined): void {
@@ -79,18 +85,23 @@ export class UnrealTestExplorer implements vscode.Disposable {
       this.emitter.fire();
       return [];
     }
-    this.activeProjectRoot = ctx.project.projectRoot;
-    const state = this.state;
+    const projectRoot = ctx.project.projectRoot;
+    this.activeProjectRoot = projectRoot;
+    const state = this.runtimeStateFor(projectRoot);
     if (state.bridge?.hasCapability('automationTests')) {
       const remote = await state.bridge.listAutomationTestsResult();
+      if (this.activeProjectRoot?.toLowerCase() !== projectRoot.toLowerCase()) {
+        return state.tests;
+      }
       if (!remote.ok) {
         state.offlineMessage = remote.error.message;
+        this.rebuildTree(projectRoot, state);
         this.emitter.fire();
         return state.tests;
       }
       state.tests = remote.value.map((t) => ({ name: t.name, source: t.source, path: typeof t.path === 'string' ? t.path : undefined }));
       state.offlineMessage = '';
-        this.rebuildTree();
+      this.rebuildTree(projectRoot, state);
       this.emitter.fire();
       return state.tests;
     }
@@ -100,18 +111,24 @@ export class UnrealTestExplorer implements vscode.Disposable {
   }
 
   private async refreshFromBridge(): Promise<void> {
-    const state = this.state;
+    const projectRoot = this.activeProjectRoot;
+    if (!projectRoot) return;
+    const state = this.runtimeStateFor(projectRoot);
     if (!state.bridge?.hasCapability('automationTests')) return;
     const remote = await state.bridge.listAutomationTestsResult();
     if (!remote.ok) return;
+    if (this.activeProjectRoot?.toLowerCase() !== projectRoot.toLowerCase()) return;
     state.tests = remote.value.map((t) => ({ name: t.name, source: t.source, path: typeof t.path === 'string' ? t.path : undefined }));
-    this.rebuildTree();
+    this.rebuildTree(projectRoot, state);
   }
 
-  private rebuildTree(): void {
+  private rebuildTree(projectRoot?: string, runtimeState?: TestRuntimeState): void {
+    const activeRoot = projectRoot ?? this.activeProjectRoot;
+    if (!activeRoot || activeRoot.toLowerCase() !== this.activeProjectRoot?.toLowerCase()) return;
+    const tests = (runtimeState ?? this.runtimeStateFor(activeRoot)).tests;
     this.controller.items.replace([]);
     const suiteItems = new Map<string, vscode.TestItem>();
-    for (const test of this.state.tests) {
+    for (const test of tests) {
       const id = `${test.source}:${test.name}`;
       const parts = test.name.split('.');
       const suiteName = parts.length > 1 ? parts.slice(0, -1).join('.') : test.source;
@@ -144,7 +161,12 @@ export class UnrealTestExplorer implements vscode.Disposable {
     this.activeProjectRoot = ctx.project.projectRoot;
     const item = this.findTestItemById(`${test.source}:${test.name}`);
     if (item && this.runProfile) {
-      await this.runProfile.runHandler(new vscode.TestRunRequest([item]), new vscode.CancellationTokenSource().token);
+      const cts = new vscode.CancellationTokenSource();
+      try {
+        await this.runProfile.runHandler(new vscode.TestRunRequest([item]), cts.token);
+      } finally {
+        cts.dispose();
+      }
       return;
     }
     vscode.window.showInformationMessage(this.state.offlineMessage);
@@ -152,48 +174,51 @@ export class UnrealTestExplorer implements vscode.Disposable {
 
   private async runHandler(request: vscode.TestRunRequest, token: vscode.CancellationToken, debug = false): Promise<void> {
     const run = this.controller.createTestRun(request);
-    const state = this.state;
-    if (debug) run.appendOutput('Debug profile: run automation test, then attach debugger to UnrealEditor if needed.\n');
-    for (const item of this.collectTests(request)) {
-      if (token.isCancellationRequested) { run.skipped(item); continue; }
-      const testName = automationTestNameFromId(item.id);
-      if (!testName) {
-        run.skipped(item);
-        continue;
-      }
-      run.started(item);
-      this.runOutput.appendLine(`[run] ${testName}`);
-      if (!state.bridge?.hasCapability('automationTests')) { run.errored(item, new vscode.TestMessage(state.offlineMessage)); continue; }
-      if (!isMethodImplemented('automation.status')) { run.errored(item, new vscode.TestMessage('automation.status not available on Bridge server')); continue; }
-      const start = await state.bridge.runAutomationTest(testName);
-      if (!start.ok) { run.failed(item, new vscode.TestMessage(start.message ?? 'Failed to start test')); state.failedTests.add(item.id); continue; }
-      run.appendOutput(`Started ${testName}\n`);
-      const status = await state.bridge.pollAutomationStatus(testName, { timeoutMs: 120_000, token });
-      if (status.state === 'passed') {
-        run.passed(item);
-        state.failedTests.delete(item.id);
-        this.runOutput.appendLine(`[pass] ${testName}${status.durationMs ? ` (${status.durationMs}ms)` : ''}`);
-        if (status.artifactPath) run.appendOutput(`Artifact: ${status.artifactPath}\n`);
-        if (debug) {
-          run.appendOutput(`[debug] Attach to UnrealEditor for ${testName} post-mortem debugging.\n`);
-          await vscode.commands.executeCommand('ue58rider.debugAttachEditor');
+    try {
+      const state = this.state;
+      if (debug) run.appendOutput('Debug profile: run automation test, then attach debugger to UnrealEditor if needed.\n');
+      for (const item of this.collectTests(request)) {
+        if (token.isCancellationRequested) { run.skipped(item); continue; }
+        const testName = automationTestNameFromId(item.id);
+        if (!testName) {
+          run.skipped(item);
+          continue;
         }
+        run.started(item);
+        this.runOutput.appendLine(`[run] ${testName}`);
+        if (!state.bridge?.hasCapability('automationTests')) { run.errored(item, new vscode.TestMessage(state.offlineMessage)); continue; }
+        if (!isMethodImplemented('automation.status')) { run.errored(item, new vscode.TestMessage('automation.status not available on Bridge server')); continue; }
+        const start = await state.bridge.runAutomationTest(testName);
+        if (!start.ok) { run.failed(item, new vscode.TestMessage(start.message ?? 'Failed to start test')); state.failedTests.add(item.id); continue; }
+        run.appendOutput(`Started ${testName}\n`);
+        const status = await state.bridge.pollAutomationStatus(testName, { timeoutMs: 120_000, token });
+        if (status.state === 'passed') {
+          run.passed(item);
+          state.failedTests.delete(item.id);
+          this.runOutput.appendLine(`[pass] ${testName}${status.durationMs ? ` (${status.durationMs}ms)` : ''}`);
+          if (status.artifactPath) run.appendOutput(`Artifact: ${status.artifactPath}\n`);
+          if (debug) {
+            run.appendOutput(`[debug] Attach to UnrealEditor for ${testName} post-mortem debugging.\n`);
+            await vscode.commands.executeCommand('ue58rider.debugAttachEditor');
+          }
+        }
+        else if (status.state === 'failed') {
+          const msg = [
+            status.message ?? 'Test failed',
+            status.line ? `line ${status.line}` : undefined,
+            status.durationMs ? `${status.durationMs}ms` : undefined,
+          ].filter(Boolean).join(' · ');
+          run.failed(item, new vscode.TestMessage(msg));
+          state.failedTests.add(item.id);
+          this.runOutput.appendLine(`[fail] ${testName}: ${msg}`);
+          if (status.artifactPath) run.appendOutput(`Artifact: ${status.artifactPath}\n`);
+        }
+        else if (status.state === 'cancelled' || token.isCancellationRequested) { await state.bridge.cancelAutomationTest(testName); run.skipped(item); }
+        else { run.errored(item, new vscode.TestMessage(status.message ?? 'Test status unknown; not marked passed')); state.failedTests.add(item.id); }
       }
-      else if (status.state === 'failed') {
-        const msg = [
-          status.message ?? 'Test failed',
-          status.line ? `line ${status.line}` : undefined,
-          status.durationMs ? `${status.durationMs}ms` : undefined,
-        ].filter(Boolean).join(' · ');
-        run.failed(item, new vscode.TestMessage(msg));
-        state.failedTests.add(item.id);
-        this.runOutput.appendLine(`[fail] ${testName}: ${msg}`);
-        if (status.artifactPath) run.appendOutput(`Artifact: ${status.artifactPath}\n`);
-      }
-      else if (status.state === 'cancelled' || token.isCancellationRequested) { await state.bridge.cancelAutomationTest(testName); run.skipped(item); }
-      else { run.errored(item, new vscode.TestMessage(status.message ?? 'Test status unknown; not marked passed')); state.failedTests.add(item.id); }
+    } finally {
+      run.end();
     }
-    run.end();
   }
 
   private async rerunFailed(_request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {

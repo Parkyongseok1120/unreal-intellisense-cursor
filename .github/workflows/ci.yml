@@ -57,6 +57,7 @@ jobs:
       - run: node -e "const fs=require('fs'); fs.mkdirSync('dist-test/parsers',{recursive:true}); fs.copyFileSync('src/parsers/buildProgressParser.ts','dist-test/parsers/buildProgressParser.ts')"
       - run: npx esbuild src/parsers/buildProgressParser.ts --outfile=dist-test/parsers/buildProgressParser.js --format=esm --platform=node
       - run: npm test
+      - run: node scripts/write-quality-artifacts.mjs
       - run: npm run collect:quality-metrics
         env:
           QUALITY_METRICS_PATH: Saved/quality-metrics/unit.json

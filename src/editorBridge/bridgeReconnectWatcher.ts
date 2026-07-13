@@ -23,13 +23,18 @@ export function startBridgeReconnectWatcher(
   options: BridgeReconnectWatcherOptions,
 ): vscode.Disposable {
   const intervalMs = options.intervalMs ?? 15_000;
-  const states = new Map<string, { wasConnected: boolean; lastDescriptorKey?: string; inFlight: boolean }>();
+  const states = new Map<string, {
+    wasConnected: boolean;
+    lastDescriptorKey?: string;
+    inFlight: boolean;
+    pingFailStreak: number;
+  }>();
 
   const stateFor = (root: string) => {
     const key = root.toLowerCase();
     let state = states.get(key);
     if (!state) {
-      state = { wasConnected: false, inFlight: false };
+      state = { wasConnected: false, inFlight: false, pingFailStreak: 0 };
       states.set(key, state);
     }
     return state;
@@ -52,11 +57,17 @@ export function startBridgeReconnectWatcher(
 
           if (state.wasConnected && bridge.isConnected() && descriptorKey && descriptorKey === state.lastDescriptorKey) {
             const alive = await bridge.ping(5_000);
-            if (alive) continue;
+            if (alive) {
+              state.pingFailStreak = 0;
+              continue;
+            }
+            state.pingFailStreak++;
+            if (state.pingFailStreak < 2) continue;
           }
 
           const info = await bridge.connect(root, 10_000);
           const connected = info.connected;
+          if (connected) state.pingFailStreak = 0;
           const identityChanged =
             connected && !!descriptorKey && !!state.lastDescriptorKey && descriptorKey !== state.lastDescriptorKey;
 

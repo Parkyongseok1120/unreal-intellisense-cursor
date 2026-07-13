@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { StringDecoder } from 'string_decoder';
 import type { CancellationToken } from 'vscode';
 import type { SpawnResult } from '../types';
 
@@ -61,8 +62,10 @@ export function spawnAsync(
 
     let stdout = '';
     let stderr = '';
-    let stdoutRemainder = '';
-    let stderrRemainder = '';
+    let stdoutLineRemainder = '';
+    let stderrLineRemainder = '';
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
     const stdoutRingBytes = { value: 0 };
@@ -80,9 +83,9 @@ export function spawnAsync(
     }
 
     proc.stdout.on('data', (data: Buffer) => {
-      const chunk = data.toString();
-      const lines = (stdoutRemainder + chunk).split('\n');
-      stdoutRemainder = lines.pop() ?? '';
+      const chunk = stdoutDecoder.write(data);
+      const lines = (stdoutLineRemainder + chunk).split('\n');
+      stdoutLineRemainder = lines.pop() ?? '';
       for (const line of lines) {
         const trimmed = line.replace(/\r$/, '');
         stdout = appendRingCapture(trimmed, maxBytes, stdoutRingBytes, stdoutChunks);
@@ -91,9 +94,9 @@ export function spawnAsync(
     });
 
     proc.stderr.on('data', (data: Buffer) => {
-      const chunk = data.toString();
-      const lines = (stderrRemainder + chunk).split('\n');
-      stderrRemainder = lines.pop() ?? '';
+      const chunk = stderrDecoder.write(data);
+      const lines = (stderrLineRemainder + chunk).split('\n');
+      stderrLineRemainder = lines.pop() ?? '';
       for (const line of lines) {
         const trimmed = line.replace(/\r$/, '');
         stderr = appendRingCapture(trimmed, maxBytes, stderrRingBytes, stderrChunks);
@@ -107,13 +110,17 @@ export function spawnAsync(
     });
     proc.on('close', (code) => {
       cancelDisposable?.dispose();
-      if (stdoutRemainder) {
-        stdout = appendRingCapture(stdoutRemainder, maxBytes, stdoutRingBytes, stdoutChunks);
-        options?.onStdout?.(stdoutRemainder);
+      const stdoutTail = stdoutDecoder.end();
+      const stderrTail = stderrDecoder.end();
+      if (stdoutTail) stdoutLineRemainder += stdoutTail;
+      if (stderrTail) stderrLineRemainder += stderrTail;
+      if (stdoutLineRemainder) {
+        stdout = appendRingCapture(stdoutLineRemainder, maxBytes, stdoutRingBytes, stdoutChunks);
+        options?.onStdout?.(stdoutLineRemainder);
       }
-      if (stderrRemainder) {
-        stderr = appendRingCapture(stderrRemainder, maxBytes, stderrRingBytes, stderrChunks);
-        options?.onStderr?.(stderrRemainder);
+      if (stderrLineRemainder) {
+        stderr = appendRingCapture(stderrLineRemainder, maxBytes, stderrRingBytes, stderrChunks);
+        options?.onStderr?.(stderrLineRemainder);
       }
       resolve({
         exitCode: cancelled ? 130 : (code ?? 1),
