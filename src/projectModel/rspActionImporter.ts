@@ -69,11 +69,12 @@ export function convertMsvcRspLineToClangArgs(line: string, ctx: RspCompileConte
     return ['-include', normalizeSlash(path.isAbsolute(inc) ? inc : path.resolve(ctx.rspDir, inc))];
   }
 
-  const pchUseMatch = trimmed.match(/^\/Yu(.+)$/i);
-  if (pchUseMatch) {
-    const inc = pchUseMatch[1].replace(/^"|"$/g, '');
-    return ['-include-pch', normalizeSlash(path.isAbsolute(inc) ? inc : path.resolve(ctx.rspDir, inc))];
-  }
+  // /Yu selects an MSVC precompiled-header *binary*. It must not become
+  // clang's -include-pch: UBT points /Yu at the textual .h input while the
+  // binary itself is an MSVC-only .pch file. Clangd can parse the same header
+  // via the accompanying /FI entry, whereas -include-pch <header>.h corrupts
+  // Unreal generated-class parsing (for example StaticAllClassCastFlags).
+  if (/^\/Yu(?:.+)?$/i.test(trimmed)) return [];
 
   if (trimmed.match(/^\/std:c\+\+(\d+)$/i)) {
     const m = trimmed.match(/^\/std:c\+\+(\d+)$/i);
@@ -130,7 +131,7 @@ export function parseSharedRspToClangFlags(rspPath: string, engineRoot: string, 
 
   for (const line of content.split(/\r?\n/)) {
     const args = convertMsvcRspLineToClangArgs(line, ctx);
-    if (args[0] === '-I' || args[0] === '-include' || args[0] === '-include-pch') continue;
+    if (args[0] === '-I' || args[0] === '-include') continue;
     for (const flag of args) {
       if (seen.has(flag)) continue;
       seen.add(flag);
@@ -142,7 +143,7 @@ export function parseSharedRspToClangFlags(rspPath: string, engineRoot: string, 
     const paired = convertMsvcRspLineToClangArgs(line, ctx);
     if (
       paired.length === 2 &&
-      (paired[0] === '-I' || paired[0] === '-include' || paired[0] === '-include-pch')
+      (paired[0] === '-I' || paired[0] === '-include')
     ) {
       const key = `${paired[0]}:${paired[1]}`;
       if (seen.has(key)) continue;
@@ -162,7 +163,7 @@ export function parseObjRspForceIncludes(objRspPath: string, ctx: RspCompileCont
       const paired = convertMsvcRspLineToClangArgs(line.trim(), ctx);
       if (
         paired.length === 2 &&
-        (paired[0] === '-include' || paired[0] === '-include-pch' || paired[0] === '-I')
+        (paired[0] === '-include' || paired[0] === '-I')
       ) {
         flags.push(paired[0], paired[1]);
       }
@@ -246,30 +247,34 @@ function extractSourceFromObjRsp(objRspPath: string, rawLines: string[], project
     }
   }
 
-  const base = path.basename(objRspPath);
-  const moduleMatch = base.match(/^Module\.(.+)\.cpp\.obj\.rsp$/i);
-  if (moduleMatch) {
-    const moduleName = moduleMatch[1];
-    const candidates = [
-      path.join(projectRoot, 'Source', moduleName, 'Private'),
-      path.join(projectRoot, 'Source', moduleName),
-      path.join(projectRoot, 'Plugins'),
-    ];
-    for (const dir of candidates) {
-      try {
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (!entry.isFile() || !/\.(cpp|cc|cxx)$/i.test(entry.name)) continue;
-          if (entry.name.toLowerCase().includes(moduleName.toLowerCase())) {
-            return canonicalTuPath(path.join(dir, entry.name), projectRoot);
-          }
-        }
-      } catch {
-        // optional
-      }
-    }
-  }
+  // A Module.<Name>.cpp response file commonly represents a unity TU. It is
+  // not safe to attach it to an arbitrary similarly named project source.
+  // Unity expansion is handled only when the generated source explicitly
+  // lists its included translation units.
   return undefined;
+}
+
+function isProjectTu(filePath: string, projectRoot: string): boolean {
+  const relative = normalizeSlash(path.relative(projectRoot, filePath));
+  return /^(?:Source|Plugins\/[^/]+\/Source)\//i.test(relative) && /\.(?:cpp|cc|cxx|c)$/i.test(filePath);
+}
+
+/** Expand a generated unity TU only from its explicit #include list. */
+function expandUnitySources(sourceFile: string, projectRoot: string): string[] {
+  if (!/\bModule\..+\.cpp$/i.test(sourceFile)) {
+    return isProjectTu(sourceFile, projectRoot) ? [sourceFile] : [];
+  }
+  try {
+    const content = fs.readFileSync(sourceFile, 'utf-8');
+    const sources: string[] = [];
+    for (const match of content.matchAll(/^\s*#\s*include\s+"([^"\r\n]+\.(?:cpp|cc|cxx|c))"/gim)) {
+      const candidate = path.resolve(path.dirname(sourceFile), match[1]);
+      if (isProjectTu(candidate, projectRoot)) sources.push(canonicalTuPath(candidate, projectRoot));
+    }
+    return [...new Set(sources)];
+  } catch {
+    return [];
+  }
 }
 
 export async function collectRspPaths(projectRoot: string, key?: SnapshotKeyParts): Promise<string[]> {
@@ -323,6 +328,8 @@ export async function importAuthoritativeActionsFromRsp(
       const rawLines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
       const sourceFile = extractSourceFromObjRsp(objRspPath, rawLines, projectRoot);
       if (!sourceFile) continue;
+      const sourceFiles = expandUnitySources(sourceFile, projectRoot);
+      if (sourceFiles.length === 0) continue;
 
       const rspDir = path.dirname(objRspPath);
       const ctx: RspCompileContext = {
@@ -368,27 +375,28 @@ export async function importAuthoritativeActionsFromRsp(
         else if (paired.length === 1) clangArgs.push(paired[0]);
       }
 
-      const keyPath = canonicalTuPath(sourceFile, projectRoot);
-      if (seen.has(keyPath)) continue;
-      seen.add(keyPath);
-
       const normalized = normalizeParityArgs(clangArgs);
-      actions.push({
-        file: keyPath,
-        arguments: clangArgs,
-        hash: hashString(normalized),
-        directory: projectRoot,
-        targetKey: key?.snapshotKey,
-        synthetic: false,
-      });
+      for (const source of sourceFiles) {
+        const keyPath = canonicalTuPath(source, projectRoot);
+        if (seen.has(keyPath)) continue;
+        seen.add(keyPath);
+        actions.push({
+          file: keyPath,
+          arguments: clangArgs,
+          hash: hashString(normalized),
+          directory: projectRoot,
+          targetKey: key?.snapshotKey,
+          synthetic: false,
+        });
+      }
     } catch {
       // skip broken obj rsp
     }
   }
 
-  if (actions.length > 0) return actions;
-
-  return importActionsFromLegacySharedRsp(projectRoot, engineRoot, key);
+  // Shared RSPs contain module flags but no source-to-action linkage.  Do not
+  // let that incomplete information masquerade as an authoritative action.
+  return actions;
 }
 
 async function importActionsFromLegacySharedRsp(

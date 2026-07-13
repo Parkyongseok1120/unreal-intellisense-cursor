@@ -4,12 +4,14 @@ import { fileExists } from '../platform/paths';
 import { generateCompileDatabaseFromBuildCs } from './compileDatabaseFromBuildCs';
 import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 import {
+  findObjRspFiles,
   findSharedRspFiles,
   normalizeSlash,
   parseObjRspForceIncludes,
   parseSharedRspToClangFlags,
   type RspCompileContext,
 } from '../projectModel/rspActionImporter';
+import type { SnapshotKeyParts } from '../projectModel/snapshotKey';
 
 export {
   convertMsvcRspLineToClangArgs,
@@ -21,15 +23,19 @@ export {
 
 export { findSharedRspFiles };
 
-async function findObjRspNear(sharedRsp: string): Promise<string | undefined> {
-  const dir = path.dirname(sharedRsp);
-  try {
-    const entries = await fs.promises.readdir(dir);
-    const hit = entries.find((e) => e.startsWith('Module.') && e.endsWith('.cpp.obj.rsp'));
-    return hit ? path.join(dir, hit) : undefined;
-  } catch {
-    return undefined;
-  }
+async function findObjRspForModule(
+  projectRoot: string,
+  sharedRsp: string,
+  moduleName: string,
+  key?: SnapshotKeyParts,
+): Promise<string | undefined> {
+  const expected = `module.${moduleName}.cpp.obj.rsp`.toLowerCase();
+  const sharedDir = path.normalize(path.dirname(sharedRsp)).toLowerCase();
+  const candidates = await findObjRspFiles(projectRoot, key);
+  return candidates.find((candidate) =>
+    path.normalize(path.dirname(candidate)).toLowerCase() === sharedDir &&
+    path.basename(candidate).toLowerCase() === expected,
+  );
 }
 
 async function collectCppFiles(projectRoot: string): Promise<string[]> {
@@ -64,12 +70,26 @@ function moduleNameFromRsp(rspPath: string): string {
   return path.basename(rspPath, '.Shared.rsp');
 }
 
+/** Resolve the owning UE module from its relative project path, never by substring. */
+export function moduleNameFromProjectSource(filePath: string, projectRoot: string): string | undefined {
+  const parts = normalizeSlash(path.relative(projectRoot, filePath)).split('/').filter(Boolean);
+  if (parts.length >= 3 && parts[0].toLowerCase() === 'source') return parts[1];
+  const pluginIndex = parts.findIndex((part) => part.toLowerCase() === 'plugins');
+  const sourceIndex = parts.findIndex((part, index) => index > pluginIndex && part.toLowerCase() === 'source');
+  return sourceIndex >= 0 && parts.length > sourceIndex + 1 ? parts[sourceIndex + 1] : undefined;
+}
+
+function quoteCommandArg(value: string): string {
+  return /\s/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+}
+
 export async function generateCompileDatabaseFromRsp(
   projectRoot: string,
   engineRoot: string,
   tx?: WorkspaceMutationTransaction,
-): Promise<{ ok: boolean; entryCount: number; rspPath?: string; error?: string }> {
-  const rspFiles = await findSharedRspFiles(projectRoot);
+  key?: SnapshotKeyParts,
+): Promise<{ ok: boolean; entryCount: number; rspPath?: string; error?: string; quality?: 'partial' }> {
+  const rspFiles = await findSharedRspFiles(projectRoot, key);
   if (rspFiles.length === 0) {
     return {
       ok: false,
@@ -95,7 +115,7 @@ export async function generateCompileDatabaseFromRsp(
       rspDir: path.dirname(rspPath),
     };
     let flags = parseSharedRspToClangFlags(rspPath, engineRoot, projectRoot);
-    const objRsp = await findObjRspNear(rspPath);
+    const objRsp = await findObjRspForModule(projectRoot, rspPath, moduleName, key);
     if (objRsp) {
       const seen = new Set<string>();
       for (let i = 0; i < flags.length; i++) {
@@ -120,15 +140,15 @@ export async function generateCompileDatabaseFromRsp(
       }
     }
     const flagStr = flagParts.join(' ');
-    const moduleCpp = cppFiles.filter((f) => {
-      const norm = normalizeSlash(f);
-      return norm.includes(`/Source/${moduleName}/`) || (norm.includes(`/Plugins/`) && norm.includes(`/${moduleName}/`));
-    });
+    const moduleCpp = cppFiles.filter((file) =>
+      moduleNameFromProjectSource(file, projectRoot)?.toLowerCase() === moduleName.toLowerCase(),
+    );
 
-    const targets = moduleCpp.length > 0 ? moduleCpp : cppFiles;
-    for (const file of targets) {
+    // A shared RSP only describes its own module. An unmatched RSP must never
+    // be applied to all project files: that produces false diagnostics.
+    for (const file of moduleCpp) {
       const directory = projectRoot;
-      const command = `${compiler} ${flagStr} -c ${normalizeSlash(file)}`;
+      const command = `${compiler} ${flagStr} -c ${quoteCommandArg(normalizeSlash(file))}`;
       entries.push({
         directory: normalizeSlash(directory),
         file: normalizeSlash(file),
@@ -143,7 +163,7 @@ export async function generateCompileDatabaseFromRsp(
 
   const outPath = path.join(projectRoot, 'compile_commands.json');
   await mutateJson(tx, projectRoot, outPath, entries);
-  return { ok: true, entryCount: entries.length, rspPath: rspFiles[0] };
+  return { ok: true, entryCount: entries.length, rspPath: rspFiles[0], quality: 'partial' };
 }
 
 export async function tryGenerateCompileDatabase(

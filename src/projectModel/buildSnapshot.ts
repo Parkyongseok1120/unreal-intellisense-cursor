@@ -8,6 +8,7 @@ import { fileExists } from '../platform/paths';
 import { collectInputFingerprints, inputsStillValid as validateInputs } from './snapshotInputs';
 import { importAuthoritativeActionsFromRsp, collectRspPaths } from './rspActionImporter';
 import { inferSnapshotKeyFromRsp, resolveSnapshotKey } from './snapshotKey';
+import { readCompileDatabaseMetadata } from './compileDatabaseMetadata';
 
 export const BUILD_SNAPSHOT_VERSION = 3;
 const SNAPSHOT_FILE = 'build-snapshot.json';
@@ -101,14 +102,15 @@ export async function buildCompileSnapshot(options: BuildSnapshotOptions): Promi
   let synthetic = false;
   let syntheticReason: string | undefined;
   let provenance: CompileDbProvenance = 'unknown';
+  const metadata = await readCompileDatabaseMetadata(projectRoot);
 
   try {
     const raw = await fs.promises.readFile(compileDbPath, 'utf-8');
-    if (raw.includes('UE5_8_CURSOR_SYNTHETIC_COMPILE_DB=1')) {
+    if (metadata?.source === 'buildcs' || raw.includes('UE5_8_CURSOR_SYNTHETIC_COMPILE_DB=1')) {
       synthetic = true;
       syntheticReason = 'synthetic compile_commands marker';
       provenance = 'synthetic-buildcs';
-    } else if (raw.includes('UE5_8_CURSOR_RSP_DB=1')) {
+    } else if (metadata?.source === 'rsp' || raw.includes('UE5_8_CURSOR_RSP_DB=1')) {
       provenance = 'ubt-rsp';
     } else {
       provenance = 'ubt-clang-db';
@@ -168,7 +170,7 @@ export async function buildCompileSnapshot(options: BuildSnapshotOptions): Promi
     platform: key.platform,
     configuration: key.configuration,
     architecture: key.architecture,
-    synthetic,
+    synthetic: synthetic || metadata?.authoritative === false,
     syntheticReason,
     provenance,
     fingerprint,
@@ -255,7 +257,13 @@ export async function snapshotFreshness(
   const snap = await loadBuildSnapshot(projectRoot);
   if (!snap) return 'missing';
   if (snap.synthetic) return 'partial';
+  const metadata = await readCompileDatabaseMetadata(projectRoot);
+  // Pre-metadata snapshots remain readable for backward compatibility. New
+  // extension-generated RSP/Build.cs databases always carry metadata and are
+  // therefore prevented from claiming Ready.
+  if (metadata && !metadata.authoritative) return 'partial';
   if (expected && snap.snapshotKey !== resolveSnapshotKey(expected).snapshotKey) return 'stale';
+  if (expected && metadata && metadata.snapshotKey !== resolveSnapshotKey(expected).snapshotKey) return 'stale';
   if (!(await inputsStillValid(snap, engine))) return 'stale';
   if (graphFingerprint && graphFingerprint !== snap.fingerprint) return 'stale';
   const dbExists = await fileExists(path.join(projectRoot, 'compile_commands.json'));

@@ -20,13 +20,10 @@ export function buildManagedClangdBlock(options: {
     addFlags.push('-include', options.stubsPath);
   }
 
-  const seenIncludes = new Set<string>();
-  for (const inc of options.intermediateIncludes ?? []) {
-    const normalized = path.normalize(inc).replace(/\\/g, '/').toLowerCase();
-    if (seenIncludes.has(normalized)) continue;
-    seenIncludes.add(normalized);
-    addFlags.push('-I', inc.replace(/\\/g, '/'));
-  }
+  // Module/UHT include paths belong to their owning compile_commands entry.
+  // Adding every discovered path globally creates 30k+ character commands on
+  // large UE projects and makes unrelated headers parse with the wrong module.
+  void options.intermediateIncludes;
 
   const addLines = addFlags.map((f) => `    - ${f}`).join('\n');
 
@@ -39,8 +36,18 @@ export function buildManagedClangdBlock(options: {
     addLines,
     '  Remove:',
     '    - -W*',
+    // Migration guard: older generated databases translated MSVC /Yu to this
+    // clang-only flag with a textual .h path. Never feed an MSVC PCH model to
+    // clangd; /FI already supplies the PCH header as a normal forced include.
+    '    - -include-pch',
+    '    - /Yu*',
     'Index:',
     '  Background: Build',
+    'Diagnostics:',
+    // Include Cleaner cannot model Unreal's PCH, generated headers, or UHT
+    // reflection macros. UBT/IWYU remains the authoritative include checker.
+    '  UnusedIncludes: None',
+    '  MissingIncludes: None',
     'Completion:',
     '  AllScopes: true',
     CLANGD_MANAGED_END,

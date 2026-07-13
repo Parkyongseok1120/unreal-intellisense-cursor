@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Fetch LLVM clangd for bundling into VSIX (win32-x64).
- * Usage: node scripts/fetch-llvm.mjs [--version=19.1.0]
+ * Fetch the minimal LLVM toolchain needed by clangd and UBT's
+ * GenerateClangDatabase mode for bundling into VSIX (win32-x64).
+ * Usage: node scripts/fetch-llvm.mjs [--version=20.1.8]
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -12,7 +13,7 @@ import { execSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
-const VERSION = (process.argv.find((a) => a.startsWith('--version='))?.split('=')[1]) ?? '19.1.0';
+const VERSION = (process.argv.find((a) => a.startsWith('--version='))?.split('=')[1]) ?? '20.1.8';
 const OUT_DIR = path.join(ROOT, 'bin', 'win32-x64');
 
 const LLVM_TAG = `llvmorg-${VERSION}`;
@@ -76,8 +77,11 @@ async function ensureResourceDir(llvmBinDir) {
     log(`WARNING: resource dir not found at ${resourceSrcParent}; clangd builtins may be missing`);
     return;
   }
-  const resourceDestParent = path.join(ROOT, 'bin', 'lib', 'clang');
-  await fs.promises.mkdir(resourceDestParent, { recursive: true });
+  const resourceDestParents = [
+    path.join(ROOT, 'bin', 'lib', 'clang'),
+    path.join(OUT_DIR, 'lib', 'clang'),
+  ];
+  await Promise.all(resourceDestParents.map((dest) => fs.promises.mkdir(dest, { recursive: true })));
   const majors = (await fs.promises.readdir(resourceSrcParent, { withFileTypes: true })).filter((e) =>
     e.isDirectory(),
   );
@@ -85,23 +89,32 @@ async function ensureResourceDir(llvmBinDir) {
     // Only the builtin headers (lib/clang/<major>/include) are needed for clangd
     // IntelliSense. The compiler-rt libs and share/ would add ~33 MB for nothing.
     const src = path.join(resourceSrcParent, major.name, 'include');
-    const dst = path.join(resourceDestParent, major.name, 'include');
     if (!fs.existsSync(src)) continue;
-    if (fs.existsSync(path.join(dst, 'stddef.h'))) {
-      log(`resource dir already bundled: ${dst}`);
-      continue;
+    for (const resourceDestParent of resourceDestParents) {
+      const dst = path.join(resourceDestParent, major.name, 'include');
+      if (fs.existsSync(path.join(dst, 'stddef.h'))) {
+        log(`resource dir already bundled: ${dst}`);
+        continue;
+      }
+      log(`Copying clang resource headers ${major.name}...`);
+      await fs.promises.cp(src, dst, { recursive: true });
     }
-    log(`Copying clang resource headers ${major.name}...`);
-    await fs.promises.cp(src, dst, { recursive: true });
   }
 }
 
 async function main() {
   await fs.promises.mkdir(OUT_DIR, { recursive: true });
   const clangdDest = path.join(OUT_DIR, 'clangd.exe');
+  const compilerBinDir = path.join(OUT_DIR, 'bin');
+  const clangCompilerDest = path.join(compilerBinDir, 'clang++.exe');
+  const versionMarker = path.join(OUT_DIR, '.llvm-version');
+  for (const tool of ['clang++.exe', 'clang.exe', 'clang-cl.exe']) {
+    await fs.promises.rm(path.join(OUT_DIR, tool), { force: true });
+  }
   const resourceBundled = fs.existsSync(path.join(ROOT, 'bin', 'lib', 'clang'));
-  if (fs.existsSync(clangdDest) && resourceBundled) {
-    log(`clangd already exists: ${clangdDest}`);
+  const bundledVersion = fs.existsSync(versionMarker) ? fs.readFileSync(versionMarker, 'utf8').trim() : '';
+  if (fs.existsSync(clangdDest) && fs.existsSync(clangCompilerDest) && resourceBundled && bundledVersion === VERSION) {
+    log(`LLVM tools already exist: ${clangdDest}`);
     log('resource dir already bundled.');
     return;
   }
@@ -146,7 +159,23 @@ async function main() {
 
   const binDir = path.dirname(clangdSrc);
   await fs.promises.copyFile(clangdSrc, clangdDest);
-  for (const dll of ['libclang.dll', 'libomp.dll']) {
+  await fs.promises.mkdir(compilerBinDir, { recursive: true });
+  // clangd alone is insufficient: UBT's GenerateClangDatabase validates a
+  // real x64 compiler. Keep the companion drivers beside clangd so a fresh
+  // computer can produce an authoritative database without a global LLVM.
+  for (const tool of ['clang++.exe', 'clang.exe', 'clang-cl.exe']) {
+    const src = path.join(binDir, tool);
+    if (fs.existsSync(src)) {
+      await fs.promises.copyFile(src, path.join(compilerBinDir, tool));
+      log(`Copied ${tool}`);
+    }
+  }
+
+  if (bundledVersion !== VERSION) {
+    await fs.promises.rm(path.join(ROOT, 'bin', 'lib', 'clang'), { recursive: true, force: true });
+    await fs.promises.rm(path.join(OUT_DIR, 'lib', 'clang'), { recursive: true, force: true });
+  }
+  for (const dll of ['libclang.dll', 'libclang-cpp.dll', 'libomp.dll']) {
     const src = path.join(binDir, dll);
     if (fs.existsSync(src)) {
       await fs.promises.copyFile(src, path.join(OUT_DIR, dll));
@@ -155,6 +184,7 @@ async function main() {
   }
 
   await ensureResourceDir(binDir);
+  await fs.promises.writeFile(versionMarker, `${VERSION}\n`, 'utf8');
 
   log(`Bundled clangd: ${clangdDest}`);
 }

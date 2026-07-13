@@ -37,6 +37,7 @@ import { registerUhtSaveValidation } from './uht/uhtValidation';
 import { registerHLSLProviders } from './hlsl/hlslProviders';
 import { UnrealTestExplorer } from './testing/unrealTestExplorer';
 import type { UE5_8CursorContext } from './types';
+import { requestClangdRestart } from './cursor/clangdLifecycle';
 
 let ctx: UE5_8CursorContext;
 let settings: UE5_8CursorSettings;
@@ -315,11 +316,7 @@ async function runSilentCompileRefresh(commandCtx: UE5_8CursorContext, session: 
   if (session.isStale(pipelineGeneration)) return;
   statusBar.setIntelliSense(result.mode);
   void statusBar.update(commandCtx, settings);
-  try {
-    await vscode.commands.executeCommand('clangd.restart');
-  } catch {
-    // clangd may not be active
-  }
+  await requestClangdRestart(commandCtx.project.projectRoot, 'compile database refresh', (msg) => commandCtx.outputChannel.appendLine(msg));
 }
 
 /**
@@ -370,11 +367,7 @@ async function runBackgroundCacheWarmup(
         await ensureUhtIntellisense(ctx.project!, extensionPath);
         statusBar.setIntelliSense(result.mode);
         void statusBar.update(ctx, settings);
-        try {
-          await vscode.commands.executeCommand('clangd.restart');
-        } catch {
-          // clangd may not be active
-        }
+        await requestClangdRestart(ctx.project!.projectRoot, 'UHT cache warm-up', log);
       },
     );
   } catch (err) {
@@ -822,7 +815,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     const { refreshAllIndexes } = await import('./assets/indexCoordinator');
     await refreshAllIndexes(commandCtx.project.projectRoot);
     void statusBar.update(ctx, settings);
-    vscode.commands.executeCommand('clangd.restart');
+    await requestClangdRestart(commandCtx.project.projectRoot, 'UHT IntelliSense refresh', (msg) => commandCtx.outputChannel.appendLine(msg));
     vscode.window.showInformationMessage('UE5_8 Cursor: UHT IntelliSense + 인덱스 갱신 완료');
   });
 

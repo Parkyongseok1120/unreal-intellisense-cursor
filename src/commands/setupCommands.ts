@@ -6,6 +6,7 @@ import { ensureUhtIntellisense } from '../cursor/projectSetup';
 import type { BootstrapResult, IntelliSenseMode } from '../cursor/bootstrapProject';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
+import { requestClangdRestart } from '../cursor/clangdLifecycle';
 
 export async function setupProject(
   ctx: UE5_8CursorContext,
@@ -73,7 +74,7 @@ export async function generateCompileCommands(
       if (extensionPath && settings.upsertClangdConfig && ctx.project) {
         await ensureUhtIntellisense(ctx.project, extensionPath);
       }
-      await vscode.commands.executeCommand('clangd.restart');
+      await requestClangdRestart(ctx.project!.projectRoot, 'manual compile database refresh', (msg) => ctx.outputChannel.appendLine(msg));
       if (result.mode === 'ready') {
         vscode.window.showInformationMessage('UE5_8 Cursor: IntelliSense 데이터 갱신 완료.');
       } else if (result.mode === 'partial') {

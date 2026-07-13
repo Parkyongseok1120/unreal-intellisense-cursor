@@ -6,7 +6,7 @@ export const EXTENSION_DISPLAY_NAME = 'UE5_8 Cursor';
 export const SUPPORTED_ENGINE_VERSION = '5.8';
 
 /** UE 5.8 권장 LLVM 버전 (Epic Platform SDK Upgrades 기준, 5.7과 동일 계열) */
-export const RECOMMENDED_LLVM_VERSION = '19.1.0';
+export const RECOMMENDED_LLVM_VERSION = '20.1.8';
 
 export const Commands = {
   OpenUproject: `${EXTENSION_ID}.openUproject`,

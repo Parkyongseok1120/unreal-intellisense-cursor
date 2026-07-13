@@ -48,12 +48,12 @@ export function cleanCommandLine(
 export function generateClangDatabaseCommandLine(
   engine: UEInstallation,
   project: UEProject,
-  options: { configuration?: BuildConfiguration; platform?: BuildPlatform } = {},
+  options: { configuration?: BuildConfiguration; platform?: BuildPlatform; targetType?: BuildTargetType } = {},
 ): UBTCommandLine {
   return {
     executable: engine.ubtPath,
     args: [
-      resolveTargetName(project, 'Editor'),
+      resolveTargetName(project, options.targetType ?? 'Editor'),
       options.platform ?? 'Win64',
       options.configuration ?? 'Development',
       `-project=${project.uprojectPath}`,

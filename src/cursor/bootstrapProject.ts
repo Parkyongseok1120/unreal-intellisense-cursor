@@ -15,8 +15,11 @@ import { spawnAsync } from '../platform/process';
 import { findAndPlaceCompileCommands } from '../commands/setupCommands';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
-import { runWithTransaction, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
+import { mutateJson, runWithTransaction, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 import type { CancellationToken } from 'vscode';
+import { resolveSnapshotKey } from '../projectModel/snapshotKey';
+import { readCompileDatabaseMetadata, writeCompileDatabaseMetadata } from '../projectModel/compileDatabaseMetadata';
+import { requestClangdRestart } from './clangdLifecycle';
 
 export type IntelliSenseMode = 'ready' | 'partial' | 'missing';
 
@@ -179,36 +182,49 @@ export async function ensureCompileDatabase(
 
   const projectRoot = ctx.project.projectRoot;
   const compileDb = path.join(projectRoot, 'compile_commands.json');
+  const snapshotKey = resolveSnapshotKey({
+    project: ctx.project,
+    targetType: settings.buildTarget,
+    platform: settings.platform,
+    configuration: settings.buildConfiguration,
+  });
   const hasCompileDb = await fileExists(compileDb);
   const existingSynthetic = hasCompileDb ? await isSyntheticCompileDatabase(compileDb) : false;
-  if (hasCompileDb && !options?.force) {
-    return { mode: existingSynthetic ? 'partial' : 'ready', source: existingSynthetic ? 'buildcs' : 'rsp' };
+  const existingMetadata = hasCompileDb ? await readCompileDatabaseMetadata(projectRoot) : undefined;
+  if (
+    hasCompileDb && !options?.force && existingMetadata?.authoritative &&
+    existingMetadata.snapshotKey === snapshotKey.snapshotKey
+  ) {
+    return { mode: 'ready', source: 'ubt', entries: existingMetadata.uniqueTuCount };
   }
 
   if (!ctx.engine) {
     if (!hasCompileDb) return { mode: 'missing' };
-    return { mode: existingSynthetic ? 'partial' : 'ready', source: existingSynthetic ? 'buildcs' : 'rsp' };
-  }
-
-  const rsp = await generateCompileDatabaseFromRsp(projectRoot, ctx.engine.root, options?.tx);
-  if (rsp.ok) {
-    log(`[UE5_8 Cursor] compile_commands from .rsp (${rsp.entryCount} entries)`);
-    return { mode: 'ready', source: 'rsp', entries: rsp.entryCount };
+    return { mode: 'partial', source: existingSynthetic ? 'buildcs' : 'rsp' };
   }
 
   if (settings.autoGenerateCompileCommands && !options?.fast) {
     const cmd = generateClangDatabaseCommandLine(ctx.engine, ctx.project, {
       configuration: settings.buildConfiguration,
       platform: settings.platform,
+      targetType: settings.buildTarget,
     });
     log(`[UE5_8 Cursor] UBT GenerateClangDatabase: ${formatCommandLine(cmd)}`);
     const clangdPath = await findClangdPath(settings.llvmPath, extensionPath);
     const env = { ...process.env };
     if (clangdPath) {
       const binDir = path.dirname(clangdPath);
-      const llvmRoot = path.basename(binDir) === 'bin' ? path.dirname(binDir) : binDir;
-      env.LLVM_ROOT = llvmRoot;
+      // The VSIX bundles clangd next to its compiler drivers. Do not set
+      // LLVM_ROOT from a clangd-only layout: UBT interprets it as a complete
+      // LLVM installation and then fails looking for <LLVM_ROOT>/bin/clang++.
+      // PATH lets UBT find a bundled clang++ when present while preserving a
+      // user's explicitly configured native toolchain.
       env.PATH = `${binDir};${env.PATH ?? ''}`;
+      // UBT's Windows platform scanner accepts LLVM_PATH only as an LLVM root
+      // containing bin/clang++.exe. The VSIX uses exactly that layout.
+      if (await fileExists(path.join(binDir, 'bin', 'clang++.exe'))) {
+        env.LLVM_PATH = binDir;
+      }
     }
     const ubtOutput: string[] = [];
     const capture = (line: string) => {
@@ -228,21 +244,36 @@ export async function ensureCompileDatabase(
         { overwrite: options?.force },
       );
       if (placed) {
-        log('[UE5_8 Cursor] compile_commands from UBT');
-        return { mode: 'ready', source: 'ubt' };
+        const entries = await normalizeUbtCompileDatabase(projectRoot, options?.tx);
+        if (entries.length > 0) {
+          await writeCompileDatabaseMetadata(projectRoot, 'ubt', entries, snapshotKey, options?.tx);
+          log(`[UE5_8 Cursor] compile_commands from UBT (${entries.length} unique project TU actions)`);
+          return { mode: 'ready', source: 'ubt', entries: entries.length };
+        }
+        log('[UE5_8 Cursor] UBT database contained no project translation-unit actions');
       }
       log('[UE5_8 Cursor] UBT completed but compile_commands.json was not found');
     }
     log('[UE5_8 Cursor] UBT GenerateClangDatabase failed — Build.cs fallback');
   }
 
-  if (hasCompileDb && !existingSynthetic) {
-    log('[UE5_8 Cursor] Keeping existing compile_commands.json after refresh fallback failed.');
-    return { mode: 'ready', source: 'ubt' };
+  const rsp = await generateCompileDatabaseFromRsp(projectRoot, ctx.engine.root, options?.tx, snapshotKey);
+  if (rsp.ok) {
+    const entries = JSON.parse(await fs.promises.readFile(compileDb, 'utf-8')) as CompileDbEntry[];
+    await writeCompileDatabaseMetadata(projectRoot, 'rsp', entries, snapshotKey, options?.tx);
+    log(`[UE5_8 Cursor] compile_commands from module RSP fallback (${rsp.entryCount} entries; partial until UBT actions are available)`);
+    return { mode: 'partial', source: 'rsp', entries: rsp.entryCount };
+  }
+
+  if (hasCompileDb && !existingSynthetic && existingMetadata?.authoritative) {
+    log('[UE5_8 Cursor] Keeping the last verified UBT compile_commands.json after refresh failed.');
+    return { mode: 'partial', source: 'ubt', entries: existingMetadata.uniqueTuCount };
   }
 
   const synthetic = await generateCompileDatabaseFromBuildCs(projectRoot, ctx.engine.root, options?.tx);
   if (synthetic.ok) {
+    const entries = JSON.parse(await fs.promises.readFile(compileDb, 'utf-8')) as CompileDbEntry[];
+    await writeCompileDatabaseMetadata(projectRoot, 'buildcs', entries, snapshotKey, options?.tx);
     log(`[UE5_8 Cursor] compile_commands from Build.cs synthetic (${synthetic.entryCount} entries)`);
     return { mode: 'partial', source: 'buildcs', entries: synthetic.entryCount };
   }
@@ -272,7 +303,7 @@ export async function bootstrapProject(
     log('[UE5_8 Cursor] WARNING: clangd not found');
   }
 
-  return await runWithTransaction(ctx.project.projectRoot, async (tx) => {
+  const result = await runWithTransaction(ctx.project.projectRoot, async (tx) => {
     if (settings.upsertClangdConfig && extensionPath) {
       await ensureUhtIntellisense(ctx.project!, extensionPath, tx);
       const layouts = await discoverModuleLayouts(ctx.project!.projectRoot);
@@ -299,7 +330,11 @@ export async function bootstrapProject(
     }
 
     await ensureShaderIntellisense(ctx.project!, ctx.engine?.root, tx);
-    await ensureMultiRootWorkspace(ctx.project!, tx);
+    await ensureMultiRootWorkspace(ctx.project!, {
+      clangdPath,
+      applyExplorerFilter: settings.hideExplorerNoise,
+      contentBrowserMode: settings.contentBrowserMode,
+    }, tx);
     await ensureCursorRules(ctx.project!, tx);
 
     const warmupPending = await needsCacheWarmup(ctx, settings);
@@ -319,11 +354,6 @@ export async function bootstrapProject(
       if (settings.upsertClangdConfig && extensionPath) {
         await ensureUhtIntellisense(ctx.project!, extensionPath, tx);
       }
-      try {
-        await vscode.commands.executeCommand('clangd.restart');
-      } catch {
-        // clangd extension may not be active yet
-      }
     }
 
     if (warmupPending) {
@@ -341,4 +371,66 @@ export async function bootstrapProject(
       errors,
     };
   });
+
+  // Settings are written atomically while bootstrapping. Restart only after
+  // the transaction has committed and Cursor has observed the new workspace
+  // settings, otherwise clangd may be launched with its default PATH value.
+  await restartClangdAfterSettings(ctx, clangdPath, log);
+  return result;
+}
+
+type CompileDbEntry = { directory?: string; file?: string; command?: string; arguments?: string[] };
+
+function isProjectTranslationUnit(projectRoot: string, filePath: string): boolean {
+  const absolute = path.resolve(projectRoot, filePath);
+  const relative = path.relative(projectRoot, absolute).replace(/\\/g, '/');
+  return /^(?:Source|Plugins\/[^/]+\/Source)\//i.test(relative) && /\.(?:cpp|cc|cxx|c)$/i.test(absolute);
+}
+
+/** UBT may emit engine actions too; retain one command per project/plugin TU. */
+async function normalizeUbtCompileDatabase(projectRoot: string, tx?: WorkspaceMutationTransaction): Promise<CompileDbEntry[]> {
+  const filePath = path.join(projectRoot, 'compile_commands.json');
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await fs.promises.readFile(filePath, 'utf-8'));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const entries: CompileDbEntry[] = [];
+  for (const entry of raw as CompileDbEntry[]) {
+    if (!entry?.file || !isProjectTranslationUnit(projectRoot, entry.file)) continue;
+    const canonical = path.resolve(entry.directory ?? projectRoot, entry.file).toLowerCase();
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    entries.push(entry);
+  }
+  if (entries.length > 0) await mutateJson(tx, projectRoot, filePath, entries);
+  return entries;
+}
+
+async function restartClangdAfterSettings(
+  ctx: UE5_8CursorContext,
+  clangdPath: string | undefined,
+  log: (message: string) => void,
+): Promise<void> {
+  if (!clangdPath) return;
+  const uri = vscode.window.activeTextEditor?.document.uri;
+  const expected = path.normalize(clangdPath).toLowerCase();
+  const deadline = Date.now() + 2_000;
+
+  while (Date.now() < deadline) {
+    const configured = vscode.workspace.getConfiguration('clangd', uri).get<string>('path') ?? '';
+    if (path.normalize(configured).toLowerCase() === expected) {
+      if (ctx.project) await requestClangdRestart(ctx.project.projectRoot, 'workspace settings update', log);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  log('[UE5_8 Cursor] ERROR: clangd workspace setting was not applied; reload the window before using navigation.');
+  vscode.window.showWarningMessage(
+    'UE5_8 Cursor: clangd 설정이 현재 workspace에 적용되지 않았습니다. Developer: Reload Window를 실행하세요.',
+  );
 }

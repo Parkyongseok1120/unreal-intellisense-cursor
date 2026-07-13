@@ -31,6 +31,18 @@ export function resolveBundledClangdPath(extensionPath?: string): string | undef
   return undefined;
 }
 
+/** A complete bundled toolchain is required only for UBT database generation. */
+export function resolveClangCompilerPath(clangdPath?: string): string | undefined {
+  if (!clangdPath) return undefined;
+  const dir = path.dirname(clangdPath);
+  for (const name of getHostPlatform() === 'win32' ? ['clang++.exe', 'clang-cl.exe'] : ['clang++', 'clang']) {
+    for (const candidate of [path.join(dir, name), path.join(dir, 'bin', name)]) {
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
 export async function findClangdPath(customPath?: string, extensionPath?: string): Promise<string | undefined> {
   const bundled = resolveBundledClangdPath(extensionPath);
   if (bundled) return bundled;
@@ -77,7 +89,7 @@ export async function checkPrerequisites(llvmCustomPath?: string, extensionPath?
     });
   } else {
     const version = await getClangdVersion(clangdPath);
-    const majorOk = version?.startsWith('19') ?? false;
+    const majorOk = version?.startsWith('20') ?? false;
     const bundled = resolveBundledClangdPath(extensionPath);
     checks.push({
       name: 'LLVM / clangd',
@@ -86,6 +98,13 @@ export async function checkPrerequisites(llvmCustomPath?: string, extensionPath?
       fixHint: majorOk
         ? undefined
         : `UE 5.8 권장 LLVM ${RECOMMENDED_LLVM_VERSION}. 현재: ${version}`,
+    });
+    const compiler = resolveClangCompilerPath(clangdPath);
+    checks.push({
+      name: 'LLVM compiler for UBT database generation',
+      ok: !!compiler,
+      detail: compiler ?? 'clangd only (RSP fallback remains partial)',
+      fixHint: compiler ? undefined : 'Install the full UE5_8 Cursor VSIX toolchain or LLVM Clang x64.',
     });
   }
 

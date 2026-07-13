@@ -10,6 +10,7 @@ import {
   type SourceChangeEvent,
 } from './invalidation';
 import { addTranslationUnitAction } from '../projectModel/projectModelService';
+import { requestClangdRestart } from '../cursor/clangdLifecycle';
 
 const DEBOUNCE_MS = 15_000;
 const REFLECTION_DEBOUNCE_MS = 5_000;
@@ -125,7 +126,7 @@ export function watchSourceChanges(
       }
     }
     if (anyAdded) {
-      try { await vscode.commands.executeCommand('clangd.restart'); } catch { /* clangd may be inactive */ }
+      await requestClangdRestart(runtime.ctx.project.projectRoot, 'incremental translation unit action', (msg) => runtime.ctx.outputChannel.appendLine(msg));
     } else {
       onRefresh(runtime);
     }

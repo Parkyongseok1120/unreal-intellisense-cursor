@@ -11,6 +11,32 @@ import {
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 
+const CPP_DEBUG_EXTENSION_IDS = ['anysphere.cpptools', 'ms-vscode.cpptools'];
+
+/** Ensure the extension contributing cppvsdbg/cppdbg is present before launch. */
+async function ensureCppDebugger(): Promise<boolean> {
+  const extension = CPP_DEBUG_EXTENSION_IDS
+    .map((id) => vscode.extensions.getExtension(id))
+    .find((candidate): candidate is vscode.Extension<unknown> => !!candidate);
+  if (!extension) {
+    const choice = await vscode.window.showErrorMessage(
+      'UE5_8 Cursor: C/C++ debugger extension is required for Unreal debugging.',
+      'Install C/C++ Debugger',
+    );
+    if (choice === 'Install C/C++ Debugger') {
+      await vscode.commands.executeCommand('workbench.extensions.installExtension', 'anysphere.cpptools');
+    }
+    return false;
+  }
+  try {
+    if (!extension.isActive) await extension.activate();
+    return true;
+  } catch {
+    vscode.window.showErrorMessage('UE5_8 Cursor: C/C++ debugger extension could not be activated.');
+    return false;
+  }
+}
+
 function getWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
   return vscode.workspace.workspaceFolders?.[0];
 }
@@ -50,6 +76,7 @@ export async function debugLaunchEditor(
 
   const folder = getWorkspaceFolder();
   if (!folder) return;
+  if (!(await ensureCppDebugger())) return;
 
   if (!(await natvisExists(ctx.engine.root))) {
     vscode.window.showWarningMessage(
@@ -94,6 +121,7 @@ export async function debugAttachEditor(ctx: UE5_8CursorContext): Promise<void> 
 
   const folder = getWorkspaceFolder();
   if (!folder) return;
+  if (!(await ensureCppDebugger())) return;
 
   const processes = await findUnrealEditorProcesses();
   if (processes.length === 0) {
@@ -145,6 +173,7 @@ export async function debugLaunchGame(
 
   const folder = getWorkspaceFolder();
   if (!folder) return;
+  if (!(await ensureCppDebugger())) return;
 
   if (settings.debugAutoBuild) {
     const ok = await vscode.window.withProgress(
@@ -179,6 +208,7 @@ export async function debugPIE(ctx: UE5_8CursorContext, settings: UE5_8CursorSet
 
   const folder = getWorkspaceFolder();
   if (!folder) return;
+  if (!(await ensureCppDebugger())) return;
 
   if (settings.debugAutoBuild) {
     const ok = await vscode.window.withProgress(

@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import type { UEProject, UEInstallation, BuildConfiguration } from '../types';
 import {
   getExplorerFilterSettings,
@@ -39,7 +40,17 @@ async function readSettingsFile(settingsPath: string): Promise<Record<string, un
   }
 }
 
-function buildUeSettings(options: {
+/** UE translation units have large preambles; cap concurrency by memory, not CPU count. */
+export function recommendedClangdJobs(
+  totalMemory = os.totalmem(),
+  cpuCount = os.cpus().length,
+): number {
+  const gib = 1024 ** 3;
+  const memoryBound = totalMemory < 16 * gib ? 2 : totalMemory < 32 * gib ? 3 : totalMemory < 64 * gib ? 4 : 6;
+  return Math.max(2, Math.min(memoryBound, Math.max(2, Math.floor(cpuCount / 2))));
+}
+
+export function buildUeSettings(options: {
   clangdPath?: string;
   existingClangdPath?: unknown;
   applyExplorerFilter?: boolean;
@@ -53,14 +64,15 @@ function buildUeSettings(options: {
     'clangd.path': options.clangdPath ?? options.existingClangdPath ?? '',
     'clangd.arguments': [
       '--background-index',
-      '--clang-tidy',
+      '--background-index-priority=low',
+      '--compile-commands-dir=${workspaceFolder}',
       '--completion-style=detailed',
-      '--header-insertion=iwyu',
-      '--pch-storage=memory',
+      '--header-insertion=never',
+      '--pch-storage=disk',
       '--limit-results=500',
-      '-j=12',
+      `-j=${recommendedClangdJobs()}`,
     ],
-    'clangd.fallbackFlags': ['-std=c++20'],
+    'clangd.fallbackFlags': ['-std=c++20', '-fms-compatibility', '-fms-extensions', '-Wno-unknown-pragmas'],
     'files.associations': {
       '*.h': 'cpp',
       '*.inl': 'cpp',

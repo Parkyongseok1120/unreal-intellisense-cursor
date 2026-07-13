@@ -10,7 +10,7 @@ export async function showWelcomePanel(settings: UE5_8CursorSettings): Promise<v
   const items: vscode.QuickPickItem[] = [
     {
       label: clangd ? '$(check) LLVM / clangd' : '$(x) LLVM / clangd',
-      description: clangd ?? '미설치 — LLVM 19.1.0 필요',
+      description: clangd ?? '미설치 — LLVM 20.1.8 필요',
     },
     {
       label: engines.length > 0 ? '$(check) UE 5.8 Engine' : '$(x) UE 5.8 Engine',
