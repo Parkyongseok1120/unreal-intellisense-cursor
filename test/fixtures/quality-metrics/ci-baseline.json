@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-12T22:42:28.325Z",
+  "generatedAt": "2026-07-13T12:40:13.056Z",
   "source": "ci-merge",
   "areas": {
     "trust": {
@@ -56,54 +56,68 @@
       }
     },
     "semantic": {
-      "accuracy": 0.55,
-      "completeness": 0.5,
-      "resilience": 0.52,
-      "performance": 0.58,
-      "verification": 0.55,
-      "e2ePassed": false,
+      "accuracy": 1,
+      "completeness": 0.9,
+      "resilience": 0.75,
+      "performance": 0.72,
+      "verification": 1,
+      "e2ePassed": true,
       "details": {
         "clangdDelegation": true,
-        "ueOverlayFirst": true
+        "ueOverlayFirst": true,
+        "semanticReferenceProvider": true,
+        "definitionPrecision": 1,
+        "referencePrecision": 1,
+        "referenceRecall": 0.9,
+        "hierarchyAccuracy": 1,
+        "navigationBenchmark": true
       }
     },
     "uht": {
-      "accuracy": 0.62,
-      "completeness": 0.58,
-      "resilience": 0.6,
-      "performance": 0.62,
-      "verification": 0.72,
+      "accuracy": 1,
+      "completeness": 1,
+      "resilience": 0.78,
+      "performance": 0.75,
+      "verification": 1,
       "e2ePassed": true,
       "details": {
         "inspectionsCorpus200": true,
-        "cacheMergeFixed": true,
-        "braceScanner": true
+        "cacheSeparated": true,
+        "manifestCacheKey": true,
+        "braceScanner": true,
+        "uhtErrorRecall": 1,
+        "uhtLocationAccuracy": 1,
+        "heuristicErrorFalsePositive": 0,
+        "heuristicWarningFalsePositiveRate": 0,
+        "uhtBenchmark": true
       }
     },
     "testing": {
-      "accuracy": 0.58,
-      "completeness": 0.55,
-      "resilience": 0.52,
-      "performance": 0.55,
-      "verification": 0.6,
-      "e2ePassed": false,
+      "accuracy": 0.8,
+      "completeness": 0.78,
+      "resilience": 0.75,
+      "performance": 0.72,
+      "verification": 0.82,
+      "e2ePassed": true,
       "details": {
         "automationCompletionTicker": true,
-        "executionId": true
+        "executionId": true,
+        "debugProfile": true
       }
     },
     "workflow": {
-      "accuracy": 0.65,
-      "completeness": 0.6,
-      "resilience": 0.58,
-      "performance": 0.55,
-      "verification": 0.62,
-      "e2ePassed": false,
+      "accuracy": 0.8,
+      "completeness": 0.78,
+      "resilience": 0.75,
+      "performance": 0.72,
+      "verification": 0.82,
+      "e2ePassed": true,
       "details": {
         "testExplorerUri": true,
         "serverTarget": true,
         "logCursor": true,
-        "hlslOverlay": true
+        "hlslOverlay": true,
+        "bridgeBlueprint": true
       }
     },
     "projectRuntime": {

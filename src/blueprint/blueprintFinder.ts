@@ -15,6 +15,7 @@ async function findUassetsInContent(contentDir: string, depth: number): Promise<
 export async function findBlueprintsForClass(
   projectRoot: string,
   className: string,
+  bridge?: { listDerivedBlueprints: (parent: string) => Promise<BlueprintAsset[]> },
 ): Promise<BlueprintAsset[]> {
   const cached = getCachedBlueprints(projectRoot, className);
   if (cached) return cached;
@@ -28,6 +29,21 @@ export async function findBlueprintsForClass(
     seen.add(key);
     matches.push(bp);
   };
+
+  if (bridge) {
+    try {
+      const derived = await bridge.listDerivedBlueprints(className);
+      for (const bp of derived) {
+        add({
+          assetPath: bp.assetPath,
+          assetName: bp.assetName ?? path.basename(bp.assetPath),
+          source: 'bridge',
+        });
+      }
+    } catch {
+      // bridge optional
+    }
+  }
 
   // Tier 3: MCP-first (에디터 실행 시 정확한 매칭)
   const mcpResults = await mcpFindBlueprintsForClass(className);

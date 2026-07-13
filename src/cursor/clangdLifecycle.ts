@@ -43,7 +43,9 @@ export async function requestClangdRestart(
   if (state.fingerprint === fingerprint) return false;
   if (state.pending) {
     await state.pending;
-    return false;
+    const afterPending = await effectiveFingerprint(projectRoot);
+    if (state.fingerprint === afterPending) return false;
+    return requestClangdRestart(projectRoot, reason, log);
   }
 
   state.pending = new Promise<void>((resolve) => setTimeout(resolve, 300)).then(async () => {
@@ -59,7 +61,14 @@ export async function requestClangdRestart(
   }).finally(() => { state.pending = undefined; });
   states.set(root, state);
   await state.pending;
-  return state.fingerprint === fingerprint;
+  const restarted = state.fingerprint === fingerprint;
+  if (!restarted) {
+    const latest = await effectiveFingerprint(projectRoot);
+    if (state.fingerprint !== latest) {
+      return requestClangdRestart(projectRoot, `${reason} (coalesced follow-up)`, log);
+    }
+  }
+  return restarted;
 }
 
 export function resetClangdRestartState(projectRoot?: string): void {

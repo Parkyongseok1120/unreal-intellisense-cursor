@@ -59,6 +59,12 @@ describe('launch config generation', () => {
     assert.equal(editor.preLaunchTask, launchConfig.DEBUG_TASK_BUILD_EDITOR);
   });
 
+  it('omits preLaunchTask when autoBuildBeforeLaunch is false', () => {
+    const launch = launchConfig.buildLaunchJson({ ...input, autoBuildBeforeLaunch: false });
+    const editor = launch.configurations.find((c) => c.name.includes('Project_MJSEditor'));
+    assert.equal(editor.preLaunchTask, undefined);
+  });
+
   it('merges user tasks while preserving generated ue58rider tasks', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ue58-launch-merge-'));
     const project = { ...input.project, projectRoot: root };

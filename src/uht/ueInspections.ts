@@ -89,11 +89,57 @@ function scanClassBody(content: string): string | undefined {
       i++;
       continue;
     }
+    if (ch === '\'' && !inString) {
+      i++;
+      while (i < content.length && content[i] !== '\'') {
+        if (content[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (ch === 'R' && next === '"' && content[i + 2] === '(') {
+      const close = content.indexOf(')"', i + 3);
+      i = close >= 0 ? close + 3 : content.length;
+      continue;
+    }
+    if (ch === '#') {
+      const lineEnd = content.indexOf('\n', i);
+      i = lineEnd >= 0 ? lineEnd + 1 : content.length;
+      continue;
+    }
     if (ch === '{') depth++;
     else if (ch === '}') depth--;
     i++;
   }
   return content.slice(match.index + match[0].length, i - 1);
+}
+
+function collectUclassBlocks(content: string): Array<{ text: string; line: number }> {
+  const lines = content.split(/\r?\n/);
+  const blocks: Array<{ text: string; line: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/UCLASS\s*\(/i.test(lines[i])) continue;
+    let text = lines[i];
+    let j = i;
+    while (!/\bclass\b/.test(text) && j + 1 < lines.length) {
+      j++;
+      text += '\n' + lines[j];
+    }
+    while (j + 1 < lines.length && !text.includes('{')) {
+      j++;
+      text += '\n' + lines[j];
+    }
+    const bodyStart = content.indexOf(text) + text.length;
+    const body = scanClassBody(content.slice(Math.max(0, content.indexOf(text))));
+    if (body !== undefined) {
+      blocks.push({ text: text + '{' + body, line: i });
+    } else {
+      blocks.push({ text, line: i });
+    }
+    i = j;
+  }
+  return blocks;
 }
 
 const RULES: FileRule[] = [
@@ -149,21 +195,20 @@ const RULES: FileRule[] = [
     severity: 'warning',
     enabled: true,
     run: (content) => {
-      if (!/UCLASS\s*\(/i.test(content)) return [];
-      const classBody = scanClassBody(content);
-      if (!classBody) return [];
-      if (/GENERATED_BODY\s*\(\s*\)/.test(classBody)) return [];
-      const line = content.split(/\r?\n/).findIndex((l) => /UCLASS\s*\(/i.test(l));
-      return [
-        {
-          id: 'ue.generated-body-present',
-          message: 'UCLASS body should contain GENERATED_BODY()',
-          severity: 'warning',
-          line: Math.max(0, line),
-          column: 0,
-          length: 6,
-        },
-      ];
+      const hits: UeInspection[] = [];
+      for (const block of collectUclassBlocks(content)) {
+        if (!/GENERATED_BODY\s*\(\s*\)/.test(block.text)) {
+          hits.push({
+            id: 'ue.generated-body-present',
+            message: 'UCLASS body should contain GENERATED_BODY()',
+            severity: 'warning',
+            line: block.line,
+            column: 0,
+            length: 6,
+          });
+        }
+      }
+      return hits;
     },
   },
   {

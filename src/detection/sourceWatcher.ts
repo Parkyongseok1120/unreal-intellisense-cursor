@@ -42,9 +42,7 @@ function createPending(): PendingBatch {
   };
 }
 
-function clearPending(pending: PendingBatch): void {
-  pending.headers.clear();
-  pending.translationUnits.clear();
+function clearCompilePending(pending: PendingBatch): void {
   pending.modules.clear();
   pending.targetModules.clear();
   pending.projectModel = false;
@@ -145,7 +143,7 @@ export function watchSourceChanges(
     if (pending.projectModel) onProjectModelInvalidate?.(runtime);
     if (uhtHeaders.length) onUhtHeaders?.(runtime, uhtHeaders);
     runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] Batch invalidation (${scopes.join(', ')}); refreshing IntelliSense...`);
-    clearPending(pending);
+    clearCompilePending(pending);
     onRefresh(runtime);
   };
 

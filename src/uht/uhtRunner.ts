@@ -16,8 +16,11 @@ export interface UhtDiagnostic {
 export interface UhtRunResult {
   ok: boolean;
   diagnostics: UhtDiagnostic[];
+  allDiagnostics?: UhtDiagnostic[];
   stdout: string;
   stderr: string;
+  cacheKey?: string;
+  manifestPath?: string;
 }
 
 const UHT_DIAG_RE =
@@ -98,6 +101,17 @@ async function findFileBelow(dir: string, fileName: string, depth: number): Prom
   return undefined;
 }
 
+export async function buildUhtCacheKey(project: UEProject, manifestPath?: string): Promise<string> {
+  const manifest = manifestPath ?? (await findUhtManifest(project));
+  if (!manifest) return `${project.projectRoot.toLowerCase()}:no-manifest`;
+  try {
+    const stat = await fs.promises.stat(manifest);
+    return `${path.normalize(manifest).toLowerCase()}:${stat.mtimeMs}`;
+  } catch {
+    return `${path.normalize(manifest).toLowerCase()}:missing`;
+  }
+}
+
 export async function runUhtOnHeader(
   project: UEProject,
   engine: UEInstallation,
@@ -124,13 +138,20 @@ export async function runUhtOnHeader(
   }
 
   const result = await spawnAsync(uht, args, { cwd: engine.root, token });
+  if (token?.isCancellationRequested) {
+    return { ok: false, diagnostics: [], stdout: '', stderr: 'cancelled', cacheKey: await buildUhtCacheKey(project, manifest), manifestPath: manifest };
+  }
   const combined = `${result.stdout}\n${result.stderr}`;
-  const diagnostics = parseUhtOutput(combined).filter((d) => path.normalize(d.file) === path.normalize(headerPath));
+  const allDiagnostics = parseUhtOutput(combined);
+  const diagnostics = allDiagnostics.filter((d) => path.normalize(d.file) === path.normalize(headerPath));
   return {
     ok: result.exitCode === 0,
     diagnostics,
     stdout: result.stdout,
     stderr: result.stderr,
+    cacheKey: await buildUhtCacheKey(project, manifest),
+    manifestPath: manifest,
+    allDiagnostics,
   };
 }
 

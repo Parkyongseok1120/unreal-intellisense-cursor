@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ensureDataDir } from '../platform/dataDir';
 import { parseGeneratedHeader, parseHeaderUProperties, parseHeaderUFunctions, type UClassReflection } from './generatedHeaderParser';
+import { enrichReflectionFromHeaderContent } from '../projectModel/symbolModel';
 
 export interface ReflectionIndexCache {
   version: number;
@@ -74,6 +75,7 @@ async function enrichFromSourceHeaders(projectRoot: string, classes: UClassRefle
           const funcs = parseHeaderUFunctions(content);
           if (props.length > 0) reflection.properties = props;
           if (funcs.length > 0) reflection.functions = funcs;
+          enrichReflectionFromHeaderContent(reflection, content, full);
         } catch {
           // skip
         }
@@ -170,6 +172,7 @@ export async function refreshReflectionForHeader(projectRoot: string, headerPath
     reflection.properties = parseHeaderUProperties(content);
     reflection.functions = parseHeaderUFunctions(content);
     reflection.filePath = headerPath;
+    enrichReflectionFromHeaderContent(reflection, content, headerPath);
 
     await saveReflectionIndex(projectRoot, classes);
   } catch {

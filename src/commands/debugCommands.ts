@@ -5,6 +5,7 @@ import { spawnAsync } from '../platform/process';
 import { fileExists } from '../platform/paths';
 import {
   baseCppDebuggerOptions,
+  filterEditorProcessesByProject,
   findUnrealEditorProcesses,
   natvisExists,
   resolveEditorProgramPath,
@@ -61,6 +62,25 @@ function getProjectWorkspaceFolder(project: UEProject): vscode.WorkspaceFolder |
   return vscode.workspace.getWorkspaceFolder(uri);
 }
 
+export function resolveDebugWorkspaceFolder(project: UEProject): vscode.WorkspaceFolder | undefined {
+  const exact = getProjectWorkspaceFolder(project);
+  if (exact) return exact;
+
+  const projectRoot = path.resolve(project.projectRoot).toLowerCase();
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    const folderPath = path.resolve(folder.uri.fsPath).toLowerCase();
+    if (projectRoot === folderPath || projectRoot.startsWith(`${folderPath}${path.sep}`)) {
+      return folder;
+    }
+  }
+
+  return {
+    uri: vscode.Uri.file(project.projectRoot),
+    name: project.name,
+    index: -1,
+  };
+}
+
 async function waitForCppDebugAdapter(extensionId: string, timeoutMs = 4000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -78,7 +98,7 @@ function editorLaunchConfigName(project: UEProject, configuration: BuildConfigur
   return `UE5_8: Launch ${editorTarget} (${configuration})`;
 }
 
-async function waitForDebugSessionEnd(timeoutMs = 5000): Promise<void> {
+async function waitForDebugSessionEnd(timeoutMs = 30000): Promise<void> {
   if (!vscode.debug.activeDebugSession) return;
 
   await new Promise<void>((resolve) => {
@@ -115,6 +135,7 @@ async function startDebugSession(
   const enriched: vscode.DebugConfiguration = {
     console: 'integratedTerminal',
     environment: [],
+    preLaunchTask: undefined,
     ...config,
   };
 
@@ -131,7 +152,7 @@ async function startDebugSession(
 }
 
 function getWorkspaceFolder(project?: UEProject): vscode.WorkspaceFolder | undefined {
-  if (project) return getProjectWorkspaceFolder(project);
+  if (project) return resolveDebugWorkspaceFolder(project);
   return vscode.workspace.workspaceFolders?.[0];
 }
 
@@ -139,7 +160,7 @@ async function preflightDebugLaunch(
   ctx: UE5_8CursorContext,
   programPath: string,
 ): Promise<DebugPreflightResult> {
-  const folder = ctx.project ? getProjectWorkspaceFolder(ctx.project) : getWorkspaceFolder();
+  const folder = ctx.project ? resolveDebugWorkspaceFolder(ctx.project) : getWorkspaceFolder();
   if (!folder) {
     return {
       ok: false,
@@ -239,19 +260,27 @@ export async function debugLaunchEditor(
     return;
   }
 
-  const folder = getProjectWorkspaceFolder(ctx.project);
+  const folder = resolveDebugWorkspaceFolder(ctx.project);
   if (!folder) {
     vscode.window.showErrorMessage(
-      'UE5_8 Cursor: 워크스페이스 폴더가 없습니다. 프로젝트 루트 또는 .code-workspace를 열어 주세요.',
+      'UE5_8 Cursor: No workspace folder. Open the project root or .code-workspace.',
     );
     return;
   }
 
-  const editorProgram = resolveEditorProgramPath(
-    ctx.engine.root,
-    settings.debugBuildConfiguration,
-    settings.platform,
-  );
+  let editorProgram: string;
+  try {
+    editorProgram = resolveEditorProgramPath(
+      ctx.engine.root,
+      settings.debugBuildConfiguration,
+      settings.platform,
+      { allowDevelopmentFallback: settings.debugBuildConfiguration === 'Development' },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(`UE5_8 Cursor: ${message}`);
+    return;
+  }
 
   const preflight = await preflightDebugLaunch(ctx, editorProgram);
   if (!preflight.ok) {
@@ -312,14 +341,28 @@ export async function debugAttachEditor(
     return;
   }
 
-  const folder = getProjectWorkspaceFolder(ctx.project);
+  const folder = resolveDebugWorkspaceFolder(ctx.project);
   if (!folder) {
-    vscode.window.showErrorMessage('UE5_8 Cursor: 워크스페이스 폴더가 없습니다.');
+    vscode.window.showErrorMessage(
+      'UE5_8 Cursor: No workspace folder. Open the project root or .code-workspace.',
+    );
     return;
   }
 
   const configuration = settings?.debugBuildConfiguration ?? 'DebugGame';
-  const editorProgram = resolveEditorProgramPath(ctx.engine.root, configuration, settings?.platform ?? 'Win64');
+  let editorProgram: string;
+  try {
+    editorProgram = resolveEditorProgramPath(
+      ctx.engine.root,
+      configuration,
+      settings?.platform ?? 'Win64',
+      { allowDevelopmentFallback: configuration === 'Development' },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(`UE5_8 Cursor: ${message}`);
+    return;
+  }
   const preflight = await preflightDebugLaunch(ctx, editorProgram);
   if (!preflight.ok) {
     await showDebugLaunchFailure(ctx, { type: getDebuggerType(), program: editorProgram }, preflight);
@@ -330,8 +373,21 @@ export async function debugAttachEditor(
     await ensureDebugConfigsForProject(ctx, settings);
   }
 
-  const processes = await findUnrealEditorProcesses();
+  const allProcesses = await findUnrealEditorProcesses();
+  const processes = filterEditorProcessesByProject(allProcesses, ctx.project.uprojectPath);
   if (processes.length === 0) {
+    if (allProcesses.length > 0) {
+      vscode.window.showWarningMessage(
+        `UE5_8 Cursor: 실행 중인 Unreal Editor 중 ${path.basename(ctx.project.uprojectPath)} 프로젝트와 일치하는 프로세스가 없습니다.`,
+        '에디터 실행',
+      ).then((choice) => {
+        if (choice === '에디터 실행') {
+          vscode.commands.executeCommand('ue58rider.launchEditor');
+        }
+      });
+      return;
+    }
+
     vscode.window.showWarningMessage(
       'UE5_8 Cursor: 실행 중인 Unreal Editor가 없습니다. 먼저 에디터를 실행하세요.',
       '에디터 실행',
@@ -346,7 +402,11 @@ export async function debugAttachEditor(
   let pid = processes[0].pid;
   if (processes.length > 1) {
     const picked = await vscode.window.showQuickPick(
-      processes.map((p) => ({ label: `UnrealEditor.exe (PID ${p.pid})`, pid: p.pid })),
+      processes.map((p) => ({
+        label: `UnrealEditor.exe (PID ${p.pid})`,
+        description: p.commandLine ? path.basename(ctx.project.uprojectPath) : undefined,
+        pid: p.pid,
+      })),
       { placeHolder: '디버깅할 에디터 프로세스 선택' },
     );
     if (!picked) return;
@@ -379,9 +439,11 @@ export async function debugLaunchGame(
     return;
   }
 
-  const folder = getProjectWorkspaceFolder(ctx.project);
+  const folder = resolveDebugWorkspaceFolder(ctx.project);
   if (!folder) {
-    vscode.window.showErrorMessage('UE5_8 Cursor: 워크스페이스 폴더가 없습니다.');
+    vscode.window.showErrorMessage(
+      'UE5_8 Cursor: No workspace folder. Open the project root or .code-workspace.',
+    );
     return;
   }
 
@@ -434,9 +496,11 @@ export async function debugPIE(ctx: UE5_8CursorContext, settings: UE5_8CursorSet
     return;
   }
 
-  const folder = getProjectWorkspaceFolder(ctx.project);
+  const folder = resolveDebugWorkspaceFolder(ctx.project);
   if (!folder) {
-    vscode.window.showErrorMessage('UE5_8 Cursor: 워크스페이스 폴더가 없습니다.');
+    vscode.window.showErrorMessage(
+      'UE5_8 Cursor: No workspace folder. Open the project root or .code-workspace.',
+    );
     return;
   }
 
@@ -502,5 +566,6 @@ export async function ensureDebugConfigsForProject(
     engine: ctx.engine,
     debugConfiguration: settings.debugBuildConfiguration,
     platform: settings.platform,
+    autoBuildBeforeLaunch: settings.debugAutoBuild,
   });
 }

@@ -8,6 +8,8 @@ import { fileExists } from '../platform/paths';
 import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 import { buildReflectionIndex, type UClassReflection } from '../uht/reflectionIndex';
 import { findUhtManifest, parseUhtManifestInputFiles } from '../uht/uhtRunner';
+import { buildStableSymbolId } from './symbolModel';
+import type { DeclarationRange, SymbolMember } from './symbolModel';
 import { ensureDataDir } from '../platform/dataDir';
 import * as fs from 'fs';
 import { parseWindowsCommandLine, resolveCompilePath, canonicalCompilePath } from './windowsCommandLine';
@@ -24,10 +26,13 @@ export interface UeClassSymbol {
   name: string;
   sourceFile: string;
   sourceLine?: number;
+  classLine?: number;
+  declarationRange?: DeclarationRange;
   baseClass?: string;
   interfaces?: string[];
   generatedHeader?: string;
   moduleName?: string;
+  members?: SymbolMember[];
   provenance: SymbolProvenance;
   confidence: SymbolConfidence;
   generation?: number;
@@ -190,7 +195,7 @@ export async function buildSemanticGraph(project: UEProject): Promise<SemanticGr
   };
 }
 
-function reflectionToSymbols(
+export function reflectionToSymbols(
   reflection: UClassReflection[],
   artifacts: GeneratedArtifact[],
   modules: ModuleNode[],
@@ -204,14 +209,19 @@ function reflectionToSymbols(
       const generatedHeader = genByHeader.get(sourceFile.toLowerCase());
       const provenance: SymbolProvenance = generatedHeader ? 'generated-header' : 'source-parser';
       const confidence: SymbolConfidence = generatedHeader ? 'authoritative' : 'derived';
+      const classLine = r.classLine ?? r.declarationRange?.startLine;
+      const sourceLine = classLine ?? r.properties[0]?.line ?? r.functions[0]?.line ?? 0;
       return {
-        id: `${r.className}@${sourceFile}`,
+        id: buildStableSymbolId(mod?.name, r.className, sourceFile),
         name: r.className,
         sourceFile,
-        sourceLine: r.properties[0]?.line ?? r.functions[0]?.line ?? 0,
+        sourceLine,
+        classLine: classLine ?? sourceLine,
+        declarationRange: r.declarationRange,
         baseClass: r.superClass,
         generatedHeader,
         moduleName: mod?.name,
+        members: r.members,
         provenance,
         confidence,
       };

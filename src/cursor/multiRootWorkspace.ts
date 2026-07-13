@@ -13,6 +13,7 @@ export interface MultiRootWorkspaceOptions {
    * Source/ folder resolves configuration against that nested workspace root.
    */
   clangdPath?: string;
+  compileCommandsDir?: string;
   applyExplorerFilter?: boolean;
   contentBrowserMode?: import('./explorerFilter').ContentBrowserMode;
 }
@@ -37,6 +38,7 @@ export function buildMultiRootWorkspaceContent(
   // parent project's .vscode/settings.json.
   const settings = buildUeSettings({
     clangdPath: options.clangdPath,
+    compileCommandsDir: options.compileCommandsDir,
     applyExplorerFilter: options.applyExplorerFilter,
     contentBrowserMode: options.contentBrowserMode,
   });
@@ -103,7 +105,10 @@ export async function ensureMultiRootWorkspace(
     // no plugins
   }
 
-  const content = buildMultiRootWorkspaceContent(project.name, pluginNames, effectiveOptions);
+  const content = buildMultiRootWorkspaceContent(project.name, pluginNames, {
+    ...effectiveOptions,
+    compileCommandsDir: project.projectRoot,
+  });
 
   const newJson = JSON.stringify(content, null, 2) + '\n';
   if (existing === newJson) return undefined;

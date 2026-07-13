@@ -16,6 +16,7 @@ interface DynamicCompileCommand {
 }
 
 const CLANGD_EXTENSION_ID = 'llvm-vs-code-extensions.vscode-clangd';
+const MAX_DYNAMIC_HEADER_CONTEXTS = 64;
 const dynamicCommandsByProject = new Map<string, Map<string, DynamicCompileCommand>>();
 
 /**
@@ -43,10 +44,12 @@ export async function applyAuthoritativeHeaderCompileContext(
 
   const key = path.resolve(projectRoot).toLowerCase();
   const projectCommands = dynamicCommandsByProject.get(key) ?? new Map<string, DynamicCompileCommand>();
-  projectCommands.set(path.resolve(context.headerPath), {
+  const headerKey = path.resolve(context.headerPath);
+  projectCommands.set(headerKey, {
     workingDirectory: context.workingDirectory,
     compilationCommand: context.compilationCommand,
   });
+  trimDynamicHeaderContexts(projectCommands);
   dynamicCommandsByProject.set(key, projectCommands);
 
   const compilationDatabaseChanges = Object.fromEntries(projectCommands);
@@ -68,4 +71,11 @@ export function clearAuthoritativeHeaderCompileContexts(projectRoot?: string): v
     return;
   }
   dynamicCommandsByProject.delete(path.resolve(projectRoot).toLowerCase());
+}
+
+function trimDynamicHeaderContexts(projectCommands: Map<string, DynamicCompileCommand>): void {
+  if (projectCommands.size <= MAX_DYNAMIC_HEADER_CONTEXTS) return;
+  const excess = projectCommands.size - MAX_DYNAMIC_HEADER_CONTEXTS;
+  const keys = [...projectCommands.keys()];
+  for (let i = 0; i < excess; i++) projectCommands.delete(keys[i]);
 }

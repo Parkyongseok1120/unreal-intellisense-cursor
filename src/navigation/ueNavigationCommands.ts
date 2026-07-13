@@ -8,6 +8,7 @@ import {
   isUhtMacroToken,
   normalizeDefinitionLocations,
 } from './stubPaths';
+import { findUeReferences } from './referenceNavigation';
 import {
   getSymbolAtPosition,
   isPriorityPairedNavigationCandidate,
@@ -16,7 +17,12 @@ import {
   resolveUeNavigationTarget,
 } from './symbolNavigation';
 
-type ProjectGetter = () => UEProject | undefined;
+export interface NavigationRuntime {
+  project?: UEProject;
+  engineRoot?: string;
+}
+
+type RuntimeGetter = () => NavigationRuntime | undefined;
 
 async function openLocation(location: vscode.Location, preserveFocus = false): Promise<void> {
   const doc = await vscode.workspace.openTextDocument(location.uri);
@@ -41,14 +47,14 @@ async function resolvePriorityUeLocation(
   document: vscode.TextDocument,
   position: vscode.Position,
   symbol: { word: string } | undefined,
-  project: UEProject | undefined,
+  runtime: NavigationRuntime | undefined,
   mode: 'definition' | 'implementation' = 'definition',
 ): Promise<vscode.Location | undefined> {
   if (!symbol) return undefined;
 
   if (symbol.word === 'StaticClass') {
     return resolveUeNavigationTarget(document, position, {
-      project,
+      project: runtime?.project,
       mode: 'definition',
     });
   }
@@ -69,15 +75,15 @@ async function resolvePriorityUeLocation(
   return undefined;
 }
 
-function pickOptions(document: vscode.TextDocument, project: UEProject | undefined) {
+function pickOptions(document: vscode.TextDocument, runtime: NavigationRuntime | undefined) {
   return {
-    projectRoot: project?.projectRoot,
+    projectRoot: runtime?.project?.projectRoot,
     pairedFilePath: findPairedSourceFile(document.fileName),
-    engineRoot: undefined as string | undefined,
+    engineRoot: runtime?.engineRoot,
   };
 }
 
-export async function goToDefinition(getProject: ProjectGetter): Promise<void> {
+export async function goToDefinition(getRuntime: RuntimeGetter): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== 'cpp') {
     await vscode.commands.executeCommand('editor.action.revealDefinition');
@@ -87,30 +93,30 @@ export async function goToDefinition(getProject: ProjectGetter): Promise<void> {
   const { document, selection } = editor;
   const position = selection.active;
   const symbol = getSymbolAtPosition(document, position);
-  const project = getProject();
+  const runtime = getRuntime();
 
   if (symbol && isUhtMacroToken(symbol.word)) {
     vscode.window.showInformationMessage(
-      'UE5_8 Cursor: UHT 매크로는 IDE 스텁입니다. 함수 이름에 F12를 사용하세요.',
+      'UE5_8 Cursor: UHT macros are IDE stubs. Use F12 on the function name.',
     );
     return;
   }
 
-  const priorityUe = await resolvePriorityUeLocation(document, position, symbol, project);
+  const priorityUe = await resolvePriorityUeLocation(document, position, symbol, runtime);
   if (priorityUe) {
     await openLocation(priorityUe);
     return;
   }
 
   const filtered = await collectFilteredClangdDefinitions(document, position);
-  const clangdBest = pickBestDefinitionLocation(filtered, document, symbol?.word, pickOptions(document, project));
+  const clangdBest = pickBestDefinitionLocation(filtered, document, symbol?.word, pickOptions(document, runtime));
   if (clangdBest) {
     await openLocation(clangdBest);
     return;
   }
 
   const ueLocation = await resolveUeNavigationTarget(document, position, {
-    project,
+    project: runtime?.project,
     mode: 'definition',
   });
   if (ueLocation) {
@@ -118,10 +124,10 @@ export async function goToDefinition(getProject: ProjectGetter): Promise<void> {
     return;
   }
 
-  vscode.window.showWarningMessage('UE5_8 Cursor: 정의를 찾지 못했습니다.');
+  vscode.window.showWarningMessage('UE5_8 Cursor: Definition not found.');
 }
 
-export async function goToImplementation(getProject: ProjectGetter): Promise<void> {
+export async function goToImplementation(getRuntime: RuntimeGetter): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== 'cpp') {
     await vscode.commands.executeCommand('editor.action.goToImplementation');
@@ -131,16 +137,16 @@ export async function goToImplementation(getProject: ProjectGetter): Promise<voi
   const { document, selection } = editor;
   const position = selection.active;
   const symbol = getSymbolAtPosition(document, position);
-  const project = getProject();
+  const runtime = getRuntime();
 
   if (symbol && isUhtMacroToken(symbol.word)) {
     vscode.window.showInformationMessage(
-      'UE5_8 Cursor: UHT 매크로는 IDE 스텁입니다. 함수 이름에 Ctrl+F12를 사용하세요.',
+      'UE5_8 Cursor: UHT macros are IDE stubs. Use Ctrl+F12 on the function name.',
     );
     return;
   }
 
-  const priorityUe = await resolvePriorityUeLocation(document, position, symbol, project, 'implementation');
+  const priorityUe = await resolvePriorityUeLocation(document, position, symbol, runtime, 'implementation');
   if (priorityUe) {
     await openLocation(priorityUe);
     return;
@@ -150,14 +156,14 @@ export async function goToImplementation(getProject: ProjectGetter): Promise<voi
     vscode.Location | vscode.Location[] | vscode.LocationLink[] | undefined
   >('vscode.executeImplementationProvider', document.uri, position);
   const filtered = filterStubLocations(normalizeDefinitionLocations(raw));
-  const clangdBest = pickBestDefinitionLocation(filtered, document, symbol?.word, pickOptions(document, project));
+  const clangdBest = pickBestDefinitionLocation(filtered, document, symbol?.word, pickOptions(document, runtime));
   if (clangdBest) {
     await openLocation(clangdBest);
     return;
   }
 
   const ueLocation = await resolveUeNavigationTarget(document, position, {
-    project,
+    project: runtime?.project,
     mode: 'implementation',
   });
   if (ueLocation) {
@@ -170,22 +176,84 @@ export async function goToImplementation(getProject: ProjectGetter): Promise<voi
     definitionFallback,
     document,
     symbol?.word,
-    pickOptions(document, project),
+    pickOptions(document, runtime),
   );
   if (definitionBest && definitionBest.uri.fsPath.toLowerCase() !== document.fileName.toLowerCase()) {
     await openLocation(definitionBest);
     return;
   }
 
-  vscode.window.showWarningMessage('UE5_8 Cursor: 구현을 찾지 못했습니다.');
+  vscode.window.showWarningMessage('UE5_8 Cursor: Implementation not found.');
+}
+
+export async function goToReferences(getRuntime: RuntimeGetter, moduleScan = true): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    await vscode.commands.executeCommand('editor.action.goToReferences');
+    return;
+  }
+
+  const { document, selection } = editor;
+  const position = selection.active;
+  const runtime = getRuntime();
+
+  const ueRefs = findUeReferences(document, position, {
+    projectRoot: runtime?.project?.projectRoot,
+    moduleScan,
+  });
+
+  if (ueRefs.length > 0) {
+    const unique = ueRefs;
+    if (unique.length === 1) {
+      await openLocation(unique[0]);
+      return;
+    }
+    const items = unique.map((loc) => ({
+      label: path.basename(loc.uri.fsPath),
+      description: loc.uri.fsPath,
+      location: loc,
+    }));
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: 'UE References' });
+    if (picked) await openLocation(picked.location);
+    return;
+  }
+
+  const clangdRaw = await vscode.commands.executeCommand<
+    vscode.Location | vscode.Location[] | undefined
+  >('vscode.executeReferenceProvider', document.uri, position);
+  const clangdRefs = filterStubLocations(
+    Array.isArray(clangdRaw) ? clangdRaw : clangdRaw ? [clangdRaw] : [],
+  );
+
+  if (clangdRefs.length === 0) {
+    vscode.window.showWarningMessage('UE5_8 Cursor: References not found.');
+    return;
+  }
+
+  if (clangdRefs.length === 1) {
+    await openLocation(clangdRefs[0]);
+    return;
+  }
+
+  const items = clangdRefs.map((loc) => ({
+    label: path.basename(loc.uri.fsPath),
+    description: loc.uri.fsPath,
+    location: loc,
+  }));
+  const picked = await vscode.window.showQuickPick(items, { placeHolder: 'References' });
+  if (picked) await openLocation(picked.location);
 }
 
 export function registerUeNavigationCommands(
   context: vscode.ExtensionContext,
-  getProject: ProjectGetter,
+  getRuntime: RuntimeGetter,
+  options?: { moduleReferenceScan?: () => boolean },
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand(Commands.GoToDefinition, () => goToDefinition(getProject)),
-    vscode.commands.registerCommand(Commands.GoToImplementation, () => goToImplementation(getProject)),
+    vscode.commands.registerCommand(Commands.GoToDefinition, () => goToDefinition(getRuntime)),
+    vscode.commands.registerCommand(Commands.GoToImplementation, () => goToImplementation(getRuntime)),
+    vscode.commands.registerCommand(Commands.GoToReferences, () =>
+      goToReferences(getRuntime, options?.moduleReferenceScan?.() ?? true),
+    ),
   );
 }

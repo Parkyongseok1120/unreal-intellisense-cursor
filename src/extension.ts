@@ -38,7 +38,7 @@ import { registerUhtSaveValidation } from './uht/uhtValidation';
 import { registerHLSLProviders } from './hlsl/hlslProviders';
 import { UnrealTestExplorer } from './testing/unrealTestExplorer';
 import type { UE5_8CursorContext } from './types';
-import { requestClangdRestart } from './cursor/clangdLifecycle';
+import { requestClangdRestart, resetClangdRestartState } from './cursor/clangdLifecycle';
 import {
   disposeIntelliSenseMetrics,
   getIntelliSenseMetricsTracker,
@@ -60,7 +60,9 @@ let extensionContext: vscode.ExtensionContext | undefined;
 let bridgeDispatchRoot: string | undefined;
 let bridgeDispatchChain: Promise<void> = Promise.resolve();
 const pluginIndexRestartTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const headerCompileContextLog = new Map<string, string>();
+let sourceWatcherDisposable: vscode.Disposable | undefined;
+let settingsChangeTimer: ReturnType<typeof setTimeout> | undefined;
+let headerContextSaveTimer: ReturnType<typeof setTimeout> | undefined;
 
 function projectRegistry() {
   return getWorkspaceProjectRegistry();
@@ -128,29 +130,90 @@ async function promoteOpenedPluginDocument(document: vscode.TextDocument): Promi
 }
 
 async function reportHeaderCompileContext(document: vscode.TextDocument): Promise<void> {
-  if (document.uri.scheme !== 'file' || !/\.(?:h|hpp|inl)$/i.test(document.uri.fsPath)) return;
   const runtime = resolveRuntime(document.uri);
   if (!runtime) return;
-  const { resolveHeaderCompileContext } = await import('./projectModel/headerCompileContext');
-  const resolved = await resolveHeaderCompileContext(runtime.project.projectRoot, document.uri.fsPath);
-  const key = document.uri.fsPath.toLowerCase();
-  const fingerprint = `${resolved.provenance}:${resolved.translationUnit ?? ''}`;
-  if (headerCompileContextLog.get(key) === fingerprint) return;
-  if (resolved.provenance === 'authoritative-module-tu') {
-    const { applyAuthoritativeHeaderCompileContext } = await import('./cursor/clangdHeaderContext');
-    const applied = await applyAuthoritativeHeaderCompileContext(runtime.project.projectRoot, resolved);
-    if (applied.applied) {
-      headerCompileContextLog.set(key, fingerprint);
-      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Header compile context applied: ${document.uri.fsPath} <- ${resolved.translationUnit}`);
-    } else {
-      // Do not cache an unavailable/starting client. The next focus event can
-      // safely retry without inventing a fallback command.
-      headerCompileContextLog.delete(key);
-      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Header compile context provisional: ${document.uri.fsPath}. ${applied.reason}`);
+  const { reportHeaderCompileContext: apply, countProvisionalHeaders } = await import('./cursor/headerCompileContextManager');
+  await apply(document, runtime.project.projectRoot, (message) => ctx.outputChannel.appendLine(message));
+  statusBar.setProvisionalHeaderCount(countProvisionalHeaders(runtime.project.projectRoot));
+}
+
+function cleanupProjectExtensionState(projectRoot: string): void {
+  const timer = pluginIndexRestartTimers.get(projectRoot);
+  if (timer) {
+    clearTimeout(timer);
+    pluginIndexRestartTimers.delete(projectRoot);
+  }
+  void import('./cursor/headerCompileContextManager').then(({ clearHeaderCompileContextState }) => {
+    clearHeaderCompileContextState(projectRoot);
+  });
+  resetClangdRestartState(projectRoot);
+}
+
+async function registerSourceWatcher(): Promise<void> {
+  sourceWatcherDisposable?.dispose();
+  const { watchSourceChanges } = await import('./detection/sourceWatcher');
+  sourceWatcherDisposable = watchSourceChanges(
+    settings,
+    (uri) => {
+      const runtime = resolveRuntime(uri);
+      return runtime ? { ctx: runtimeContext(uri), key: runtime.project.projectRoot } : undefined;
+    },
+    (runtime) => {
+      const owner = projectRegistry().getByRoot(runtime.ctx.project!.projectRoot);
+      if (owner) void scheduleCompileRefresh(runtime.ctx, owner.session);
+    },
+    (runtime, headers) => {
+      const owner = projectRegistry().getByRoot(runtime.ctx.project!.projectRoot);
+      if (!owner) return;
+      for (const h of headers) {
+        void import('./uht/uhtValidation').then(({ scheduleUhtValidation }) =>
+          scheduleUhtValidation(runtime.ctx, owner.session, h, settings),
+        );
+      }
+    },
+    (runtime) => {
+      const owner = projectRegistry().getByRoot(runtime.ctx.project!.projectRoot);
+      if (!owner) return;
+      const gen = owner.session.getGeneration();
+      const token = owner.session.getActiveToken() ?? new vscode.CancellationTokenSource().token;
+      void owner.session.runJob('detection', runtime.ctx.project!.projectRoot, gen, token, async () => {
+        invalidateSemanticGraph(runtime.ctx.project!.projectRoot);
+        await refreshSemanticGraph(runtime.ctx.project!, {
+          engine: runtime.ctx.engine,
+          targetType: settings.buildTarget,
+          platform: settings.platform,
+          configuration: settings.buildConfiguration,
+        });
+      });
+    },
+  );
+  if (extensionContext) extensionContext.subscriptions.push(sourceWatcherDisposable);
+}
+
+function settingsAffectsIntellisenseOrDebug(event: vscode.ConfigurationChangeEvent): boolean {
+  const keys = [
+    'engineRoot', 'projectFile', 'buildConfiguration', 'buildTarget', 'platform',
+    'autoGenerateCompileCommands', 'upsertClangdConfig', 'clangd.lazyPluginIndexing',
+    'debug.buildConfiguration', 'debug.autoBuildBeforeLaunch', 'llvmPath',
+    'intellisense.reapplyHeaderContextOnSave',
+  ];
+  return keys.some((key) => event.affectsConfiguration(`${EXTENSION_ID}.${key}`));
+}
+
+async function handleSettingsChange(event: vscode.ConfigurationChangeEvent): Promise<void> {
+  await statusBar.update(ctx, settings);
+  if (ctx.project) {
+    void openContentBrowserForProject({ reopen: false });
+  }
+  if (event.affectsConfiguration(`${EXTENSION_ID}.debug`)) {
+    const runtime = resolveRuntime();
+    if (runtime?.project && runtime.engine) {
+      const { ensureDebugConfigsForProject } = await import('./commands/debugCommands');
+      await ensureDebugConfigsForProject(runtimeContext(), settings);
     }
-  } else {
-    headerCompileContextLog.set(key, fingerprint);
-    ctx.outputChannel.appendLine(`[UE5_8 Cursor] Header compile context provisional: ${document.uri.fsPath}. ${resolved.reason}`);
+  }
+  if (settingsAffectsIntellisenseOrDebug(event)) {
+    runDetectionPipeline();
   }
 }
 
@@ -178,7 +241,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (testExplorer) extensionContext.subscriptions.push(testExplorer);
 
   registerSemanticNavigation(extensionContext, (doc) => resolveRuntime(doc.uri)?.project, settings);
-  registerUeNavigationCommands(extensionContext, () => resolveRuntime()?.project);
+  registerUeNavigationCommands(extensionContext, () => {
+    const runtime = resolveRuntime();
+    return runtime
+      ? { project: runtime.project, engineRoot: runtime.engine?.root }
+      : undefined;
+  }, { moduleReferenceScan: () => settings.moduleReferenceScan });
 
   if (settings.experimentalHlsl) {
     registerHLSLProviders(extensionContext);
@@ -244,6 +312,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       new UhtCodeActionProvider(),
       { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
     ),
+    vscode.languages.registerCodeActionsProvider(
+      { language: 'cpp', scheme: 'file' },
+      new (await import('./navigation/implementationCodeAction')).UeImplementationCodeActionProvider(
+        () => settings.generateImplementation,
+      ),
+      { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
+    ),
+    vscode.languages.registerReferenceProvider(
+      { language: 'cpp', scheme: 'file' },
+      new (await import('./navigation/referenceNavigation')).UePairedReferenceProvider(
+        () => resolveRuntime()?.project?.projectRoot,
+        () => settings.pairedReferences && settings.moduleReferenceScan,
+      ),
+    ),
     vscode.tasks.registerTaskProvider(
       UE5_8CursorTaskProvider.type,
       new UE5_8CursorTaskProvider(() => ctx, () => settings),
@@ -257,43 +339,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return runtime ? { ctx: runtimeContext(uri), session: runtime.session } : undefined;
   }, settings));
 
-  extensionContext.subscriptions.push(
-    (await import('./detection/sourceWatcher')).watchSourceChanges(
-      settings,
-      (uri) => {
-        const runtime = resolveRuntime(uri);
-        return runtime ? { ctx: runtimeContext(uri), key: runtime.project.projectRoot } : undefined;
-      },
-      (runtime) => {
-        const owner = projectRegistry().getByRoot(runtime.ctx.project!.projectRoot);
-        if (owner) void scheduleCompileRefresh(runtime.ctx, owner.session);
-      },
-      (runtime, headers) => {
-        const owner = projectRegistry().getByRoot(runtime.ctx.project!.projectRoot);
-        if (!owner) return;
-        for (const h of headers) {
-          void import('./uht/uhtValidation').then(({ scheduleUhtValidation }) =>
-            scheduleUhtValidation(runtime.ctx, owner.session, h, settings),
-          );
-        }
-      },
-      (runtime) => {
-        const owner = projectRegistry().getByRoot(runtime.ctx.project!.projectRoot);
-        if (!owner) return;
-        const gen = owner.session.getGeneration();
-        const token = owner.session.getActiveToken() ?? new vscode.CancellationTokenSource().token;
-        void owner.session.runJob('detection', runtime.ctx.project!.projectRoot, gen, token, async () => {
-          invalidateSemanticGraph(runtime.ctx.project!.projectRoot);
-          await refreshSemanticGraph(runtime.ctx.project!, {
-            engine: runtime.ctx.engine,
-            targetType: settings.buildTarget,
-            platform: settings.platform,
-            configuration: settings.buildConfiguration,
-          });
-        });
-      },
-    ),
-  );
+  await registerSourceWatcher();
 
   outputChannel.appendLine(`[UE5_8 Cursor] Activating UE 5.8 development environment (v${getExtensionVersion(extensionPath)})...`);
   configureMcpBridge(undefined, extensionPath);
@@ -308,8 +354,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   extensionContext.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders((e) => {
       for (const folder of e.removed) {
+        const removedRoot = folder.uri.fsPath.toLowerCase();
+        for (const projectRoot of projectRegistry().listRoots()) {
+          if (projectRoot.startsWith(removedRoot)) cleanupProjectExtensionState(projectRoot);
+        }
         projectRegistry().disposeUnder(folder.uri.fsPath);
       }
+      void registerSourceWatcher();
+      if (e.added.length > 0) void runDetectionPipeline();
     }),
   );
   extensionContext.subscriptions.push(
@@ -333,14 +385,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
+  extensionContext.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      if (!settings.reapplyHeaderContextOnSave) return;
+      if (document.uri.scheme !== 'file' || !/\.(?:h|hpp|inl)$/i.test(document.uri.fsPath)) return;
+      if (headerContextSaveTimer) clearTimeout(headerContextSaveTimer);
+      headerContextSaveTimer = setTimeout(() => {
+        headerContextSaveTimer = undefined;
+        const runtime = resolveRuntime(document.uri);
+        if (!runtime) return;
+        void import('./cursor/headerCompileContextManager').then(async ({ invalidateHeaderCompileContextLog, reportHeaderCompileContext, countProvisionalHeaders }) => {
+          invalidateHeaderCompileContextLog(document.uri.fsPath);
+          await reportHeaderCompileContext(document, runtime.project.projectRoot, (message) => ctx.outputChannel.appendLine(message), true);
+          statusBar.setProvisionalHeaderCount(countProvisionalHeaders(runtime.project.projectRoot));
+        });
+      }, 500);
+    }),
+  );
   extensionContext.subscriptions.push(watchForProjectChanges(() => runDetectionPipeline()));
   extensionContext.subscriptions.push(
-    settings.onDidChange(() => {
-      void statusBar.update(ctx, settings);
-      if (ctx.project) {
-        void openContentBrowserForProject({ reopen: false });
-      }
-      runDetectionPipeline();
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration(EXTENSION_ID)) return;
+      if (settingsChangeTimer) clearTimeout(settingsChangeTimer);
+      settingsChangeTimer = setTimeout(() => {
+        settingsChangeTimer = undefined;
+        void handleSettingsChange(event);
+      }, 500);
     }),
   );
 
@@ -352,6 +422,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export function deactivate(): void {
+  if (settingsChangeTimer) clearTimeout(settingsChangeTimer);
+  if (headerContextSaveTimer) clearTimeout(headerContextSaveTimer);
+  sourceWatcherDisposable?.dispose();
+  for (const projectRoot of projectRegistry().listRoots()) cleanupProjectExtensionState(projectRoot);
+  for (const timer of pluginIndexRestartTimers.values()) clearTimeout(timer);
+  pluginIndexRestartTimers.clear();
   commandBridge?.dispose();
   projectSession?.dispose();
   editorBridge?.dispose();
@@ -398,7 +474,11 @@ async function runSilentCompileRefresh(commandCtx: UE5_8CursorContext, session: 
   if (session.isStale(pipelineGeneration)) return;
   statusBar.setIntelliSense(result.mode);
   void statusBar.update(commandCtx, settings);
+  const { clearHeaderCompileContextState, reapplyOpenHeaderContexts, countProvisionalHeaders } = await import('./cursor/headerCompileContextManager');
+  clearHeaderCompileContextState(commandCtx.project.projectRoot);
   await requestClangdRestart(commandCtx.project.projectRoot, 'compile database refresh', (msg) => commandCtx.outputChannel.appendLine(msg));
+  await reapplyOpenHeaderContexts(commandCtx.project.projectRoot, (msg) => commandCtx.outputChannel.appendLine(msg));
+  statusBar.setProvisionalHeaderCount(countProvisionalHeaders(commandCtx.project.projectRoot));
 }
 
 /**
@@ -549,10 +629,10 @@ async function executeDetectionPipeline(
       statusBar.setBridgeStatus(bridgeInfo);
       if (bridgeInfo.connected) {
         try {
-          const bridgeResult = await withBridgeTimeout(editorBridge.queryAssets(), 5000);
-          if (bridgeResult?.assets?.length) {
+          const bridgeResult = await withBridgeTimeout(editorBridge.queryAllAssets(), 15000);
+          if (bridgeResult?.length) {
             const { refreshAssetIndex } = await import('./assets/assetIndex');
-            await refreshAssetIndex(ctx.project.projectRoot, { bridgeAssets: bridgeResult.assets });
+            await refreshAssetIndex(ctx.project.projectRoot, { bridgeAssets: bridgeResult });
           }
         } catch {
           // bridge asset sync optional

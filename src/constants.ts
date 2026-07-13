@@ -60,6 +60,7 @@ export const Commands = {
   ShowIntelliSenseMetrics: `${EXTENSION_ID}.showIntelliSenseMetrics`,
   GoToDefinition: `${EXTENSION_ID}.goToDefinition`,
   GoToImplementation: `${EXTENSION_ID}.goToImplementation`,
+  GoToReferences: `${EXTENSION_ID}.goToReferences`,
 } as const;
 
 export const ContextKeys = {

@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "description": "Gate 5 navigation golden cases — class line, hierarchy, symbol ID",
+  "cases": [
+    {
+      "id": "class-line-basic",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"MyActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AMyActor : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health = 100.f;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "className": "AMyActor",
+      "expectedClassLine": 6,
+      "expectedParent": "AActor"
+    },
+    {
+      "id": "class-line-character",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Character.h\"\n#include \"CPlayerCharacter.generated.h\"\n\nUCLASS(Blueprintable)\nclass PROJECT_MJS_API ACPlayerCharacter : public ACharacter\n{\n\tGENERATED_BODY()\npublic:\n\tACPlayerCharacter();\n\n\tUPROPERTY(VisibleAnywhere)\n\tbool bHasMoveInput;\n};",
+      "className": "ACPlayerCharacter",
+      "expectedClassLine": 6,
+      "expectedParent": "ACharacter"
+    },
+    {
+      "id": "class-line-component",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Components/ActorComponent.h\"\n#include \"MyComponent.generated.h\"\n\nUCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))\nclass MYGAME_API UMyComponent : public UActorComponent\n{\n\tGENERATED_BODY()\n};",
+      "className": "UMyComponent",
+      "expectedClassLine": 6,
+      "expectedParent": "UActorComponent"
+    },
+    {
+      "id": "multi-class-file",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AFirstActor : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API ASecondActor : public AFirstActor\n{\n\tGENERATED_BODY()\n};",
+      "className": "ASecondActor",
+      "expectedClassLine": 10,
+      "expectedParent": "AFirstActor"
+    },
+    {
+      "id": "bne-implementation",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ACombatActor : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUFUNCTION(BlueprintNativeEvent)\n\tvoid Attack();\n\tvirtual void Attack_Implementation();\n};",
+      "className": "ACombatActor",
+      "expectedClassLine": 4,
+      "expectedParent": "AActor"
+    },
+    {
+      "id": "uinterface-pair",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"UObject/Interface.h\"\n#include \"MyInteractable.generated.h\"\n\nUINTERFACE(MinimalAPI, Blueprintable)\nclass UMyInteractable : public UInterface\n{\n\tGENERATED_BODY()\n};\n\nclass MYGAME_API IMyInteractable\n{\n\tGENERATED_BODY()\npublic:\n\tvirtual void Interact() = 0;\n};",
+      "className": "UMyInteractable",
+      "expectedClassLine": 6,
+      "expectedParent": "UInterface"
+    },
+    {
+      "id": "nested-plugin",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYPLUGIN_API UPluginSubsystem : public UGameInstanceSubsystem\n{\n\tGENERATED_BODY()\n};",
+      "className": "UPluginSubsystem",
+      "expectedClassLine": 4,
+      "expectedParent": "UGameInstanceSubsystem"
+    },
+    {
+      "id": "flat-module",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass FLATMODULE_API AFlatActor : public AActor\n{\n\tGENERATED_BODY()\n\tUPROPERTY()\n\tint32 Counter;\n};",
+      "className": "AFlatActor",
+      "expectedClassLine": 4,
+      "expectedParent": "AActor"
+    },
+    {
+      "id": "game-mode",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/GameModeBase.h\"\n\nUCLASS()\nclass MYGAME_API AMyGameMode : public AGameModeBase\n{\n\tGENERATED_BODY()\n};",
+      "className": "AMyGameMode",
+      "expectedClassLine": 5,
+      "expectedParent": "AGameModeBase"
+    },
+    {
+      "id": "widget",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Blueprint/UserWidget.h\"\n\nUCLASS()\nclass MYGAME_API UMyWidget : public UUserWidget\n{\n\tGENERATED_BODY()\n};",
+      "className": "UMyWidget",
+      "expectedClassLine": 5,
+      "expectedParent": "UUserWidget"
+    }
+  ],
+  "hierarchyCases": [
+    {
+      "id": "hierarchy-multi-inherit",
+      "child": "ASecondActor",
+      "parent": "AFirstActor",
+      "childLine": 10,
+      "parentLine": 4
+    }
+  ],
+  "symbolIdCases": [
+    {
+      "module": "MyGame",
+      "className": "AMyActor",
+      "sourceFile": "C:/Project/Source/MyGame/Public/MyActor.h",
+      "expectedId": "MyGame@AMyActor@c:/project/source/mygame/public/myactor.h"
+    }
+  ],
+  "thresholds": {
+    "definitionPrecision": 0.99,
+    "referencePrecision": 0.98,
+    "referenceRecall": 0.85,
+    "hierarchyAccuracy": 0.95
+  }
+}

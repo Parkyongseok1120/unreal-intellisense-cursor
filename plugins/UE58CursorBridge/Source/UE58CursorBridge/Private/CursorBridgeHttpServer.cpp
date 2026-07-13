@@ -10,12 +10,17 @@
 #include "IHttpRouter.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/App.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 
 #if WITH_EDITOR
 #include "Misc/AutomationTest.h"
 #include "Async/TaskGraphInterfaces.h"
+#include "Editor.h"
+#include "Engine/Blueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
+#include "Blueprint/BlueprintSupport.h"
 #endif
 
 static constexpr uint16 BRIDGE_BASE_PORT = 19321;
@@ -58,17 +63,18 @@ static bool IsImplementedBridgeMethod(const FString& Method)
 		TEXT("automation.run"),
 		TEXT("automation.status"),
 		TEXT("automation.cancel"),
+		TEXT("blueprint.listDerived"),
+		TEXT("blueprint.findImplementations"),
+		TEXT("blueprint.propertyOverrides"),
+		TEXT("logs.tail"),
+		TEXT("pie.getState"),
 	};
 	return Implemented.Contains(Method);
 }
 
 static bool IsDeclaredStubMethod(const FString& Method)
 {
-	return Method == TEXT("blueprint.listDerived")
-		|| Method == TEXT("blueprint.findImplementations")
-		|| Method == TEXT("blueprint.propertyOverrides")
-		|| Method == TEXT("logs.tail")
-		|| Method == TEXT("pie.getState");
+	return false;
 }
 
 static TUniquePtr<FHttpServerResponse> JsonRpcResponse(
@@ -326,6 +332,138 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 
 		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetObjectField(TEXT("asset"), Entry);
+		return Result;
+	}
+
+#if WITH_EDITOR
+	if (Method == TEXT("blueprint.listDerived"))
+	{
+		FString ClassPath;
+		if (!Params.IsValid() || !Params->TryGetStringField(TEXT("classPath"), ClassPath))
+		{
+			return nullptr;
+		}
+
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		IAssetRegistry& Registry = AssetRegistryModule.Get();
+		FARFilter Filter;
+		Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/Engine"), TEXT("Blueprint")));
+		TArray<FAssetData> AssetDataList;
+		Registry.GetAssets(Filter, AssetDataList);
+
+		TArray<TSharedPtr<FJsonValue>> Derived;
+		const FString ClassToken = ClassPath.Contains(TEXT("."))
+			? ClassPath.Mid(ClassPath.Find(TEXT("."), ESearchCase::IgnoreCase, ESearchDir::FromEnd) + 1)
+			: ClassPath;
+
+		for (const FAssetData& Data : AssetDataList)
+		{
+			const FString ParentClass = Data.GetTagValueRef<FString>(FBlueprintTags::ParentClassPath);
+			if (ParentClass.IsEmpty())
+			{
+				continue;
+			}
+			if (!ParentClass.Contains(ClassToken, ESearchCase::IgnoreCase))
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+			Entry->SetStringField(TEXT("assetPath"), Data.GetObjectPathString());
+			Entry->SetStringField(TEXT("className"), Data.AssetClassPath.GetAssetName().ToString());
+			Entry->SetStringField(TEXT("parentClassPath"), ParentClass);
+			Derived.Add(MakeShared<FJsonValueObject>(Entry));
+		}
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("derived"), Derived);
+		Result->SetNumberField(TEXT("total"), Derived.Num());
+		return Result;
+	}
+
+	if (Method == TEXT("blueprint.findImplementations"))
+	{
+		FString ClassPath;
+		if (!Params.IsValid() || !Params->TryGetStringField(TEXT("classPath"), ClassPath))
+		{
+			return nullptr;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> Implementations;
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("implementations"), Implementations);
+		Result->SetNumberField(TEXT("total"), 0);
+		return Result;
+	}
+
+	if (Method == TEXT("blueprint.propertyOverrides"))
+	{
+		FString ClassPath;
+		if (!Params.IsValid() || !Params->TryGetStringField(TEXT("classPath"), ClassPath))
+		{
+			return nullptr;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> Overrides;
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("overrides"), Overrides);
+		Result->SetNumberField(TEXT("total"), 0);
+		return Result;
+	}
+
+	if (Method == TEXT("pie.getState"))
+	{
+		const bool bPlaying = GEditor && GEditor->PlayWorld != nullptr;
+		const bool bSimulating = GEditor && GEditor->bIsSimulatingInEditor;
+		FString Mode = TEXT("stopped");
+		if (bSimulating)
+		{
+			Mode = TEXT("simulate");
+		}
+		else if (bPlaying)
+		{
+			Mode = TEXT("pie");
+		}
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetBoolField(TEXT("isPlaying"), bPlaying || bSimulating);
+		Result->SetStringField(TEXT("mode"), Mode);
+		return Result;
+	}
+#endif
+
+	if (Method == TEXT("logs.tail"))
+	{
+		int32 Lines = 50;
+		if (Params.IsValid())
+		{
+			double LinesNum = 0;
+			if (Params->TryGetNumberField(TEXT("lines"), LinesNum))
+			{
+				Lines = FMath::Clamp(static_cast<int32>(LinesNum), 1, 500);
+			}
+		}
+
+		const FString LogDir = FPaths::ProjectLogDir();
+		const FString LogFile = FPaths::Combine(LogDir, FApp::GetProjectName() + TEXT(".log"));
+		FString Content;
+		TArray<TSharedPtr<FJsonValue>> LineEntries;
+		if (FFileHelper::LoadFileToString(Content, *LogFile))
+		{
+			TArray<FString> SplitLines;
+			Content.ParseIntoArrayLines(SplitLines);
+			const int32 Start = FMath::Max(0, SplitLines.Num() - Lines);
+			for (int32 i = Start; i < SplitLines.Num(); ++i)
+			{
+				TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+				Entry->SetNumberField(TEXT("line"), i + 1);
+				Entry->SetStringField(TEXT("text"), SplitLines[i]);
+				LineEntries.Add(MakeShared<FJsonValueObject>(Entry));
+			}
+		}
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("lines"), LineEntries);
+		Result->SetNumberField(TEXT("count"), LineEntries.Num());
 		return Result;
 	}
 

@@ -127,7 +127,7 @@ function resolveMethodInHeader(
   return pos ? locationFromFile(headerPath, pos) : undefined;
 }
 
-function findMethodSignatureInSource(
+export function findMethodSignatureInSource(
   sourcePath: string,
   className: string | undefined,
   methodName: string,
@@ -389,14 +389,18 @@ async function resolveStaticClassForType(
       ? currentFile
       : undefined;
   if (pairedHeader) {
-    const includeMatch = fs.readFileSync(pairedHeader, 'utf-8').match(/#include\s+"([^"]+\.generated\.h)"/);
-    if (includeMatch) {
-      const genName = path.basename(includeMatch[1]);
-      const genFromIntermediate = await findGeneratedHeaderForClass(project.projectRoot, className);
-      if (genFromIntermediate && path.basename(genFromIntermediate) === genName) {
-        const pos = findStaticClassPosition(genFromIntermediate, className);
-        if (pos) return locationFromFile(genFromIntermediate, pos);
+    try {
+      const includeMatch = fs.readFileSync(pairedHeader, 'utf-8').match(/#include\s+"([^"]+\.generated\.h)"/);
+      if (includeMatch) {
+        const genName = path.basename(includeMatch[1]);
+        const genFromIntermediate = await findGeneratedHeaderForClass(project.projectRoot, className);
+        if (genFromIntermediate && path.basename(genFromIntermediate) === genName) {
+          const pos = findStaticClassPosition(genFromIntermediate, className);
+          if (pos) return locationFromFile(genFromIntermediate, pos);
+        }
       }
+    } catch {
+      // unreadable paired header
     }
   }
 

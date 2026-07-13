@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { findPairedSourceFile } from '../parsers/moduleLayout';
 import { parseWindowsCommandLine, resolveCompilePath } from './windowsCommandLine';
 
 interface CompileDbEntry {
@@ -7,6 +8,12 @@ interface CompileDbEntry {
   directory?: string;
   arguments?: string[];
   command?: string;
+}
+
+interface ModuleCandidate {
+  file: string;
+  directory: string;
+  args: string[];
 }
 
 export interface HeaderCompileContext {
@@ -21,13 +28,62 @@ export interface HeaderCompileContext {
 
 function moduleRootForPath(projectRoot: string, filePath: string): string | undefined {
   const relative = path.relative(projectRoot, filePath).replace(/\\/g, '/');
-  const match = relative.match(/^(.*?\/(?:Public|Private|Classes))(?:\/|$)/i);
-  if (!match) return undefined;
-  return path.resolve(projectRoot, path.dirname(match[1]));
+  const sectionMatch = relative.match(/^(.*?\/(?:Public|Private|Classes))(?:\/|$)/i);
+  if (sectionMatch) {
+    return path.resolve(projectRoot, path.dirname(sectionMatch[1]));
+  }
+  const flatMatch = relative.match(/^(?:Plugins\/.+\/Source|Source)\/([^/]+)\//i);
+  if (flatMatch) {
+    const prefix = relative.startsWith('Plugins/') ? `Plugins/${relative.split('/')[1]}/Source` : 'Source';
+    return path.resolve(projectRoot, prefix, flatMatch[1]);
+  }
+  return undefined;
 }
 
-function preferredStem(headerPath: string): string {
-  return path.basename(headerPath, path.extname(headerPath)).toLowerCase();
+function preferredStem(filePath: string): string {
+  return path.basename(filePath, path.extname(filePath)).toLowerCase();
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+*?.-]/g, '\\$&');
+}
+
+function tuIncludesHeader(tuPath: string, headerBasename: string): boolean {
+  try {
+    const content = fs.readFileSync(tuPath, 'utf-8');
+    const pattern = new RegExp(`#include\\s+["<]${escapeRegex(headerBasename)}[">]`, 'm');
+    return pattern.test(content);
+  } catch {
+    return false;
+  }
+}
+
+function selectTranslationUnit(
+  candidates: ModuleCandidate[],
+  headerPath: string,
+): { selected?: ModuleCandidate; reason: string } {
+  const stem = preferredStem(headerPath);
+  const exact = candidates.find((candidate) => preferredStem(candidate.file) === stem);
+  if (exact) {
+    return { selected: exact, reason: 'Matched a same-stem authoritative translation unit.' };
+  }
+
+  const headerBasename = path.basename(headerPath);
+  const includeMatch = candidates.find((candidate) => tuIncludesHeader(candidate.file, headerBasename));
+  if (includeMatch) {
+    return { selected: includeMatch, reason: 'Matched a translation unit that includes this header.' };
+  }
+
+  const paired = findPairedSourceFile(headerPath);
+  if (paired) {
+    const pairedResolved = path.resolve(paired).toLowerCase();
+    const pairedCandidate = candidates.find((candidate) => path.resolve(candidate.file).toLowerCase() === pairedResolved);
+    if (pairedCandidate) {
+      return { selected: pairedCandidate, reason: 'Matched the paired translation unit for this header.' };
+    }
+  }
+
+  return { reason: 'No translation unit confidently matches this header.' };
 }
 
 /**
@@ -61,12 +117,13 @@ export async function resolveHeaderCompileContext(
     };
   }
 
+  const modulePrefix = `${path.resolve(moduleRoot).toLowerCase()}${path.sep}`;
   const candidates = raw.flatMap((entry) => {
     if (!entry.file) return [];
     const directory = entry.directory ?? projectRoot;
     const file = resolveCompilePath(entry.file, directory, projectRoot);
     if (!/\.(?:cpp|cc|cxx|c)$/i.test(file)) return [];
-    if (!path.resolve(file).toLowerCase().startsWith(`${path.resolve(moduleRoot).toLowerCase()}${path.sep}`)) return [];
+    if (!path.resolve(file).toLowerCase().startsWith(modulePrefix)) return [];
     const args = entry.arguments ?? (entry.command ? parseWindowsCommandLine(entry.command) : []);
     return [{ file, directory, args }];
   });
@@ -79,17 +136,21 @@ export async function resolveHeaderCompileContext(
     };
   }
 
-  const stem = preferredStem(normalizedHeader);
-  const exact = candidates.find((candidate) => preferredStem(candidate.file) === stem);
-  const selected = exact ?? candidates.sort((a, b) => a.file.localeCompare(b.file))[0];
+  const { selected, reason } = selectTranslationUnit(candidates, normalizedHeader);
+  if (!selected) {
+    return {
+      headerPath: normalizedHeader,
+      moduleRoot,
+      provenance: 'provisional',
+      reason,
+    };
+  }
+
   return {
     headerPath: normalizedHeader,
     translationUnit: selected.file,
     moduleRoot,
     workingDirectory: selected.directory,
-    // clangd's dynamic compilation-database extension expects the current
-    // document as the sole source argument. The normalizer already removed
-    // build outputs and recursive RSP indirection from this command.
     compilationCommand: selected.args.map((arg) => {
       const normalizedArg = path.resolve(selected.directory, arg).toLowerCase();
       return normalizedArg === path.resolve(selected.file).toLowerCase()
@@ -97,8 +158,6 @@ export async function resolveHeaderCompileContext(
         : arg;
     }),
     provenance: 'authoritative-module-tu',
-    reason: exact
-      ? 'Matched a same-stem authoritative translation unit.'
-      : 'Selected a deterministic authoritative translation unit from the owning module.',
+    reason,
   };
 }

@@ -27,12 +27,12 @@ export function classifySourceChange(filePath: string, isCreate: boolean, projec
     return { filePath, isCreate, scope: 'projectModel' };
   }
 
-  const buildCsMatch = rel.match(/^(?:Plugins\/[^/]+\/)?Source\/([^/]+)\/[^/]+\.Build\.cs$/i);
+  const buildCsMatch = rel.match(/^(?:Plugins\/.+\/)?Source\/([^/]+)\/[^/]+\.Build\.cs$/i);
   if (buildCsMatch || rel.endsWith('.Target.cs')) {
     return { filePath, isCreate, scope: 'module', moduleName: buildCsMatch?.[1] };
   }
 
-  const sourceMatch = rel.match(/^(?:Plugins\/[^/]+\/)?Source\/([^/]+)\//);
+  const sourceMatch = rel.match(/^(?:Plugins\/.+\/)?Source\/([^/]+)\//);
   const moduleName = sourceMatch?.[1];
 
   if (rel.endsWith('.h') || rel.endsWith('.hpp') || rel.endsWith('.inl')) {
@@ -43,7 +43,12 @@ export function classifySourceChange(filePath: string, isCreate: boolean, projec
   }
 
   if (rel.endsWith('.cpp')) {
-    return { filePath, isCreate, scope: isCreate ? 'translationUnit' : 'module', moduleName };
+    return {
+      filePath,
+      isCreate,
+      scope: isCreate ? 'translationUnit' : 'reflection',
+      moduleName,
+    };
   }
 
   return { filePath, isCreate, scope: 'module', moduleName };

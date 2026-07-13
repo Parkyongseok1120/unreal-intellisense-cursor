@@ -36,7 +36,8 @@ export class UnrealTestExplorer implements vscode.Disposable {
     this.controller = vscode.tests.createTestController('ue58rider.automation', 'UE Automation');
     this.runOutput = vscode.window.createOutputChannel('UE5_8 Automation');
     this.controller.resolveHandler = async (item) => { if (!item) await this.refreshFromBridge(); };
-    this.runProfile = this.controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, (request, token) => this.runHandler(request, token), true);
+    this.runProfile = this.controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, (request, token) => this.runHandler(request, token, false), true);
+    this.controller.createRunProfile('Debug', vscode.TestRunProfileKind.Debug, (request, token) => this.runHandler(request, token, true), false);
     this.controller.createRunProfile('Rerun Failed', vscode.TestRunProfileKind.Run, (request, token) => this.rerunFailed(request, token), false);
   }
 
@@ -124,9 +125,10 @@ export class UnrealTestExplorer implements vscode.Disposable {
     vscode.window.showInformationMessage(this.state.offlineMessage);
   }
 
-  private async runHandler(request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> {
+  private async runHandler(request: vscode.TestRunRequest, token: vscode.CancellationToken, debug = false): Promise<void> {
     const run = this.controller.createTestRun(request);
     const state = this.state;
+    if (debug) run.appendOutput('Debug profile: run automation test, then attach debugger to UnrealEditor if needed.\n');
     for (const item of this.collectTests(request)) {
       if (token.isCancellationRequested) { run.skipped(item); continue; }
       const testName = item.label;
@@ -138,7 +140,15 @@ export class UnrealTestExplorer implements vscode.Disposable {
       if (!start.ok) { run.failed(item, new vscode.TestMessage(start.message ?? 'Failed to start test')); state.failedTests.add(testName); continue; }
       run.appendOutput(`Started ${testName}\n`);
       const status = await state.bridge.pollAutomationStatus(testName, { timeoutMs: 120_000, token });
-      if (status.state === 'passed') { run.passed(item); state.failedTests.delete(testName); this.runOutput.appendLine(`[pass] ${testName}`); }
+      if (status.state === 'passed') {
+        run.passed(item);
+        state.failedTests.delete(testName);
+        this.runOutput.appendLine(`[pass] ${testName}`);
+        if (debug) {
+          run.appendOutput(`[debug] Attach to UnrealEditor for ${testName} post-mortem debugging.\n`);
+          await vscode.commands.executeCommand('ue58rider.debugAttachEditor');
+        }
+      }
       else if (status.state === 'failed') { run.failed(item, new vscode.TestMessage(status.message ?? 'Test failed')); state.failedTests.add(testName); this.runOutput.appendLine(`[fail] ${testName}: ${status.message ?? ''}`); }
       else if (status.state === 'cancelled' || token.isCancellationRequested) { await state.bridge.cancelAutomationTest(testName); run.skipped(item); }
       else { run.errored(item, new vscode.TestMessage(status.message ?? 'Test status unknown; not marked passed')); state.failedTests.add(testName); }

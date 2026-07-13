@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "generatedAt": "2026-07-13T12:40:12.871Z",
+  "metrics": {
+    "uhtErrorRecall": 1,
+    "uhtLocationAccuracy": 1,
+    "heuristicErrorFalsePositive": 0,
+    "heuristicWarningFalsePositiveRate": 0
+  },
+  "thresholds": {
+    "uhtErrorRecall": 0.98,
+    "uhtLocationAccuracy": 0.99,
+    "heuristicErrorFalsePositive": 0,
+    "heuristicWarningFalsePositiveRate": 0.005
+  },
+  "passed": true
+}

@@ -1,6 +1,6 @@
 export interface BlueprintAsset {
   assetPath: string;
-  filePath: string;
+  filePath?: string;
   assetName: string;
-  source?: 'filesystem' | 'mcp';
+  source?: 'filesystem' | 'mcp' | 'bridge';
 }

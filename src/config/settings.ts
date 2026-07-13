@@ -133,6 +133,22 @@ export class UE5_8CursorSettings {
     return this.cfg.get<boolean>('uht.inspections.enabled', false);
   }
 
+  get reapplyHeaderContextOnSave(): boolean {
+    return this.cfg.get<boolean>('intellisense.reapplyHeaderContextOnSave', true);
+  }
+
+  get generateImplementation(): boolean {
+    return this.cfg.get<boolean>('navigation.generateImplementation', true);
+  }
+
+  get pairedReferences(): boolean {
+    return this.cfg.get<boolean>('navigation.pairedReferences', true);
+  }
+
+  get moduleReferenceScan(): boolean {
+    return this.cfg.get<boolean>('navigation.moduleReferenceScan', true);
+  }
+
   private get cfg(): vscode.WorkspaceConfiguration {
     return vscode.workspace.getConfiguration(EXTENSION_ID);
   }

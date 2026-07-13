@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "description": "Gate 5 UHT golden cases — authoritative diagnostics and heuristic FP corpus",
+  "authoritativeCases": [
+    {
+      "id": "uht-missing-generated-body",
+      "output": "C:/Project/Source/Game/Public/BadActor.h(8): error C4430: missing GENERATED_BODY()",
+      "expectedFile": "C:/Project/Source/Game/Public/BadActor.h",
+      "expectedLine": 8,
+      "severity": "error"
+    },
+    {
+      "id": "uht-missing-ufunction",
+      "output": "C:/Project/Source/Game/Public/BadActor.h(12): error : Missing UFUNCTION macro",
+      "expectedFile": "C:/Project/Source/Game/Public/BadActor.h",
+      "expectedLine": 12,
+      "severity": "error"
+    },
+    {
+      "id": "uht-warning-deprecated",
+      "output": "C:/Project/Source/Game/Public/OldActor.h(5): warning C4996: deprecated UPROPERTY specifier",
+      "expectedFile": "C:/Project/Source/Game/Public/OldActor.h",
+      "expectedLine": 5,
+      "severity": "warning"
+    }
+  ],
+  "inspectionCases": [
+    {
+      "id": "inspection-valid-header",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-missing-generated-body",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ABadActor : public AActor\n{\npublic:\n\tfloat Health;\n};",
+      "expectWarnings": 1,
+      "ruleId": "ue.generated-body-present"
+    },
+    {
+      "id": "inspection-server-rpc",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ANetActor : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUFUNCTION(Server)\n\tvoid BadServerRPC();\n};",
+      "expectWarnings": 1,
+      "ruleId": "ue.rpc-reliability"
+    },
+    {
+      "id": "inspection-nested-struct-ok",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUSTRUCT()\nstruct FNestedData { GENERATED_BODY() int32 X; };\n\nUCLASS()\nclass MYGAME_API AWithStruct : public AActor\n{\n\tGENERATED_BODY()\n\tUPROPERTY()\n\tFNestedData Data;\n};",
+      "expectErrors": 0
+    },
+    {
+      "id": "inspection-char-literal",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ACharActor : public AActor\n{\n\tGENERATED_BODY()\n\tconst char Flag = 'X';\n\tUPROPERTY()\n\tint32 Value;\n};",
+      "expectErrors": 0
+    },
+    {
+      "id": "inspection-raw-string",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARawActor : public AActor\n{\n\tGENERATED_BODY()\n\tconst TCHAR* Path = TEXT(R\"(C:\\Path\\To\\Asset)\");\n};",
+      "expectErrors": 0
+    }
+  ],
+  "thresholds": {
+    "uhtErrorRecall": 0.98,
+    "uhtLocationAccuracy": 0.99,
+    "heuristicErrorFalsePositive": 0,
+    "heuristicWarningFalsePositiveRate": 0.005
+  }
+}

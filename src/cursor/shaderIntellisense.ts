@@ -36,6 +36,7 @@ export async function ensureShaderIntellisense(
     '[hlsl]': {
       'editor.wordBasedSuggestions': 'off',
     },
+    'hlsl.suppressValidation': false,
   };
 
   const merged = { ...existing, ...shaderSettings };

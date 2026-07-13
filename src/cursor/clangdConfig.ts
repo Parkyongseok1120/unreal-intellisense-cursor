@@ -122,6 +122,7 @@ export function buildManagedClangdBlock(options: {
     '-Wno-unused-value',
     '-Wno-switch',
     '-Wno-invalid-offsetof',
+    '-Wno-invalid-constexpr',
     '-Wno-ignored-attributes',
   ];
 

@@ -10,7 +10,9 @@ const MAX_READ_BYTES = 1024 * 1024;
 interface LogRuntimeState {
   watcher?: fs.FSWatcher;
   filePath?: string;
+  fileId?: string;
   offset: number;
+  partialLine: string;
   pollTimer?: ReturnType<typeof setInterval>;
   follow: boolean;
   categoryFilter?: string;
@@ -67,7 +69,9 @@ export class UnrealLogViewer implements vscode.Disposable {
     const state = this.stateFor(projectRoot);
     this.stop(projectRoot);
     state.filePath = logFile;
+    state.fileId = logFile.toLowerCase();
     state.offset = 0;
+    state.partialLine = '';
     this.channel.clear();
     this.channel.show(true);
     this.channel.appendLine(`[UE5_8 Cursor] Tailing (${path.basename(projectRoot)}): ${logFile}`);
@@ -92,7 +96,9 @@ export class UnrealLogViewer implements vscode.Disposable {
     if (state.pollTimer) clearInterval(state.pollTimer);
     state.pollTimer = undefined;
     state.filePath = undefined;
+    state.fileId = undefined;
     state.offset = 0;
+    state.partialLine = '';
   }
 
   private appendLine(projectRoot: string, line: string): void {
@@ -108,11 +114,23 @@ export class UnrealLogViewer implements vscode.Disposable {
     if (!state?.filePath || !state.follow) return;
     try {
       const stat = await fs.promises.stat(state.filePath);
-      if (stat.size < state.offset) state.offset = 0;
+      const fileId = state.filePath.toLowerCase();
+      if (state.fileId && state.fileId !== fileId) {
+        state.offset = 0;
+        state.partialLine = '';
+      }
+      state.fileId = fileId;
+      if (stat.size < state.offset) {
+        state.offset = 0;
+        state.partialLine = '';
+      }
       if (stat.size <= state.offset) return;
       if (stat.size - state.offset > MAX_READ_BYTES) {
         state.offset = Math.max(0, stat.size - MAX_READ_BYTES);
-        if (this.activeProjectRoot?.toLowerCase() === projectRoot.toLowerCase()) this.channel.appendLine('[UE5_8 Cursor] Log backlog truncated to latest 1 MiB.');
+        state.partialLine = '';
+        if (this.activeProjectRoot?.toLowerCase() === projectRoot.toLowerCase()) {
+          this.channel.appendLine('[UE5_8 Cursor] Log backlog truncated to latest 1 MiB.');
+        }
       }
       const fd = await fs.promises.open(state.filePath, 'r');
       try {
@@ -120,7 +138,12 @@ export class UnrealLogViewer implements vscode.Disposable {
         const buf = Buffer.alloc(len);
         await fd.read(buf, 0, len, state.offset);
         state.offset = stat.size;
-        for (const line of buf.toString('utf-8').split(/\r?\n/)) if (line.length) this.appendLine(projectRoot, line);
+        const chunk = state.partialLine + buf.toString('utf-8');
+        const parts = chunk.split(/\r?\n/);
+        state.partialLine = chunk.endsWith('\n') || chunk.endsWith('\r') ? '' : parts.pop() ?? '';
+        for (const line of parts) {
+          if (line.length) this.appendLine(projectRoot, line);
+        }
       } finally { await fd.close(); }
     } catch { /* log rotated or deleted */ }
   }

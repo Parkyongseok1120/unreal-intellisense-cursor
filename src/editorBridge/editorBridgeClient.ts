@@ -180,6 +180,21 @@ export class EditorBridgeClient implements vscode.Disposable {
     }
   }
 
+  async queryAllAssets(options?: { path?: string; class?: string; pageSize?: number }): Promise<BridgeAssetEntry[]> {
+    const pageSize = options?.pageSize ?? 500;
+    const all: BridgeAssetEntry[] = [];
+    let offset = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const page = await this.queryAssets({ ...options, limit: pageSize, offset });
+      all.push(...(page.assets ?? []));
+      hasMore = !!page.hasMore && (page.assets?.length ?? 0) > 0;
+      offset += page.assets?.length ?? 0;
+      if (!page.assets?.length) break;
+    }
+    return all;
+  }
+
   async listDerivedBlueprints(parentClass: string): Promise<BridgeBlueprintEntry[]> {
     const descriptor = this.descriptor;
     if (!this.canCall('blueprint.listDerived') || !descriptor) return [];

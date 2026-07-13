@@ -22,21 +22,23 @@ export const BRIDGE_IMPLEMENTED_METHODS: ReadonlySet<BridgeMethod> = new Set([
   'automation.run',
   'automation.status',
   'automation.cancel',
-]);
-
-export const BRIDGE_CAPABILITIES = {
-  assetRegistry: ['assetRegistry.list', 'assetRegistry.get'] as BridgeMethod[],
-  automationTests: ['automation.list', 'automation.run', 'automation.status', 'automation.cancel'] as BridgeMethod[],
-} as const;
-
-/** Methods declared in schema but not yet E2E-verified — return unsupported, not empty success. */
-export const BRIDGE_STUB_METHODS: ReadonlySet<BridgeMethod> = new Set([
   'blueprint.listDerived',
   'blueprint.findImplementations',
   'blueprint.propertyOverrides',
   'logs.tail',
   'pie.getState',
 ]);
+
+export const BRIDGE_CAPABILITIES = {
+  assetRegistry: ['assetRegistry.list', 'assetRegistry.get'] as BridgeMethod[],
+  automationTests: ['automation.list', 'automation.run', 'automation.status', 'automation.cancel'] as BridgeMethod[],
+  blueprintGraph: ['blueprint.listDerived', 'blueprint.findImplementations', 'blueprint.propertyOverrides'] as BridgeMethod[],
+  pieState: ['pie.getState'] as BridgeMethod[],
+  unrealLogs: ['logs.tail'] as BridgeMethod[],
+} as const;
+
+/** Methods declared in schema but not yet E2E-verified — return unsupported, not empty success. */
+export const BRIDGE_STUB_METHODS: ReadonlySet<BridgeMethod> = new Set([]);
 
 export type BridgeCapability = keyof typeof BRIDGE_CAPABILITIES;
 
@@ -77,4 +79,9 @@ export const CPP_BRIDGE_METHODS: ReadonlySet<string> = new Set([
   'automation.run',
   'automation.status',
   'automation.cancel',
+  'blueprint.listDerived',
+  'blueprint.findImplementations',
+  'blueprint.propertyOverrides',
+  'logs.tail',
+  'pie.getState',
 ]);

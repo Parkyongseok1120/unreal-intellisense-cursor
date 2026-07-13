@@ -2,7 +2,7 @@
   "name": "ue5-8-cursor",
   "displayName": "UE5_8 Cursor",
   "description": "Cursor dedicated Unreal Engine 5.8 C++ workflow — IntelliSense, build, Live Coding, MCP",
-  "version": "7.0.11",
+  "version": "7.0.12",
   "publisher": "truesync",
   "license": "MIT",
   "repository": {
@@ -123,6 +123,11 @@
       {
         "command": "ue58rider.goToImplementation",
         "title": "Go to Implementation (UE)",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.goToReferences",
+        "title": "Go to References (UE)",
         "category": "UE5_8 Cursor"
       },
       {
@@ -562,6 +567,30 @@
           "description": "HLSL completion provider 등록 (experimental scaffold).",
           "scope": "resource"
         },
+        "ue58rider.intellisense.reapplyHeaderContextOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Re-apply clangd header compile context after saving .h files.",
+          "scope": "resource"
+        },
+        "ue58rider.navigation.generateImplementation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer Generate implementation in .cpp quick fixes for header method declarations.",
+          "scope": "resource"
+        },
+        "ue58rider.navigation.pairedReferences": {
+          "type": "boolean",
+          "default": true,
+          "description": "Merge paired .h/.cpp references with clangd for Shift+F12.",
+          "scope": "resource"
+        },
+        "ue58rider.navigation.moduleReferenceScan": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan the current module for additional local references.",
+          "scope": "resource"
+        },
         "ue58rider.semantic.navigation.enabled": {
           "type": "boolean",
           "default": false,
@@ -759,9 +788,9 @@
         "when": "editorLangId == cpp && ue58rider.projectDetected"
       },
       {
-        "command": "ue58rider.debugLaunchEditor",
-        "key": "f5",
-        "when": "ue58rider.projectDetected && ue58rider.engineFound && editorLangId == cpp"
+        "command": "ue58rider.goToReferences",
+        "key": "shift+f12",
+        "when": "editorLangId == cpp && ue58rider.projectDetected"
       }
     ]
   },
@@ -773,6 +802,9 @@
     "prepackage": "npm run build && node scripts/fetch-llvm.mjs",
     "test": "node --test test/*.test.mjs",
     "test:ext-host": "node test/run-extension-host.mjs",
+    "benchmark:navigation": "node scripts/benchmark-navigation.mjs",
+    "benchmark:uht": "node scripts/benchmark-uht.mjs",
+    "gate:verify": "node scripts/gate-verify.mjs",
     "collect:quality-metrics": "node scripts/collect-quality-metrics.mjs",
     "generate:bridge-protocol": "node scripts/generate-bridge-protocol.mjs",
     "check:bridge-protocol": "node scripts/generate-bridge-protocol.mjs --check",

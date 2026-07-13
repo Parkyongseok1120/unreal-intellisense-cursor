@@ -14,6 +14,37 @@ import type { BuildConfiguration, BuildPlatform, UEInstallation, UEProject } fro
 export interface EditorProcess {
   pid: number;
   name: string;
+  commandLine?: string;
+}
+
+export function normalizePathForProcessMatch(filePath: string): string {
+  return path.resolve(filePath).replace(/\\/g, '/').toLowerCase();
+}
+
+export function editorProcessMatchesProject(process: EditorProcess, uprojectPath: string): boolean {
+  const commandLine = process.commandLine;
+  if (!commandLine) return false;
+
+  const normalizedLine = normalizePathForProcessMatch(commandLine);
+  const normalizedProject = normalizePathForProcessMatch(uprojectPath);
+  if (normalizedLine.includes(normalizedProject)) return true;
+
+  const projectFile = path.basename(normalizedProject);
+  return (
+    normalizedLine.includes(projectFile) &&
+    (normalizedLine.includes('-project') || normalizedLine.includes(`"${projectFile}`) || normalizedLine.endsWith(projectFile))
+  );
+}
+
+export function filterEditorProcessesByProject(
+  processes: EditorProcess[],
+  uprojectPath: string,
+): EditorProcess[] {
+  const withCommandLine = processes.filter((process) => process.commandLine);
+  if (withCommandLine.length === 0) return processes;
+
+  const matched = withCommandLine.filter((process) => editorProcessMatchesProject(process, uprojectPath));
+  return matched;
 }
 
 const NATVIS_RELATIVE = path.join('Engine', 'Extras', 'VisualStudioDebugging', 'Unreal.natvis');
@@ -36,6 +67,7 @@ export function resolveEditorProgramPath(
   engineRoot: string,
   configuration: BuildConfiguration = 'Development',
   platform: BuildPlatform = 'Win64',
+  options?: { allowDevelopmentFallback?: boolean },
 ): string {
   const host = getHostPlatform();
   const platDir = resolveBinariesPlatformDir();
@@ -44,6 +76,9 @@ export function resolveEditorProgramPath(
   if (host === 'win32' && configuration !== 'Development' && configuration !== 'Shipping') {
     const candidate = path.join(binDir, `UnrealEditor-${platform}-${configuration}.exe`);
     if (fs.existsSync(candidate)) return path.normalize(candidate);
+    if (options?.allowDevelopmentFallback === false) {
+      throw new Error(`DebugGame binary not found: ${candidate}. Build DebugGame first.`);
+    }
   }
 
   return resolveEditorPath(engineRoot);
@@ -53,6 +88,7 @@ export function resolveGameExecutable(
   project: UEProject,
   configuration: BuildConfiguration = 'Development',
   platform: BuildPlatform = 'Win64',
+  options?: { allowDevelopmentFallback?: boolean },
 ): string {
   const platDir = resolveBinariesPlatformDir();
   const ext = getHostPlatform() === 'win32' ? '.exe' : '';
@@ -61,6 +97,9 @@ export function resolveGameExecutable(
   if (getHostPlatform() === 'win32' && configuration !== 'Development' && configuration !== 'Shipping') {
     const candidate = path.join(binDir, `${gameName}-${platform}-${configuration}${ext}`);
     if (fs.existsSync(candidate)) return path.normalize(candidate);
+    if (options?.allowDevelopmentFallback === false) {
+      throw new Error(`DebugGame game binary not found: ${candidate}. Build DebugGame first.`);
+    }
   }
   return path.join(binDir, `${gameName}${ext}`);
 }
@@ -93,23 +132,40 @@ export async function findUnrealEditorProcesses(): Promise<EditorProcess[]> {
 
 async function findWindowsEditorProcesses(): Promise<EditorProcess[]> {
   try {
+    const command = [
+      "Get-CimInstance Win32_Process -Filter \"Name = 'UnrealEditor.exe'\"",
+      'Select-Object ProcessId, CommandLine',
+      'ConvertTo-Json -Compress',
+    ].join(' | ');
     const result = await spawnAsync(
-      'powershell',
-      [
-        '-NoProfile',
-        '-Command',
-        "Get-Process -Name 'UnrealEditor' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id",
-      ],
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', command],
       { shell: false },
     );
     if (result.exitCode !== 0) return [];
 
-    const pids = result.stdout
-      .split(/\r?\n/)
-      .map((l) => parseInt(l.trim(), 10))
-      .filter((n) => !isNaN(n) && n > 0);
+    const records = parseJsonArray<{
+      ProcessId?: number;
+      CommandLine?: string;
+    }>(result.stdout);
 
-    return pids.map((pid) => ({ pid, name: 'UnrealEditor.exe' }));
+    return records
+      .map((record) => ({
+        pid: Number(record.ProcessId ?? 0),
+        name: 'UnrealEditor.exe',
+        commandLine: record.CommandLine,
+      }))
+      .filter((process) => process.pid > 0);
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonArray<T>(raw: string): T[] {
+  if (!raw.trim()) return [];
+  try {
+    const value = JSON.parse(raw) as T | T[];
+    return Array.isArray(value) ? value : [value];
   } catch {
     return [];
   }
@@ -117,13 +173,17 @@ async function findWindowsEditorProcesses(): Promise<EditorProcess[]> {
 
 async function findUnixEditorProcesses(name: string): Promise<EditorProcess[]> {
   try {
-    const result = await spawnAsync('pgrep', ['-f', name], { shell: false });
+    const result = await spawnAsync('ps', ['-axo', 'pid=,comm=,args=']);
     if (result.exitCode !== 0) return [];
-    const pids = result.stdout
-      .split(/\r?\n/)
-      .map((l) => parseInt(l.trim(), 10))
-      .filter((n) => !isNaN(n) && n > 0);
-    return pids.map((pid) => ({ pid, name }));
+    return result.stdout.split(/\r?\n/).flatMap((line) => {
+      const match = line.trim().match(/^(\d+)\s+(\S+)\s*(.*)$/);
+      if (!match || !new RegExp(name, 'i').test(match[2])) return [];
+      return [{
+        pid: Number(match[1]),
+        name: match[2],
+        commandLine: match[3]?.trim() || undefined,
+      }];
+    });
   } catch {
     return [];
   }

@@ -24,6 +24,7 @@ export class StatusBarManager implements vscode.Disposable {
   private indexCounts = { assets: 0, reflection: 0 };
   private intelliSenseMode: IntelliSenseMode = 'missing';
   private provisionalDb = false;
+  private provisionalHeaderCount = 0;
   private compileParity = 1;
   private compileParitySynthetic = false;
   private modelStatus: 'ready' | 'partial' | 'stale' | 'missing' = 'missing';
@@ -66,6 +67,11 @@ export class StatusBarManager implements vscode.Disposable {
   setIntelliSense(mode: IntelliSenseMode, options?: { provisional?: boolean }): void {
     this.intelliSenseMode = mode;
     this.provisionalDb = options?.provisional ?? mode === 'partial';
+    this.updateIntelliSenseItem();
+  }
+
+  setProvisionalHeaderCount(count: number): void {
+    this.provisionalHeaderCount = Math.max(0, count);
     this.updateIntelliSenseItem();
   }
 
@@ -147,6 +153,8 @@ export class StatusBarManager implements vscode.Disposable {
     this.updateIntelliSenseItem();
     this.mcpPort = settings.mcpPort || settings.mcpPortDefault;
     this.indexCounts = await getIndexCounts(ctx.project.projectRoot);
+    const { countProvisionalHeaders } = await import('../cursor/headerCompileContextManager');
+    this.provisionalHeaderCount = countProvisionalHeaders(ctx.project.projectRoot);
     this.updateEditorItem();
     this.updateMcpItem();
     this.updateIndexItems();
@@ -184,9 +192,15 @@ export class StatusBarManager implements vscode.Disposable {
           ].join('\n')
       : undefined;
 
+    const headerNote = this.provisionalHeaderCount > 0
+      ? `Provisional header context: ${this.provisionalHeaderCount} open header(s) without authoritative TU pairing. Click to Refresh IntelliSense.`
+      : undefined;
+
     switch (this.intelliSenseMode) {
       case 'ready':
-        this.intelliSenseItem.text = this.privateMemoryBudget === 'fail'
+        this.intelliSenseItem.text = this.provisionalHeaderCount > 0
+          ? `$(warning) IntelliSense: Header Context`
+          : this.privateMemoryBudget === 'fail'
           ? '$(warning) IntelliSense: Memory Budget'
           : this.indexingPhase === 'project-source-indexing'
           ? '$(loading~spin) IntelliSense: Project Indexing'
@@ -199,13 +213,20 @@ export class StatusBarManager implements vscode.Disposable {
           'compile_commands.json + clangd ready.',
           modelNote,
           parityNote,
+          headerNote,
           indexNote,
         ].filter((line): line is string => !!line).join('\n');
         break;
       case 'partial':
-        this.intelliSenseItem.text = `$(warning) IntelliSense: ${this.modelStatus === 'stale' ? 'Stale' : 'Provisional'}`;
-        this.intelliSenseItem.tooltip =
-          `Synthetic/provisional compile database — clangd advisories may differ from UBT/MSVC build results. Run an Editor build for authoritative flags.\n${modelNote}\n${parityNote}`;
+        this.intelliSenseItem.text = this.provisionalHeaderCount > 0
+          ? `$(warning) IntelliSense: Header Context`
+          : `$(warning) IntelliSense: ${this.modelStatus === 'stale' ? 'Stale' : 'Provisional'}`;
+        this.intelliSenseItem.tooltip = [
+          'Synthetic/provisional compile database — clangd advisories may differ from UBT/MSVC build results. Run an Editor build for authoritative flags.',
+          modelNote,
+          parityNote,
+          headerNote,
+        ].filter((line): line is string => !!line).join('\n');
         break;
       default:
         this.intelliSenseItem.text = '$(error) IntelliSense: Missing';

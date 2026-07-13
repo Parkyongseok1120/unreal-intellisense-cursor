@@ -14,6 +14,11 @@ export interface DebugConfigInput {
   engine: UEInstallation;
   debugConfiguration: BuildConfiguration;
   platform: string;
+  autoBuildBeforeLaunch?: boolean;
+}
+
+function launchExtras(autoBuildBeforeLaunch: boolean, task: string): Record<string, unknown> {
+  return autoBuildBeforeLaunch ? { preLaunchTask: task } : {};
 }
 
 export function buildTasksJson(input: DebugConfigInput): object {
@@ -54,7 +59,7 @@ export function buildTasksJson(input: DebugConfigInput): object {
 }
 
 export function buildLaunchJson(input: DebugConfigInput): object {
-  const { project, engine, debugConfiguration, platform } = input;
+  const { project, engine, debugConfiguration, platform, autoBuildBeforeLaunch = true } = input;
   const natvis = resolveNatvisPath(engine.root);
   const symbols = buildSymbolSearchPaths(project, engine);
   const gameExe = resolveGameExecutable(project, debugConfiguration, platform as 'Win64');
@@ -88,7 +93,7 @@ export function buildLaunchJson(input: DebugConfigInput): object {
         args: [project.uprojectPath],
         cwd: project.projectRoot,
         stopAtEntry: false,
-        preLaunchTask: DEBUG_TASK_BUILD_EDITOR,
+        ...launchExtras(autoBuildBeforeLaunch, DEBUG_TASK_BUILD_EDITOR),
       }),
       makeConfig('UE5_8: Attach to Unreal Editor', {
         request: 'attach',
@@ -101,7 +106,7 @@ export function buildLaunchJson(input: DebugConfigInput): object {
         args: [`-project=${project.uprojectPath}`],
         cwd: project.projectRoot,
         stopAtEntry: false,
-        preLaunchTask: DEBUG_TASK_BUILD_GAME,
+        ...launchExtras(autoBuildBeforeLaunch, DEBUG_TASK_BUILD_GAME),
       }),
       makeConfig(`UE5_8: Play In Editor (${debugConfiguration})`, {
         request: 'launch',
@@ -109,7 +114,7 @@ export function buildLaunchJson(input: DebugConfigInput): object {
         args: ['-game', `-project=${project.uprojectPath}`],
         cwd: project.projectRoot,
         stopAtEntry: false,
-        preLaunchTask: DEBUG_TASK_BUILD_EDITOR,
+        ...launchExtras(autoBuildBeforeLaunch, DEBUG_TASK_BUILD_EDITOR),
       }),
     ],
   };

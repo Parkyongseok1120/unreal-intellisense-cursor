@@ -2,15 +2,23 @@ import * as vscode from 'vscode';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 import { baseCppDebuggerOptions, resolveEditorProgramPath, resolveServerExecutable } from '../platform/debug';
+import { resolveDebugWorkspaceFolder } from '../commands/debugCommands';
+
+const trackedMultiplayerSessions = new Set<string>();
+
+export async function stopMultiplayerDebug(): Promise<void> {
+  const session = vscode.debug.activeDebugSession;
+  if (session) {
+    await vscode.debug.stopDebugging(session);
+  }
+  trackedMultiplayerSessions.clear();
+  vscode.window.showInformationMessage('UE5_8 Cursor: Multiplayer debug sessions stopped.');
+}
 
 export interface MultiplayerRunOptions {
   players: number;
   listenServer: boolean;
   dedicatedServer: boolean;
-}
-
-function getProjectWorkspaceFolder(project: { projectRoot: string }): vscode.WorkspaceFolder | undefined {
-  return vscode.workspace.getWorkspaceFolder(vscode.Uri.file(project.projectRoot));
 }
 
 export async function launchMultiplayerDebug(
@@ -23,7 +31,7 @@ export async function launchMultiplayerDebug(
     return;
   }
 
-  const folder = getProjectWorkspaceFolder(ctx.project);
+  const folder = resolveDebugWorkspaceFolder(ctx.project);
   if (!folder) {
     vscode.window.showWarningMessage(
       'UE5_8 Cursor: 프로젝트 루트가 workspace에 포함되어 있지 않습니다. .code-workspace로 프로젝트를 열어주세요.',
@@ -118,8 +126,12 @@ export async function launchMultiplayerDebug(
   for (const session of sessions) {
     const started = await session;
     if (!started) {
+      await stopMultiplayerDebug();
       vscode.window.showErrorMessage('UE5_8 Cursor: failed to start one or more multiplayer debug sessions.');
       return;
+    }
+    if (vscode.debug.activeDebugSession?.name) {
+      trackedMultiplayerSessions.add(vscode.debug.activeDebugSession.name);
     }
   }
 }

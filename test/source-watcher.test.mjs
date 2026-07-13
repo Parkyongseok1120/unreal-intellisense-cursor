@@ -26,6 +26,12 @@ describe('sourceWatcher invalidation', () => {
     assert.equal(invalidation.shouldRefreshReflectionOnly(event), true);
   });
 
+  it('classifies cpp change as reflection-only path', () => {
+    const event = invalidation.classifySourceChange(`${root}/Source/Game/Private/Foo.cpp`, false, root);
+    assert.equal(event.scope, 'reflection');
+    assert.equal(invalidation.shouldRefreshCompileDatabase(event), false);
+  });
+
   it('classifies Build.cs as module invalidate', () => {
     const event = invalidation.classifySourceChange(`${root}/Source/Game/Game.Build.cs`, false, root);
     assert.equal(event.scope, 'module');

@@ -13,12 +13,28 @@ export interface UFunctionInfo {
   line?: number;
 }
 
+export interface DeclarationRange {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+}
+
+export interface SymbolMember {
+  kind: 'property' | 'function';
+  name: string;
+  line: number;
+}
+
 export interface UClassReflection {
   className: string;
   superClass?: string;
   filePath: string;
+  classLine?: number;
+  declarationRange?: DeclarationRange;
   properties: UPropertyInfo[];
   functions: UFunctionInfo[];
+  members?: SymbolMember[];
 }
 
 export function parseGeneratedHeader(content: string, filePath: string): UClassReflection[] {
