@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-13T12:40:12.166Z",
-  "corpusVersion": 1,
+  "generatedAt": "2026-07-13T14:52:59.694Z",
+  "corpusVersion": 2,
   "metrics": {
     "definitionPrecision": 1,
     "classLinePrecision": 1,
@@ -9,31 +9,38 @@
     "symbolIdPrecision": 1,
     "hierarchyAccuracy": 1,
     "referencePrecision": 1,
-    "referenceRecall": 0.9
+    "referenceRecall": 1
   },
   "counts": {
     "classLine": {
-      "correct": 10,
-      "total": 10,
+      "correct": 65,
+      "total": 65,
       "failures": [],
       "precision": 1
     },
     "enrichment": {
-      "correct": 10,
-      "total": 10,
+      "correct": 65,
+      "total": 65,
       "failures": [],
       "precision": 1
     },
     "symbolIds": {
-      "correct": 1,
-      "total": 1,
+      "correct": 11,
+      "total": 11,
       "precision": 1
     },
     "hierarchy": {
-      "correct": 1,
-      "total": 1,
+      "correct": 11,
+      "total": 11,
       "failures": [],
       "precision": 1
+    },
+    "references": {
+      "precision": 1,
+      "recall": 1,
+      "correct": 30,
+      "total": 30,
+      "failures": []
     }
   },
   "thresholds": {

@@ -104,11 +104,12 @@ async function findFileBelow(dir: string, fileName: string, depth: number): Prom
 export async function buildUhtCacheKey(project: UEProject, manifestPath?: string): Promise<string> {
   const manifest = manifestPath ?? (await findUhtManifest(project));
   if (!manifest) return `${project.projectRoot.toLowerCase()}:no-manifest`;
+  const targetName = path.basename(manifest, '.uhtmanifest');
   try {
     const stat = await fs.promises.stat(manifest);
-    return `${path.normalize(manifest).toLowerCase()}:${stat.mtimeMs}`;
+    return `${targetName}:${path.normalize(manifest).toLowerCase()}:${stat.mtimeMs}`;
   } catch {
-    return `${path.normalize(manifest).toLowerCase()}:missing`;
+    return `${targetName}:${path.normalize(manifest).toLowerCase()}:missing`;
   }
 }
 

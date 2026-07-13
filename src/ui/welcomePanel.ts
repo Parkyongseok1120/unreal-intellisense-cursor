@@ -25,6 +25,10 @@ export async function showWelcomePanel(settings: UE5_8CursorSettings): Promise<v
       description: 'ModelContextProtocol + AllToolsets 플러그인 활성화',
     },
     {
+      label: '$(arrow-right) Install Editor Bridge Plugin',
+      description: 'UE58CursorBridge — live assets, logs, blueprint RPC',
+    },
+    {
       label: '$(arrow-right) Setup UE 5.8 Project',
       description: 'IntelliSense + Debug + MCP 전체 설정',
     },
@@ -56,7 +60,9 @@ export async function showWelcomePanel(settings: UE5_8CursorSettings): Promise<v
   });
 
   if (!picked) return;
-  if (picked.label.includes('Setup UE')) {
+  if (picked.label.includes('Install Editor Bridge')) {
+    await vscode.commands.executeCommand('ue58rider.installCursorBridgePlugin');
+  } else if (picked.label.includes('Setup UE')) {
     await vscode.commands.executeCommand('ue58rider.setupProject');
   } else if (picked.label.includes('Multi-Root')) {
     await vscode.commands.executeCommand('ue58rider.openMultiRootWorkspace');

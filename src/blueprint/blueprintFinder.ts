@@ -36,7 +36,7 @@ export async function findBlueprintsForClass(
       for (const bp of derived) {
         add({
           assetPath: bp.assetPath,
-          assetName: bp.assetName ?? path.basename(bp.assetPath),
+          assetName: bp.assetName ?? bp.assetPath.split('/').pop()?.split('.')[0] ?? path.basename(bp.assetPath),
           source: 'bridge',
         });
       }

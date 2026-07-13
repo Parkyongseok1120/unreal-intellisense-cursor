@@ -30,6 +30,7 @@ export class StatusBarManager implements vscode.Disposable {
   private modelStatus: 'ready' | 'partial' | 'stale' | 'missing' = 'missing';
   private modelProvenance = 'unknown';
   private bridgeConnected = false;
+  private bridgePluginMissing = false;
   private indexPlan: CompileDbIndexPlan | undefined;
   private promotedPluginCount = 0;
   private indexingPhase: IntelliSenseIndexPhase | undefined;
@@ -86,6 +87,11 @@ export class StatusBarManager implements vscode.Disposable {
 
   setBridgeStatus(info: { connected: boolean }): void {
     this.bridgeConnected = info.connected;
+    this.updateMcpItem();
+  }
+
+  setBridgePluginMissing(missing: boolean): void {
+    this.bridgePluginMissing = missing;
     this.updateMcpItem();
   }
 
@@ -246,8 +252,17 @@ export class StatusBarManager implements vscode.Disposable {
   }
 
   private updateMcpItem(): void {
+    if (!this.bridgeConnected && this.bridgePluginMissing) {
+      this.mcpItem.text = '$(warning) Bridge:install';
+      this.mcpItem.command = Commands.InstallCursorBridgePlugin;
+      this.mcpItem.tooltip = 'UE58CursorBridge is not installed. Click to install the editor bridge plugin.';
+      this.mcpItem.show();
+      return;
+    }
+    this.mcpItem.command = 'ue58rider.showMcpDiagnostics';
     const bridge = this.bridgeConnected ? ' Bridge:on' : '';
     this.mcpItem.text = this.mcpConnected ? `$(plug) MCP:${this.mcpPort}${bridge}` : `$(plug) MCP:off${bridge}`;
+    this.mcpItem.tooltip = undefined;
     this.mcpItem.show();
   }
 

@@ -2,13 +2,15 @@ import * as vscode from 'vscode';
 import { mcpCallLogical } from './mcpBlueprintBridge';
 import { findBlueprintsForClass } from './blueprintFinder';
 import { openAssetInEditor } from './blueprintEditor';
+import type { EditorBridgeClient } from '../editorBridge/editorBridgeClient';
 import type { UEInstallation, UEProject } from '../types';
 
 export interface UFunctionBlueprintUsage {
   assetPath: string;
   assetName: string;
   nodeName?: string;
-  source: 'mcp' | 'heuristic';
+  graphName?: string;
+  source: 'bridge' | 'mcp' | 'heuristic';
 }
 
 export async function findUFunctionBlueprintUsages(
@@ -16,21 +18,42 @@ export async function findUFunctionBlueprintUsages(
   _engine: UEInstallation | undefined,
   className: string,
   functionName: string,
+  bridge?: EditorBridgeClient,
 ): Promise<UFunctionBlueprintUsage[]> {
   const seen = new Set<string>();
   const results: UFunctionBlueprintUsage[] = [];
 
   const add = (u: UFunctionBlueprintUsage) => {
-    const key = `${u.assetPath}::${u.nodeName ?? ''}`.toLowerCase();
+    const key = `${u.assetPath}::${u.nodeName ?? ''}::${u.graphName ?? ''}`.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
     results.push(u);
   };
 
-  const res = await mcpCallLogical('findFunctionReferences', { className, functionName });
-  if (res.ok && res.text) {
-    for (const parsed of parseMcpUsageText(res.text)) {
-      add({ ...parsed, source: 'mcp' });
+  if (bridge?.isConnected()) {
+    try {
+      const nodes = await bridge.findUFunctionNodes(className, functionName);
+      for (const node of nodes) {
+        add({
+          assetPath: node.assetPath,
+          assetName: node.assetPath.split('/').pop()?.split('.')[0] ?? '',
+          nodeName: node.nodeName,
+          graphName: node.graphName,
+          source: 'bridge',
+        });
+      }
+      if (results.length > 0) return results;
+    } catch {
+      // fall through
+    }
+  }
+
+  if (results.length === 0) {
+    const res = await mcpCallLogical('findFunctionReferences', { className, functionName });
+    if (res.ok && res.text) {
+      for (const parsed of parseMcpUsageText(res.text)) {
+        add({ ...parsed, source: 'mcp' });
+      }
     }
   }
 

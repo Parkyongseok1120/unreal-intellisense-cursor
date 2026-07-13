@@ -171,18 +171,6 @@ export async function goToImplementation(getRuntime: RuntimeGetter): Promise<voi
     return;
   }
 
-  const definitionFallback = await collectFilteredClangdDefinitions(document, position);
-  const definitionBest = pickBestDefinitionLocation(
-    definitionFallback,
-    document,
-    symbol?.word,
-    pickOptions(document, runtime),
-  );
-  if (definitionBest && definitionBest.uri.fsPath.toLowerCase() !== document.fileName.toLowerCase()) {
-    await openLocation(definitionBest);
-    return;
-  }
-
   vscode.window.showWarningMessage('UE5_8 Cursor: Implementation not found.');
 }
 
@@ -202,22 +190,6 @@ export async function goToReferences(getRuntime: RuntimeGetter, moduleScan = tru
     moduleScan,
   });
 
-  if (ueRefs.length > 0) {
-    const unique = ueRefs;
-    if (unique.length === 1) {
-      await openLocation(unique[0]);
-      return;
-    }
-    const items = unique.map((loc) => ({
-      label: path.basename(loc.uri.fsPath),
-      description: loc.uri.fsPath,
-      location: loc,
-    }));
-    const picked = await vscode.window.showQuickPick(items, { placeHolder: 'UE References' });
-    if (picked) await openLocation(picked.location);
-    return;
-  }
-
   const clangdRaw = await vscode.commands.executeCommand<
     vscode.Location | vscode.Location[] | undefined
   >('vscode.executeReferenceProvider', document.uri, position);
@@ -225,23 +197,31 @@ export async function goToReferences(getRuntime: RuntimeGetter, moduleScan = tru
     Array.isArray(clangdRaw) ? clangdRaw : clangdRaw ? [clangdRaw] : [],
   );
 
-  if (clangdRefs.length === 0) {
-    vscode.window.showWarningMessage('UE5_8 Cursor: References not found.');
+  const merged: vscode.Location[] = [];
+  const seen = new Set<string>();
+  for (const loc of [...ueRefs, ...clangdRefs]) {
+    const key = `${loc.uri.fsPath}:${loc.range.start.line}:${loc.range.start.character}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(loc);
+  }
+
+  if (merged.length > 0) {
+    if (merged.length === 1) {
+      await openLocation(merged[0]);
+      return;
+    }
+    const items = merged.map((loc) => ({
+      label: path.basename(loc.uri.fsPath),
+      description: loc.uri.fsPath,
+      location: loc,
+    }));
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: 'References' });
+    if (picked) await openLocation(picked.location);
     return;
   }
 
-  if (clangdRefs.length === 1) {
-    await openLocation(clangdRefs[0]);
-    return;
-  }
-
-  const items = clangdRefs.map((loc) => ({
-    label: path.basename(loc.uri.fsPath),
-    description: loc.uri.fsPath,
-    location: loc,
-  }));
-  const picked = await vscode.window.showQuickPick(items, { placeHolder: 'References' });
-  if (picked) await openLocation(picked.location);
+  vscode.window.showWarningMessage('UE5_8 Cursor: References not found.');
 }
 
 export function registerUeNavigationCommands(

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-13T12:40:13.056Z",
+  "generatedAt": "2026-07-13T14:53:00.633Z",
   "source": "ci-merge",
   "areas": {
     "trust": {
@@ -57,7 +57,7 @@
     },
     "semantic": {
       "accuracy": 1,
-      "completeness": 0.9,
+      "completeness": 1,
       "resilience": 0.75,
       "performance": 0.72,
       "verification": 1,
@@ -68,7 +68,7 @@
         "semanticReferenceProvider": true,
         "definitionPrecision": 1,
         "referencePrecision": 1,
-        "referenceRecall": 0.9,
+        "referenceRecall": 1,
         "hierarchyAccuracy": 1,
         "navigationBenchmark": true
       }

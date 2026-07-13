@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "description": "Gate 5 navigation golden cases — class line, hierarchy, symbol ID",
   "cases": [
     {
@@ -71,6 +71,391 @@
       "className": "UMyWidget",
       "expectedClassLine": 5,
       "expectedParent": "UUserWidget"
+    },
+    {
+      "id": "gen-aactor-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"GameFramework/Actor.h\"\n#include \"AGenActor0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenActor0 : public AActor\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenActor0",
+      "expectedClassLine": 7,
+      "expectedParent": "AActor"
+    },
+    {
+      "id": "gen-aactor-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"GameFramework/Actor.h\"\n#include \"AGenActor1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenActor1 : public AActor\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenActor1",
+      "expectedClassLine": 8,
+      "expectedParent": "AActor"
+    },
+    {
+      "id": "gen-aactor-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"GameFramework/Actor.h\"\n#include \"AGenActor2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenActor2 : public AActor\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenActor2",
+      "expectedClassLine": 9,
+      "expectedParent": "AActor"
+    },
+    {
+      "id": "gen-apawn-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"GameFramework/Pawn.h\"\n#include \"AGenPawn0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenPawn0 : public APawn\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenPawn0",
+      "expectedClassLine": 7,
+      "expectedParent": "APawn"
+    },
+    {
+      "id": "gen-apawn-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"GameFramework/Pawn.h\"\n#include \"AGenPawn1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenPawn1 : public APawn\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenPawn1",
+      "expectedClassLine": 8,
+      "expectedParent": "APawn"
+    },
+    {
+      "id": "gen-apawn-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"GameFramework/Pawn.h\"\n#include \"AGenPawn2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenPawn2 : public APawn\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenPawn2",
+      "expectedClassLine": 9,
+      "expectedParent": "APawn"
+    },
+    {
+      "id": "gen-acharacter-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"GameFramework/Character.h\"\n#include \"AGenCharacter0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenCharacter0 : public ACharacter\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenCharacter0",
+      "expectedClassLine": 7,
+      "expectedParent": "ACharacter"
+    },
+    {
+      "id": "gen-acharacter-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"GameFramework/Character.h\"\n#include \"AGenCharacter1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenCharacter1 : public ACharacter\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenCharacter1",
+      "expectedClassLine": 8,
+      "expectedParent": "ACharacter"
+    },
+    {
+      "id": "gen-acharacter-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"GameFramework/Character.h\"\n#include \"AGenCharacter2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenCharacter2 : public ACharacter\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenCharacter2",
+      "expectedClassLine": 9,
+      "expectedParent": "ACharacter"
+    },
+    {
+      "id": "gen-aplayercontroller-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"GameFramework/PlayerController.h\"\n#include \"AGenPlayerController0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenPlayerController0 : public APlayerController\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenPlayerController0",
+      "expectedClassLine": 7,
+      "expectedParent": "APlayerController"
+    },
+    {
+      "id": "gen-aplayercontroller-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"GameFramework/PlayerController.h\"\n#include \"AGenPlayerController1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenPlayerController1 : public APlayerController\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenPlayerController1",
+      "expectedClassLine": 8,
+      "expectedParent": "APlayerController"
+    },
+    {
+      "id": "gen-aplayercontroller-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"GameFramework/PlayerController.h\"\n#include \"AGenPlayerController2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenPlayerController2 : public APlayerController\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenPlayerController2",
+      "expectedClassLine": 9,
+      "expectedParent": "APlayerController"
+    },
+    {
+      "id": "gen-agamemodebase-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"GameFramework/GameModeBase.h\"\n#include \"AGenGameModeBase0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenGameModeBase0 : public AGameModeBase\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenGameModeBase0",
+      "expectedClassLine": 7,
+      "expectedParent": "AGameModeBase"
+    },
+    {
+      "id": "gen-agamemodebase-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"GameFramework/GameModeBase.h\"\n#include \"AGenGameModeBase1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenGameModeBase1 : public AGameModeBase\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenGameModeBase1",
+      "expectedClassLine": 8,
+      "expectedParent": "AGameModeBase"
+    },
+    {
+      "id": "gen-agamemodebase-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"GameFramework/GameModeBase.h\"\n#include \"AGenGameModeBase2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenGameModeBase2 : public AGameModeBase\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenGameModeBase2",
+      "expectedClassLine": 9,
+      "expectedParent": "AGameModeBase"
+    },
+    {
+      "id": "gen-uactorcomponent-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Components/ActorComponent.h\"\n#include \"AGenActorComponent0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenActorComponent0 : public UActorComponent\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenActorComponent0",
+      "expectedClassLine": 7,
+      "expectedParent": "UActorComponent"
+    },
+    {
+      "id": "gen-uactorcomponent-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Components/ActorComponent.h\"\n#include \"AGenActorComponent1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenActorComponent1 : public UActorComponent\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenActorComponent1",
+      "expectedClassLine": 8,
+      "expectedParent": "UActorComponent"
+    },
+    {
+      "id": "gen-uactorcomponent-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"Components/ActorComponent.h\"\n#include \"AGenActorComponent2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenActorComponent2 : public UActorComponent\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenActorComponent2",
+      "expectedClassLine": 9,
+      "expectedParent": "UActorComponent"
+    },
+    {
+      "id": "gen-uscenecomponent-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Components/SceneComponent.h\"\n#include \"AGenSceneComponent0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenSceneComponent0 : public USceneComponent\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenSceneComponent0",
+      "expectedClassLine": 7,
+      "expectedParent": "USceneComponent"
+    },
+    {
+      "id": "gen-uscenecomponent-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Components/SceneComponent.h\"\n#include \"AGenSceneComponent1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenSceneComponent1 : public USceneComponent\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenSceneComponent1",
+      "expectedClassLine": 8,
+      "expectedParent": "USceneComponent"
+    },
+    {
+      "id": "gen-uscenecomponent-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"Components/SceneComponent.h\"\n#include \"AGenSceneComponent2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenSceneComponent2 : public USceneComponent\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenSceneComponent2",
+      "expectedClassLine": 9,
+      "expectedParent": "USceneComponent"
+    },
+    {
+      "id": "gen-ugameinstancesubsystem-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Subsystems/GameInstanceSubsystem.h\"\n#include \"AGenGameInstanceSubsystem0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenGameInstanceSubsystem0 : public UGameInstanceSubsystem\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenGameInstanceSubsystem0",
+      "expectedClassLine": 7,
+      "expectedParent": "UGameInstanceSubsystem"
+    },
+    {
+      "id": "gen-ugameinstancesubsystem-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Subsystems/GameInstanceSubsystem.h\"\n#include \"AGenGameInstanceSubsystem1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenGameInstanceSubsystem1 : public UGameInstanceSubsystem\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenGameInstanceSubsystem1",
+      "expectedClassLine": 8,
+      "expectedParent": "UGameInstanceSubsystem"
+    },
+    {
+      "id": "gen-ugameinstancesubsystem-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"Subsystems/GameInstanceSubsystem.h\"\n#include \"AGenGameInstanceSubsystem2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenGameInstanceSubsystem2 : public UGameInstanceSubsystem\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenGameInstanceSubsystem2",
+      "expectedClassLine": 9,
+      "expectedParent": "UGameInstanceSubsystem"
+    },
+    {
+      "id": "gen-uuserwidget-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Blueprint/UserWidget.h\"\n#include \"AGenUserWidget0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenUserWidget0 : public UUserWidget\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenUserWidget0",
+      "expectedClassLine": 7,
+      "expectedParent": "UUserWidget"
+    },
+    {
+      "id": "gen-uuserwidget-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Blueprint/UserWidget.h\"\n#include \"AGenUserWidget1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenUserWidget1 : public UUserWidget\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenUserWidget1",
+      "expectedClassLine": 8,
+      "expectedParent": "UUserWidget"
+    },
+    {
+      "id": "gen-uuserwidget-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"Blueprint/UserWidget.h\"\n#include \"AGenUserWidget2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenUserWidget2 : public UUserWidget\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenUserWidget2",
+      "expectedClassLine": 9,
+      "expectedParent": "UUserWidget"
+    },
+    {
+      "id": "gen-uobject-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"UObject/Object.h\"\n#include \"AGenObject0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenObject0 : public UObject\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenObject0",
+      "expectedClassLine": 7,
+      "expectedParent": "UObject"
+    },
+    {
+      "id": "gen-uobject-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"UObject/Object.h\"\n#include \"AGenObject1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenObject1 : public UObject\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenObject1",
+      "expectedClassLine": 8,
+      "expectedParent": "UObject"
+    },
+    {
+      "id": "gen-uobject-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"UObject/Object.h\"\n#include \"AGenObject2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenObject2 : public UObject\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenObject2",
+      "expectedClassLine": 9,
+      "expectedParent": "UObject"
+    },
+    {
+      "id": "gen-udataasset-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Engine/DataAsset.h\"\n#include \"AGenDataAsset0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenDataAsset0 : public UDataAsset\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenDataAsset0",
+      "expectedClassLine": 7,
+      "expectedParent": "UDataAsset"
+    },
+    {
+      "id": "gen-udataasset-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Engine/DataAsset.h\"\n#include \"AGenDataAsset1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenDataAsset1 : public UDataAsset\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenDataAsset1",
+      "expectedClassLine": 8,
+      "expectedParent": "UDataAsset"
+    },
+    {
+      "id": "gen-udataasset-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"Engine/DataAsset.h\"\n#include \"AGenDataAsset2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenDataAsset2 : public UDataAsset\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenDataAsset2",
+      "expectedClassLine": 9,
+      "expectedParent": "UDataAsset"
+    },
+    {
+      "id": "gen-uaniminstance-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Animation/AnimInstance.h\"\n#include \"AGenAnimInstance0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenAnimInstance0 : public UAnimInstance\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenAnimInstance0",
+      "expectedClassLine": 7,
+      "expectedParent": "UAnimInstance"
+    },
+    {
+      "id": "gen-uaniminstance-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Animation/AnimInstance.h\"\n#include \"AGenAnimInstance1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenAnimInstance1 : public UAnimInstance\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenAnimInstance1",
+      "expectedClassLine": 8,
+      "expectedParent": "UAnimInstance"
+    },
+    {
+      "id": "gen-uaniminstance-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"Animation/AnimInstance.h\"\n#include \"AGenAnimInstance2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenAnimInstance2 : public UAnimInstance\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenAnimInstance2",
+      "expectedClassLine": 9,
+      "expectedParent": "UAnimInstance"
+    },
+    {
+      "id": "gen-ahud-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"GameFramework/HUD.h\"\n#include \"AGenHUD0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenHUD0 : public AHUD\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenHUD0",
+      "expectedClassLine": 7,
+      "expectedParent": "AHUD"
+    },
+    {
+      "id": "gen-ahud-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"GameFramework/HUD.h\"\n#include \"AGenHUD1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenHUD1 : public AHUD\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenHUD1",
+      "expectedClassLine": 8,
+      "expectedParent": "AHUD"
+    },
+    {
+      "id": "gen-ahud-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"GameFramework/HUD.h\"\n#include \"AGenHUD2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenHUD2 : public AHUD\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenHUD2",
+      "expectedClassLine": 9,
+      "expectedParent": "AHUD"
+    },
+    {
+      "id": "gen-uworldsubsystem-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Subsystems/WorldSubsystem.h\"\n#include \"AGenWorldSubsystem0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenWorldSubsystem0 : public UWorldSubsystem\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenWorldSubsystem0",
+      "expectedClassLine": 7,
+      "expectedParent": "UWorldSubsystem"
+    },
+    {
+      "id": "gen-uworldsubsystem-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Subsystems/WorldSubsystem.h\"\n#include \"AGenWorldSubsystem1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenWorldSubsystem1 : public UWorldSubsystem\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenWorldSubsystem1",
+      "expectedClassLine": 8,
+      "expectedParent": "UWorldSubsystem"
+    },
+    {
+      "id": "gen-uworldsubsystem-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"Subsystems/WorldSubsystem.h\"\n#include \"AGenWorldSubsystem2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenWorldSubsystem2 : public UWorldSubsystem\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenWorldSubsystem2",
+      "expectedClassLine": 9,
+      "expectedParent": "UWorldSubsystem"
+    },
+    {
+      "id": "gen-uinterface-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"UObject/Interface.h\"\n#include \"AGenInterface0.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenInterface0 : public UInterface\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenInterface0",
+      "expectedClassLine": 7,
+      "expectedParent": "UInterface"
+    },
+    {
+      "id": "gen-uinterface-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"UObject/Interface.h\"\n#include \"AGenInterface1.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenInterface1 : public UInterface\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenInterface1",
+      "expectedClassLine": 8,
+      "expectedParent": "UInterface"
+    },
+    {
+      "id": "gen-uinterface-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"Extra0.h\"\n#include \"Extra1.h\"\n#include \"Extra2.h\"\n#include \"UObject/Interface.h\"\n#include \"AGenInterface2.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGenInterface2 : public UInterface\n{\n\tGENERATED_BODY()\n};",
+      "className": "AGenInterface2",
+      "expectedClassLine": 9,
+      "expectedParent": "UInterface"
+    },
+    {
+      "id": "hier-gen-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AHierParent0 : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API AHierChild0 : public AHierParent0\n{\n\tGENERATED_BODY()\n};",
+      "className": "AHierChild0",
+      "expectedClassLine": 10,
+      "expectedParent": "AHierParent0"
+    },
+    {
+      "id": "hier-gen-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AHierParent1 : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API AHierChild1 : public AHierParent1\n{\n\tGENERATED_BODY()\n};",
+      "className": "AHierChild1",
+      "expectedClassLine": 10,
+      "expectedParent": "AHierParent1"
+    },
+    {
+      "id": "hier-gen-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AHierParent2 : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API AHierChild2 : public AHierParent2\n{\n\tGENERATED_BODY()\n};",
+      "className": "AHierChild2",
+      "expectedClassLine": 10,
+      "expectedParent": "AHierParent2"
+    },
+    {
+      "id": "hier-gen-3",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AHierParent3 : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API AHierChild3 : public AHierParent3\n{\n\tGENERATED_BODY()\n};",
+      "className": "AHierChild3",
+      "expectedClassLine": 10,
+      "expectedParent": "AHierParent3"
+    },
+    {
+      "id": "hier-gen-4",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AHierParent4 : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API AHierChild4 : public AHierParent4\n{\n\tGENERATED_BODY()\n};",
+      "className": "AHierChild4",
+      "expectedClassLine": 10,
+      "expectedParent": "AHierParent4"
+    },
+    {
+      "id": "hier-gen-5",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AHierParent5 : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API AHierChild5 : public AHierParent5\n{\n\tGENERATED_BODY()\n};",
+      "className": "AHierChild5",
+      "expectedClassLine": 10,
+      "expectedParent": "AHierParent5"
+    },
+    {
+      "id": "hier-gen-6",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AHierParent6 : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API AHierChild6 : public AHierParent6\n{\n\tGENERATED_BODY()\n};",
+      "className": "AHierChild6",
+      "expectedClassLine": 10,
+      "expectedParent": "AHierParent6"
+    },
+    {
+      "id": "hier-gen-7",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AHierParent7 : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API AHierChild7 : public AHierParent7\n{\n\tGENERATED_BODY()\n};",
+      "className": "AHierChild7",
+      "expectedClassLine": 10,
+      "expectedParent": "AHierParent7"
+    },
+    {
+      "id": "hier-gen-8",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AHierParent8 : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API AHierChild8 : public AHierParent8\n{\n\tGENERATED_BODY()\n};",
+      "className": "AHierChild8",
+      "expectedClassLine": 10,
+      "expectedParent": "AHierParent8"
+    },
+    {
+      "id": "hier-gen-9",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API AHierParent9 : public AActor\n{\n\tGENERATED_BODY()\n};\n\nUCLASS()\nclass MYGAME_API AHierChild9 : public AHierParent9\n{\n\tGENERATED_BODY()\n};",
+      "className": "AHierChild9",
+      "expectedClassLine": 10,
+      "expectedParent": "AHierParent9"
     }
   ],
   "hierarchyCases": [
@@ -78,6 +463,76 @@
       "id": "hierarchy-multi-inherit",
       "child": "ASecondActor",
       "parent": "AFirstActor",
+      "childLine": 10,
+      "parentLine": 4
+    },
+    {
+      "id": "hier-case-0",
+      "child": "AHierChild0",
+      "parent": "AHierParent0",
+      "childLine": 10,
+      "parentLine": 4
+    },
+    {
+      "id": "hier-case-1",
+      "child": "AHierChild1",
+      "parent": "AHierParent1",
+      "childLine": 10,
+      "parentLine": 4
+    },
+    {
+      "id": "hier-case-2",
+      "child": "AHierChild2",
+      "parent": "AHierParent2",
+      "childLine": 10,
+      "parentLine": 4
+    },
+    {
+      "id": "hier-case-3",
+      "child": "AHierChild3",
+      "parent": "AHierParent3",
+      "childLine": 10,
+      "parentLine": 4
+    },
+    {
+      "id": "hier-case-4",
+      "child": "AHierChild4",
+      "parent": "AHierParent4",
+      "childLine": 10,
+      "parentLine": 4
+    },
+    {
+      "id": "hier-case-5",
+      "child": "AHierChild5",
+      "parent": "AHierParent5",
+      "childLine": 10,
+      "parentLine": 4
+    },
+    {
+      "id": "hier-case-6",
+      "child": "AHierChild6",
+      "parent": "AHierParent6",
+      "childLine": 10,
+      "parentLine": 4
+    },
+    {
+      "id": "hier-case-7",
+      "child": "AHierChild7",
+      "parent": "AHierParent7",
+      "childLine": 10,
+      "parentLine": 4
+    },
+    {
+      "id": "hier-case-8",
+      "child": "AHierChild8",
+      "parent": "AHierParent8",
+      "childLine": 10,
+      "parentLine": 4
+    },
+    {
+      "id": "hier-case-9",
+      "child": "AHierChild9",
+      "parent": "AHierParent9",
       "childLine": 10,
       "parentLine": 4
     }
@@ -88,6 +543,66 @@
       "className": "AMyActor",
       "sourceFile": "C:/Project/Source/MyGame/Public/MyActor.h",
       "expectedId": "MyGame@AMyActor@c:/project/source/mygame/public/myactor.h"
+    },
+    {
+      "module": "Mod0",
+      "className": "ASym0",
+      "sourceFile": "C:/Project/Source/Mod0/Public/Sym0.h",
+      "expectedId": "Mod0@ASym0@c:/project/source/mod0/public/sym0.h"
+    },
+    {
+      "module": "Mod1",
+      "className": "ASym1",
+      "sourceFile": "C:/Project/Source/Mod1/Public/Sym1.h",
+      "expectedId": "Mod1@ASym1@c:/project/source/mod1/public/sym1.h"
+    },
+    {
+      "module": "Mod2",
+      "className": "ASym2",
+      "sourceFile": "C:/Project/Source/Mod2/Public/Sym2.h",
+      "expectedId": "Mod2@ASym2@c:/project/source/mod2/public/sym2.h"
+    },
+    {
+      "module": "Mod3",
+      "className": "ASym3",
+      "sourceFile": "C:/Project/Source/Mod3/Public/Sym3.h",
+      "expectedId": "Mod3@ASym3@c:/project/source/mod3/public/sym3.h"
+    },
+    {
+      "module": "Mod4",
+      "className": "ASym4",
+      "sourceFile": "C:/Project/Source/Mod4/Public/Sym4.h",
+      "expectedId": "Mod4@ASym4@c:/project/source/mod4/public/sym4.h"
+    },
+    {
+      "module": "Mod5",
+      "className": "ASym5",
+      "sourceFile": "C:/Project/Source/Mod5/Public/Sym5.h",
+      "expectedId": "Mod5@ASym5@c:/project/source/mod5/public/sym5.h"
+    },
+    {
+      "module": "Mod6",
+      "className": "ASym6",
+      "sourceFile": "C:/Project/Source/Mod6/Public/Sym6.h",
+      "expectedId": "Mod6@ASym6@c:/project/source/mod6/public/sym6.h"
+    },
+    {
+      "module": "Mod7",
+      "className": "ASym7",
+      "sourceFile": "C:/Project/Source/Mod7/Public/Sym7.h",
+      "expectedId": "Mod7@ASym7@c:/project/source/mod7/public/sym7.h"
+    },
+    {
+      "module": "Mod8",
+      "className": "ASym8",
+      "sourceFile": "C:/Project/Source/Mod8/Public/Sym8.h",
+      "expectedId": "Mod8@ASym8@c:/project/source/mod8/public/sym8.h"
+    },
+    {
+      "module": "Mod9",
+      "className": "ASym9",
+      "sourceFile": "C:/Project/Source/Mod9/Public/Sym9.h",
+      "expectedId": "Mod9@ASym9@c:/project/source/mod9/public/sym9.h"
     }
   ],
   "thresholds": {
@@ -95,5 +610,112 @@
     "referencePrecision": 0.98,
     "referenceRecall": 0.85,
     "hierarchyAccuracy": 0.95
-  }
+  },
+  "referenceCases": [
+    {
+      "id": "ref-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef0 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym0();\n\tint32 RefSym0;\n};",
+      "cpp": "#include \"ARef0.h\"\nvoid ARef0::UseRefSym0() { RefSym0 = 1; }\n",
+      "symbol": "RefSym0",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef1 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym1();\n\tint32 RefSym1;\n};",
+      "cpp": "#include \"ARef1.h\"\nvoid ARef1::UseRefSym1() { RefSym1 = 1; }\n",
+      "symbol": "RefSym1",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef2 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym2();\n\tint32 RefSym2;\n};",
+      "cpp": "#include \"ARef2.h\"\nvoid ARef2::UseRefSym2() { RefSym2 = 1; }\n",
+      "symbol": "RefSym2",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-3",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef3 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym3();\n\tint32 RefSym3;\n};",
+      "cpp": "#include \"ARef3.h\"\nvoid ARef3::UseRefSym3() { RefSym3 = 1; }\n",
+      "symbol": "RefSym3",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-4",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef4 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym4();\n\tint32 RefSym4;\n};",
+      "cpp": "#include \"ARef4.h\"\nvoid ARef4::UseRefSym4() { RefSym4 = 1; }\n",
+      "symbol": "RefSym4",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-5",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef5 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym5();\n\tint32 RefSym5;\n};",
+      "cpp": "#include \"ARef5.h\"\nvoid ARef5::UseRefSym5() { RefSym5 = 1; }\n",
+      "symbol": "RefSym5",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-6",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef6 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym6();\n\tint32 RefSym6;\n};",
+      "cpp": "#include \"ARef6.h\"\nvoid ARef6::UseRefSym6() { RefSym6 = 1; }\n",
+      "symbol": "RefSym6",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-7",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef7 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym7();\n\tint32 RefSym7;\n};",
+      "cpp": "#include \"ARef7.h\"\nvoid ARef7::UseRefSym7() { RefSym7 = 1; }\n",
+      "symbol": "RefSym7",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-8",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef8 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym8();\n\tint32 RefSym8;\n};",
+      "cpp": "#include \"ARef8.h\"\nvoid ARef8::UseRefSym8() { RefSym8 = 1; }\n",
+      "symbol": "RefSym8",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-9",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef9 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym9();\n\tint32 RefSym9;\n};",
+      "cpp": "#include \"ARef9.h\"\nvoid ARef9::UseRefSym9() { RefSym9 = 1; }\n",
+      "symbol": "RefSym9",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-10",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef10 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym10();\n\tint32 RefSym10;\n};",
+      "cpp": "#include \"ARef10.h\"\nvoid ARef10::UseRefSym10() { RefSym10 = 1; }\n",
+      "symbol": "RefSym10",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-11",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef11 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym11();\n\tint32 RefSym11;\n};",
+      "cpp": "#include \"ARef11.h\"\nvoid ARef11::UseRefSym11() { RefSym11 = 1; }\n",
+      "symbol": "RefSym11",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-12",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef12 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym12();\n\tint32 RefSym12;\n};",
+      "cpp": "#include \"ARef12.h\"\nvoid ARef12::UseRefSym12() { RefSym12 = 1; }\n",
+      "symbol": "RefSym12",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-13",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef13 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym13();\n\tint32 RefSym13;\n};",
+      "cpp": "#include \"ARef13.h\"\nvoid ARef13::UseRefSym13() { RefSym13 = 1; }\n",
+      "symbol": "RefSym13",
+      "expectedLocations": 2
+    },
+    {
+      "id": "ref-14",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARef14 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tvoid UseRefSym14();\n\tint32 RefSym14;\n};",
+      "cpp": "#include \"ARef14.h\"\nvoid ARef14::UseRefSym14() { RefSym14 = 1; }\n",
+      "symbol": "RefSym14",
+      "expectedLocations": 2
+    }
+  ]
 }

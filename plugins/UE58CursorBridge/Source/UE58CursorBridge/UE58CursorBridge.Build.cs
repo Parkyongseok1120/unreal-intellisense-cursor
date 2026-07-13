@@ -6,6 +6,6 @@ public class UE58CursorBridge : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "Json", "JsonUtilities" });
-		PrivateDependencyModuleNames.AddRange(new string[] { "AssetRegistry", "AutomationController", "HTTPServer" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "AssetRegistry", "AutomationController", "BlueprintGraph", "HTTPServer", "UnrealEd" });
 	}
 }

@@ -7,8 +7,12 @@ import {
   getOrBuildSemanticGraph,
   querySymbol,
 } from './semanticService';
+import { findUeReferences } from '../navigation/referenceNavigation';
+
+import type { EditorBridgeClient } from '../editorBridge/editorBridgeClient';
 
 type ProjectGetter = (document: vscode.TextDocument) => UEProject | undefined;
+type BridgeGetter = () => EditorBridgeClient | undefined;
 
 function symbolRange(sym: UeClassSymbol): vscode.Range {
   if (sym.declarationRange) {
@@ -100,6 +104,21 @@ export class UeSemanticReferenceProvider implements vscode.ReferenceProvider {
       }
     }
 
+    const project = this.getProject(document);
+    if (project) {
+      const scanned = findUeReferences(document, position, {
+        projectRoot: project.projectRoot,
+        moduleScan: true,
+      });
+      const seen = new Set(locations.map((l) => `${l.uri.fsPath}:${l.range.start.line}:${l.range.start.character}`));
+      for (const loc of scanned) {
+        const key = `${loc.uri.fsPath}:${loc.range.start.line}:${loc.range.start.character}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        locations.push(loc);
+      }
+    }
+
     return locations.length > 0 ? locations : undefined;
   }
 }
@@ -158,7 +177,10 @@ export class UeSemanticWorkspaceSymbolProvider implements vscode.WorkspaceSymbol
 }
 
 export class UeSemanticTypeHierarchyProvider implements vscode.TypeHierarchyProvider {
-  constructor(private readonly getProject: ProjectGetter) {}
+  constructor(
+    private readonly getProject: ProjectGetter,
+    private readonly getBridge?: BridgeGetter,
+  ) {}
 
   async prepareTypeHierarchy(
     document: vscode.TextDocument,
@@ -224,7 +246,7 @@ export class UeSemanticTypeHierarchyProvider implements vscode.TypeHierarchyProv
     const graph = await loadGraph(this.getProject, doc);
     if (!graph) return [];
 
-    return authoritativeSymbols(graph)
+    const subtypes = authoritativeSymbols(graph)
       .filter((s) => s.baseClass === item.name)
       .map(
         (s) =>
@@ -237,6 +259,30 @@ export class UeSemanticTypeHierarchyProvider implements vscode.TypeHierarchyProv
             symbolRange(s),
           ),
       );
+
+    const bridge = this.getBridge?.();
+    if (bridge) {
+      try {
+        const derived = await bridge.listDerivedBlueprints(item.name);
+        for (const bp of derived) {
+          const label = bp.assetPath?.split('/').pop()?.split('.')[0] ?? bp.className ?? 'Blueprint';
+          subtypes.push(
+            new vscode.TypeHierarchyItem(
+              vscode.SymbolKind.Interface,
+              label,
+              item.name,
+              item.uri,
+              item.range,
+              item.selectionRange ?? item.range,
+            ),
+          );
+        }
+      } catch {
+        // bridge optional
+      }
+    }
+
+    return subtypes;
   }
 }
 
@@ -286,6 +332,7 @@ export function registerSemanticNavigation(
   context: vscode.ExtensionContext,
   getProject: ProjectGetter,
   settings: UE5_8CursorSettings,
+  getBridge?: BridgeGetter,
 ): void {
   const selector = { language: 'cpp', scheme: 'file' };
 
@@ -295,7 +342,7 @@ export function registerSemanticNavigation(
       vscode.languages.registerReferenceProvider(selector, new UeSemanticReferenceProvider(getProject)),
       vscode.languages.registerDocumentSymbolProvider(selector, new UeSemanticDocumentSymbolProvider(getProject)),
       vscode.languages.registerWorkspaceSymbolProvider(new UeSemanticWorkspaceSymbolProvider(getProject)),
-      vscode.languages.registerTypeHierarchyProvider(selector, new UeSemanticTypeHierarchyProvider(getProject)),
+      vscode.languages.registerTypeHierarchyProvider(selector, new UeSemanticTypeHierarchyProvider(getProject, getBridge)),
       vscode.languages.registerInlayHintsProvider(selector, new UeSemanticInlayHintsProvider(getProject)),
     );
   }

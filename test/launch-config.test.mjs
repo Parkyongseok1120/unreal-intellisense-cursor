@@ -10,11 +10,16 @@ const launchConfig = loadTsModule('src/cursor/launchConfig.ts', {
     buildSymbolSearchPaths: () => 'C:/Proj/Binaries/Win64;C:/UE/Engine/Binaries/Win64',
     resolveEditorProgramPath: () => 'C:/UE/Engine/Binaries/Win64/UnrealEditor-Win64-DebugGame.exe',
     resolveGameExecutable: () => 'C:/Proj/Binaries/Win64/Project_MJS-Win64-DebugGame.exe',
+    resolveServerExecutable: () => 'C:/Proj/Binaries/Win64/Project_MJSServer.exe',
     resolveNatvisPath: (root) => path.join(root, 'Engine/Extras/VisualStudioDebugging/Unreal.natvis'),
   }),
   '../build/ubt': () => ({
     buildCommandLine: () => ({ executable: 'C:/UE/UBT.exe', args: ['Project_MJSEditor', 'Win64', 'DebugGame'] }),
-    resolveTargetName: (_project, type) => (type === 'Editor' ? 'Project_MJSEditor' : 'Project_MJS'),
+    resolveTargetName: (_project, type) => {
+      if (type === 'Editor') return 'Project_MJSEditor';
+      if (type === 'Server') return 'Project_MJSServer';
+      return 'Project_MJS';
+    },
   }),
   '../platform/platform': () => ({
     getDebuggerType: () => 'cppvsdbg',

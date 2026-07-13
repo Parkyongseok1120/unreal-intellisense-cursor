@@ -57,10 +57,19 @@ export async function natvisExists(engineRoot: string): Promise<boolean> {
   return fileExists(resolveNatvisPath(engineRoot));
 }
 
-export function resolveServerExecutable(project: UEProject): string {
+export function resolveServerExecutable(
+  project: UEProject,
+  configuration: BuildConfiguration = 'Development',
+  platform: BuildPlatform = 'Win64',
+): string {
   const platDir = resolveBinariesPlatformDir();
   const ext = getHostPlatform() === 'win32' ? '.exe' : '';
-  return path.join(project.projectRoot, 'Binaries', platDir, `${project.name}Server${ext}`);
+  const binDir = path.join(project.projectRoot, 'Binaries', platDir);
+  if (getHostPlatform() === 'win32' && configuration !== 'Development' && configuration !== 'Shipping') {
+    const candidate = path.join(binDir, `${project.name}Server-${platform}-${configuration}${ext}`);
+    if (fs.existsSync(candidate)) return path.normalize(candidate);
+  }
+  return path.join(binDir, `${project.name}Server${ext}`);
 }
 
 export function resolveEditorProgramPath(

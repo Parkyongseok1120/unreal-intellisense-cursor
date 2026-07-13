@@ -15,7 +15,7 @@ import { BlueprintCodeLensProvider } from './blueprint/blueprintCodeLens';
 import { UFunctionCodeLensProvider } from './providers/ufunctionCodeLens';
 import { GeneratedHeaderDefinitionProvider } from './providers/generatedHeaderProvider';
 import { UE5_8CursorTaskProvider } from './build/taskProvider';
-import { UnrealLogViewer } from './logs/unrealLogViewer';
+import { UnrealLogViewer, type LogViewerBridge } from './logs/unrealLogViewer';
 import { CommandBridge } from './mcp/commandBridge';
 import { configureMcpBridge } from './blueprint/mcpBlueprintBridge';
 import { parseBuildProgress } from './parsers/buildProgressParser';
@@ -26,10 +26,9 @@ import { refreshSemanticGraph, computeCompileParity, invalidateSemanticGraph } f
 import { registerSemanticNavigation } from './semantic/semanticNavigation';
 import { registerUeNavigationCommands } from './navigation/ueNavigationCommands';
 import { EditorBridgeClient, formatBridgeStatus, withBridgeTimeout } from './editorBridge/editorBridgeClient';
+import { disposeBridgeConnectedSetup } from './editorBridge/bridgeConnectedSetup';
 import {
   formatInstallPreview,
-  installCursorBridgePlugin,
-  isCursorBridgePluginInstalled,
   listCursorBridgePluginFiles,
 } from './editorBridge/editorBridgeRpc';
 import { UhtCodeActionProvider } from './uht/uhtCodeActionProvider';
@@ -89,11 +88,19 @@ function resolveProjectRoot(uri?: vscode.Uri): string | undefined {
   return resolveRuntime(uri)?.project.projectRoot ?? ctx?.project?.projectRoot;
 }
 
+function resolveEditorBridge(uri?: vscode.Uri): EditorBridgeClient | undefined {
+  return resolveRuntime(uri)?.editorBridge ?? editorBridge;
+}
+
+function bridgeGetterForProject(projectRoot: string): () => EditorBridgeClient | undefined {
+  return () => projectRegistry().getByRoot(projectRoot)?.editorBridge;
+}
+
 /** Project-scoped view used by commands launched from the active editor. */
 function runtimeContext(uri?: vscode.Uri): UE5_8CursorContext {
   const runtime = resolveRuntime(uri);
   if (!runtime) return ctx;
-  return { ...ctx, project: runtime.project, engine: runtime.engine };
+  return { ...ctx, project: runtime.project, engine: runtime.engine, editorBridge: runtime.editorBridge };
 }
 
 async function promoteOpenedPluginDocument(document: vscode.TextDocument): Promise<void> {
@@ -138,6 +145,7 @@ async function reportHeaderCompileContext(document: vscode.TextDocument): Promis
 }
 
 function cleanupProjectExtensionState(projectRoot: string): void {
+  disposeBridgeConnectedSetup(projectRoot);
   const timer = pluginIndexRestartTimers.get(projectRoot);
   if (timer) {
     clearTimeout(timer);
@@ -240,7 +248,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (editorBridge) extensionContext.subscriptions.push(editorBridge);
   if (testExplorer) extensionContext.subscriptions.push(testExplorer);
 
-  registerSemanticNavigation(extensionContext, (doc) => resolveRuntime(doc.uri)?.project, settings);
+  const { startBridgeReconnectWatcher } = await import('./editorBridge/bridgeReconnectWatcher');
+  extensionContext.subscriptions.push(
+    startBridgeReconnectWatcher({
+      getProjectRoot: () => resolveProjectRoot(),
+      getBridge: () => resolveEditorBridge(),
+      getCtx: () => ctx,
+      onReconnect: async (info) => {
+        statusBar.setBridgeStatus(info);
+        const root = resolveProjectRoot();
+        if (root) {
+          testExplorer?.setRuntime(root, resolveEditorBridge());
+          void testExplorer?.refresh(runtimeContext());
+          const { setupBridgeConnectedServices } = await import('./editorBridge/bridgeConnectedSetup');
+          await setupBridgeConnectedServices(root, bridgeGetterForProject(root), ctx.diagnosticCollection);
+        }
+      },
+      onDisconnect: () => {
+        statusBar.setBridgeStatus({ connected: false, capabilities: [], protocolVersion: 1 });
+        const root = resolveProjectRoot();
+        if (root) {
+          testExplorer?.setRuntime(root, resolveEditorBridge());
+          void testExplorer?.refresh(runtimeContext());
+        }
+      },
+    }),
+  );
+
+  registerSemanticNavigation(
+    extensionContext,
+    (doc) => resolveRuntime(doc.uri)?.project,
+    settings,
+    () => resolveRuntime()?.editorBridge,
+  );
   registerUeNavigationCommands(extensionContext, () => {
     const runtime = resolveRuntime();
     return runtime
@@ -250,6 +290,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   if (settings.experimentalHlsl) {
     registerHLSLProviders(extensionContext);
+    const { registerShaderDiagnostics } = await import('./hlsl/shaderDiagnostics');
+    registerShaderDiagnostics(
+      extensionContext,
+      () => resolveRuntime()?.project,
+      ctx.diagnosticCollection,
+    );
+    const { verifyHlslToolsExtension } = await import('./cursor/shaderIntellisense');
+    void verifyHlslToolsExtension().then((status) => {
+      if (!status.installed) {
+        outputChannel.appendLine('[UE5_8 Cursor] hlsl-tools extension not installed — shader LSP unavailable.');
+      } else if (!status.active) {
+        outputChannel.appendLine('[UE5_8 Cursor] hlsl-tools extension failed to activate.');
+      }
+    });
   }
   registerCommands(extensionContext);
 
@@ -267,17 +321,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     AssetPathDefinitionProvider,
     AssetPathCodeLensProvider,
   } = await import('./providers/assetPathProvider');
+  const { UnrealLogDocumentLinkProvider } = await import('./logs/logDocumentLinkProvider');
   const { AssetReferenceProvider } = await import('./providers/assetReferenceProvider');
   const { UPropertyCodeLensProvider, GeneratedSymbolHoverProvider } = await import('./uht/providers/uhtProviders');
 
   extensionContext.subscriptions.push(
     vscode.languages.registerCodeLensProvider(
       { language: 'cpp', scheme: 'file' },
-      new BlueprintCodeLensProvider(() => ctx),
+      new BlueprintCodeLensProvider((uri) => runtimeContext(uri)),
     ),
     vscode.languages.registerCodeLensProvider(
       { language: 'cpp', scheme: 'file' },
-      new UFunctionCodeLensProvider(() => resolveProjectRoot()),
+      new UFunctionCodeLensProvider((uri) => resolveProjectRoot(uri), (uri) => resolveEditorBridge(uri)),
     ),
     vscode.languages.registerDefinitionProvider(
       { language: 'cpp', scheme: 'file' },
@@ -287,13 +342,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       { language: 'cpp', scheme: 'file' },
       new AssetPathDocumentLinkProvider(),
     ),
+    vscode.languages.registerDocumentLinkProvider(
+      { pattern: '**/Saved/Logs/*.log' },
+      new UnrealLogDocumentLinkProvider(),
+    ),
     vscode.languages.registerDefinitionProvider(
       { language: 'cpp', scheme: 'file' },
-      new AssetPathDefinitionProvider(() => resolveProjectRoot()),
+      new AssetPathDefinitionProvider((uri) => resolveProjectRoot(uri)),
     ),
     vscode.languages.registerReferenceProvider(
       { language: 'cpp', scheme: 'file' },
-      new AssetReferenceProvider(() => resolveProjectRoot()),
+      new AssetReferenceProvider((uri) => resolveProjectRoot(uri), (uri) => resolveEditorBridge(uri)),
     ),
     vscode.languages.registerCodeLensProvider(
       { language: 'cpp', scheme: 'file' },
@@ -319,13 +378,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       ),
       { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
     ),
-    vscode.languages.registerReferenceProvider(
-      { language: 'cpp', scheme: 'file' },
-      new (await import('./navigation/referenceNavigation')).UePairedReferenceProvider(
-        () => resolveRuntime()?.project?.projectRoot,
-        () => settings.pairedReferences && settings.moduleReferenceScan,
-      ),
-    ),
+    ...(settings.semanticNavigationEnabled
+      ? []
+      : [
+          vscode.languages.registerReferenceProvider(
+            { language: 'cpp', scheme: 'file' },
+            new (await import('./navigation/referenceNavigation')).UePairedReferenceProvider(
+              () => resolveRuntime()?.project?.projectRoot,
+              () => settings.pairedReferences && settings.moduleReferenceScan,
+            ),
+          ),
+        ]),
     vscode.tasks.registerTaskProvider(
       UE5_8CursorTaskProvider.type,
       new UE5_8CursorTaskProvider(() => ctx, () => settings),
@@ -374,6 +437,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       contentBrowser?.setProjectRoot(runtime.project.projectRoot);
       testExplorer?.setRuntime(runtime.project.projectRoot, runtime.editorBridge);
       void testExplorer?.refresh(runtimeContext(editor.document.uri));
+      if (runtime.editorBridge?.isConnected()) {
+        void import('./editorBridge/bridgeConnectedSetup').then(({ ensureBridgeServicesForProject }) =>
+          ensureBridgeServicesForProject(
+            runtime.project.projectRoot,
+            bridgeGetterForProject(runtime.project.projectRoot),
+            ctx.diagnosticCollection,
+          ),
+        );
+      }
       void promoteOpenedPluginDocument(editor.document);
       void reportHeaderCompileContext(editor.document);
     }),
@@ -425,6 +497,7 @@ export function deactivate(): void {
   if (settingsChangeTimer) clearTimeout(settingsChangeTimer);
   if (headerContextSaveTimer) clearTimeout(headerContextSaveTimer);
   sourceWatcherDisposable?.dispose();
+  disposeBridgeConnectedSetup();
   for (const projectRoot of projectRegistry().listRoots()) cleanupProjectExtensionState(projectRoot);
   for (const timer of pluginIndexRestartTimers.values()) clearTimeout(timer);
   pluginIndexRestartTimers.clear();
@@ -545,6 +618,15 @@ async function runDetectionPipeline(options?: { allowAutoSetup?: boolean }): Pro
   }, options);
 }
 
+function bridgeLogAdapter(bridge?: EditorBridgeClient): LogViewerBridge | undefined {
+  if (!bridge?.isConnected() || !bridge.hasCapability('unrealLogs')) return undefined;
+  return {
+    isConnected: () => bridge.isConnected(),
+    canCall: () => true,
+    tailLogs: (lines) => bridge.tailLogs(lines),
+  };
+}
+
 async function executeDetectionPipeline(
   options: { allowAutoSetup?: boolean },
   token: vscode.CancellationToken,
@@ -585,6 +667,13 @@ async function executeDetectionPipeline(
   configureMcpBridge(ctx.project.projectRoot, extensionPath);
   contentBrowser?.setProjectRoot(ctx.project.projectRoot);
 
+  if (extensionPath) {
+    const { maybePromptInstallBridgePlugin } = await import('./editorBridge/bridgePluginInstall');
+    await maybePromptInstallBridgePlugin(ctx, settings, extensionPath, extensionContext);
+  }
+
+  if (token.isCancellationRequested || projectSession.isStale(gen)) return;
+
   let discoveredEngines: Awaited<ReturnType<typeof discoverEngines>> = [];
   if (settings.engineRoot) {
     ctx.engine = (await createManualInstallation(settings.engineRoot)) ?? undefined;
@@ -620,6 +709,7 @@ async function executeDetectionPipeline(
   // session and abort first activation as stale. Gate 2 routes whole pipelines
   // through ProjectRuntime; retain the owning session for this run until then.
   editorBridge = runtime.editorBridge;
+  ctx.editorBridge = editorBridge;
 
   if (editorBridge) {
     const bridgeInfo = await withBridgeTimeout(editorBridge.connect(ctx.project.projectRoot), 5000);
@@ -627,17 +717,27 @@ async function executeDetectionPipeline(
       testExplorer?.setRuntime(ctx.project.projectRoot, editorBridge);
       ctx.outputChannel.appendLine(`[UE5_8 Cursor] ${formatBridgeStatus(bridgeInfo)}`);
       statusBar.setBridgeStatus(bridgeInfo);
+      const { isBridgePluginReady, maybePromptRestartEditor } = await import('./editorBridge/bridgePluginInstall');
+      const pluginReady = isBridgePluginReady(ctx.project.projectRoot);
+      statusBar.setBridgePluginMissing(!bridgeInfo.connected && !pluginReady);
+      if (!bridgeInfo.connected) {
+        await maybePromptRestartEditor(bridgeInfo.connected, pluginReady, ctx.outputChannel);
+      }
       if (bridgeInfo.connected) {
         try {
-          const bridgeResult = await withBridgeTimeout(editorBridge.queryAllAssets(), 15000);
-          if (bridgeResult?.length) {
-            const { refreshAssetIndex } = await import('./assets/assetIndex');
-            await refreshAssetIndex(ctx.project.projectRoot, { bridgeAssets: bridgeResult });
-          }
+          const { setupBridgeConnectedServices } = await import('./editorBridge/bridgeConnectedSetup');
+          await setupBridgeConnectedServices(
+            ctx.project.projectRoot,
+            bridgeGetterForProject(ctx.project.projectRoot),
+            ctx.diagnosticCollection,
+          );
         } catch {
           // bridge asset sync optional
         }
       }
+    } else if (ctx.project) {
+      const { isBridgePluginReady } = await import('./editorBridge/bridgePluginInstall');
+      statusBar.setBridgePluginMissing(!isBridgePluginReady(ctx.project.projectRoot));
     }
   }
   testExplorer?.setRuntime(ctx.project.projectRoot, editorBridge);
@@ -737,7 +837,7 @@ async function executeDetectionPipeline(
     }
 
     if (settings.autoStartLogViewer) {
-      void logViewer.start(ctx.project);
+      void logViewer.start(ctx.project, bridgeLogAdapter(editorBridge));
     }
   }
 }
@@ -774,7 +874,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     if (result) {
       statusBar.setIndexPlan(result.indexPlan);
       statusBar.setIntelliSense(result.intelliSense, { provisional: result.intelliSense === 'partial' });
-      void statusBar.update(ctx, settings);
+      void statusBar.update(runtimeContext(), settings);
     }
   });
 
@@ -798,7 +898,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     const commandCtx = runtimeContext();
     await launchEditorDetached(commandCtx);
     if (commandCtx.project && settings.autoStartLogViewer) {
-      setTimeout(() => void logViewer.start(commandCtx.project!), 3000);
+      setTimeout(() => void logViewer.start(commandCtx.project!, bridgeLogAdapter(commandCtx.editorBridge)), 3000);
     }
   });
 
@@ -832,7 +932,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
       });
     }
     statusBar.setIntelliSense(mode);
-    void statusBar.update(ctx, settings);
+    void statusBar.update(commandCtx, settings);
   });
 
   reg(Commands.CaptureDiagnosticBaseline, async () => {
@@ -895,7 +995,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
 
   reg(Commands.ShowProjectInfo, async () => {
     const { showProjectInfo } = await import('./commands/infoCommands');
-    await showProjectInfo(ctx, settings);
+    await showProjectInfo(runtimeContext(), settings);
   });
 
   reg(Commands.CheckPrerequisites, async () => {
@@ -904,16 +1004,18 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   });
 
   reg(Commands.ApplyExplorerFilter, async () => {
-    if (!ctx.project) return;
+    const commandCtx = runtimeContext();
+    if (!commandCtx.project) return;
     const { applyExplorerFilter } = await import('./cursor/workspaceSetup');
-    await applyExplorerFilter(ctx.project);
+    await applyExplorerFilter(commandCtx.project);
     vscode.window.showInformationMessage('UE5_8 Cursor: Explorer 필터 적용됨.');
   });
 
   reg(Commands.ResetExplorerFilter, async () => {
-    if (!ctx.project) return;
+    const commandCtx = runtimeContext();
+    if (!commandCtx.project) return;
     const { removeExplorerFilter } = await import('./cursor/workspaceSetup');
-    await removeExplorerFilter(ctx.project);
+    await removeExplorerFilter(commandCtx.project);
     vscode.window.showInformationMessage('UE5_8 Cursor: Explorer 필터 해제됨.');
   });
 
@@ -960,6 +1062,12 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     });
   });
 
+  reg(Commands.StopMultiplayerDebug, async () => {
+    const { stopMultiplayerDebug } = await import('./debug/multiplayerRun');
+    await stopMultiplayerDebug();
+    vscode.window.showInformationMessage('UE5_8 Cursor: Multiplayer debug sessions stopped.');
+  });
+
   reg(Commands.NewCppClass, async () => {
     const { runClassWizard } = await import('./commands/classWizardCommand');
     await runClassWizard(runtimeContext(), settings);
@@ -988,18 +1096,55 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     await jumpToCppFromBlueprint(runtimeContext());
   });
 
-  reg(Commands.SetupMcp, async () => {
-    const { setupMcpConfig } = await import('./commands/mcpCommands');
-    await setupMcpConfig(ctx, settings, extensionPath);
+  reg(Commands.FindBlueprintImplementations, async (className?: string) => {
+    const { findBlueprintImplementations } = await import('./blueprint/blueprintCodeLens');
+    if (!className) return;
+    await findBlueprintImplementations(runtimeContext(), className);
   });
 
-  reg(Commands.InstallCursorBridgePlugin, async () => {
+  reg(Commands.ShowBlueprintPropertyOverrides, async (className?: string) => {
+    const { showBlueprintPropertyOverrides } = await import('./blueprint/blueprintCodeLens');
+    if (!className) return;
+    await showBlueprintPropertyOverrides(runtimeContext(), className);
+  });
+
+  reg(Commands.RollbackWorkspaceChanges, async () => {
     const commandCtx = runtimeContext();
     if (!commandCtx.project) {
       vscode.window.showWarningMessage('UE5_8 Cursor: open a UE project first.');
       return;
     }
-    if (isCursorBridgePluginInstalled(commandCtx.project)) {
+    const confirm = await vscode.window.showWarningMessage(
+      'Rollback the last UE5_8 Cursor workspace mutation session for this project?',
+      { modal: true },
+      'Rollback',
+      'Cancel',
+    );
+    if (confirm !== 'Rollback') return;
+    const { rollbackSession } = await import('./platform/workspaceMutation');
+    const ok = await rollbackSession(commandCtx.project.projectRoot);
+    if (ok) {
+      vscode.window.showInformationMessage('UE5_8 Cursor: workspace changes rolled back.');
+      await runDetectionPipeline();
+    } else {
+      vscode.window.showInformationMessage('UE5_8 Cursor: no active mutation session to roll back.');
+    }
+  });
+
+  reg(Commands.SetupMcp, async () => {
+    const commandCtx = runtimeContext();
+    const { setupMcpConfig } = await import('./commands/mcpCommands');
+    await setupMcpConfig(commandCtx, settings, extensionPath);
+  });
+
+  reg(Commands.InstallCursorBridgePlugin, async () => {
+    const commandCtx = runtimeContext();
+    if (!commandCtx.project || !extensionPath) {
+      vscode.window.showWarningMessage('UE5_8 Cursor: open a UE project first.');
+      return;
+    }
+    const { isBridgePluginReady, runBridgePluginInstall } = await import('./editorBridge/bridgePluginInstall');
+    if (isBridgePluginReady(commandCtx.project.projectRoot)) {
       vscode.window.showInformationMessage('UE5_8 Cursor: UE58CursorBridge is already installed.');
       return;
     }
@@ -1013,24 +1158,19 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     );
     if (consent !== 'Install') return;
 
-    const result = await installCursorBridgePlugin(commandCtx.project, {
+    const result = await runBridgePluginInstall(commandCtx, settings, extensionPath, {
       consentGranted: true,
-      extensionPath,
-      enableInUproject: true,
+      silent: false,
     });
-    if (result.ok) {
-      vscode.window.showInformationMessage(
-        result.message ?? 'UE58CursorBridge installed. Restart the Unreal Editor to load the bridge.',
-      );
+    if (result.installed) {
       await runDetectionPipeline();
-    } else {
-      vscode.window.showErrorMessage(result.message ?? 'Failed to install UE58CursorBridge.');
     }
   });
 
   reg(Commands.VerifyMcp, async () => {
+    const commandCtx = runtimeContext();
     const { verifyMcpConnection } = await import('./commands/mcpCommands');
-    await verifyMcpConnection(ctx, settings, extensionPath);
+    await verifyMcpConnection(commandCtx, settings, extensionPath);
   });
 
   reg(Commands.RefreshUhtIntellisense, async () => {
@@ -1040,7 +1180,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     await ensureUhtIntellisense(commandCtx.project, extensionPath, undefined, { lazyPluginIndexing: settings.clangdLazyPluginIndexing });
     const { refreshAllIndexes } = await import('./assets/indexCoordinator');
     await refreshAllIndexes(commandCtx.project.projectRoot);
-    void statusBar.update(ctx, settings);
+    void statusBar.update(runtimeContext(), settings);
     await requestClangdRestart(commandCtx.project.projectRoot, 'UHT IntelliSense refresh', (msg) => commandCtx.outputChannel.appendLine(msg));
     vscode.window.showInformationMessage('UE5_8 Cursor: UHT IntelliSense + 인덱스 갱신 완료');
   });
@@ -1048,7 +1188,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   reg(Commands.StartLogViewer, async () => {
     const commandCtx = runtimeContext();
     if (!commandCtx.project) return;
-    await logViewer.start(commandCtx.project);
+    await logViewer.start(commandCtx.project, bridgeLogAdapter(commandCtx.editorBridge));
   });
 
   reg(Commands.StopLogViewer, () => {
@@ -1091,12 +1231,16 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
   reg(Commands.FindUFunctionBlueprints, async (functionName?: string, className?: string, documentPath?: string) => {
     const { findUFunctionBlueprints } = await import('./commands/ufunctionCommands');
     if (!functionName) return;
-    await findUFunctionBlueprints(ctx, functionName, className, documentPath);
+    const uri = documentPath
+      ? vscode.Uri.file(documentPath)
+      : vscode.window.activeTextEditor?.document.uri;
+    await findUFunctionBlueprints(runtimeContext(uri), functionName, className, documentPath);
   });
 
   reg(Commands.RefreshMcpSchema, async () => {
+    const commandCtx = runtimeContext();
     const { refreshMcpSchema } = await import('./commands/mcpCommands');
-    await refreshMcpSchema(ctx, settings, extensionPath);
+    await refreshMcpSchema(commandCtx, settings, extensionPath);
   });
 
   reg(Commands.RefreshAssetIndex, async () => {
@@ -1105,7 +1249,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     const { refreshAllIndexes } = await import('./assets/indexCoordinator');
     const result = await refreshAllIndexes(commandCtx.project.projectRoot, { enrichMcp: true });
     await contentBrowser?.refresh();
-    void statusBar.update(ctx, settings);
+    void statusBar.update(commandCtx, settings);
     vscode.window.showInformationMessage(
       `UE5_8 Cursor: 인덱스 갱신 완료 (Assets: ${result.assetCount}, UHT: ${result.reflectionClassCount})`,
     );
@@ -1128,7 +1272,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     const { showReferenceGraphPanel } = await import('./assets/referenceGraphPanel');
     await showReferenceGraphPanel(commandCtx.project.projectRoot, path, (p) => {
       void vscode.commands.executeCommand(Commands.OpenAsset, p);
-    });
+    }, commandCtx.editorBridge);
   });
 
   reg(Commands.ShowContentBrowser, async () => {
@@ -1139,7 +1283,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     const commandCtx = runtimeContext();
     if (!commandCtx.project) return;
     const { showMcpDiagnostics } = await import('./mcp/mcpDiagnosticsProvider');
-    await showMcpDiagnostics(commandCtx.project.projectRoot, ctx.outputChannel);
+    await showMcpDiagnostics(commandCtx.project.projectRoot, commandCtx.outputChannel);
     await mcpDiagnostics?.refresh();
   });
 

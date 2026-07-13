@@ -123,14 +123,14 @@ export class UE5_8CursorSettings {
     return this.cfg.get<boolean>('experimental.hlsl', false);
   }
 
-  /** UE semantic navigation providers (definition/reference/hierarchy). Default off until Gate 3 corpus passes. */
+  /** UE semantic navigation providers (definition/reference/hierarchy). */
   get semanticNavigationEnabled(): boolean {
-    return this.cfg.get<boolean>('semantic.navigation.enabled', false);
+    return this.cfg.get<boolean>('semantic.navigation.enabled', true);
   }
 
-  /** UE heuristic inspections layered on UHT. Default off until safe rule corpus passes. */
+  /** UE heuristic inspections layered on UHT. */
   get uhtInspectionsEnabled(): boolean {
-    return this.cfg.get<boolean>('uht.inspections.enabled', false);
+    return this.cfg.get<boolean>('uht.inspections.enabled', true);
   }
 
   get reapplyHeaderContextOnSave(): boolean {
@@ -147,6 +147,18 @@ export class UE5_8CursorSettings {
 
   get moduleReferenceScan(): boolean {
     return this.cfg.get<boolean>('navigation.moduleReferenceScan', true);
+  }
+
+  get bridgePromptInstallOnOpen(): boolean {
+    return this.cfg.get<boolean>('bridge.promptInstallOnOpen', true);
+  }
+
+  get bridgeAutoInstallOnOpen(): boolean {
+    return this.cfg.get<boolean>('bridge.autoInstallOnOpen', false);
+  }
+
+  get bridgeAutoInstallSilent(): boolean {
+    return this.cfg.get<boolean>('bridge.autoInstallSilent', true);
   }
 
   private get cfg(): vscode.WorkspaceConfiguration {

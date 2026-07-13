@@ -3,6 +3,8 @@ import * as path from 'path';
 import { parseBuildOutput } from '../parsers/buildOutputParser';
 import type { UE5_8CursorContext } from '../types';
 
+let lastUbtDiagnosticFiles: string[] = [];
+
 export function publishBuildDiagnostics(ctx: UE5_8CursorContext, output: string): void {
   const parsed = parseBuildOutput(output);
   const byFile = new Map<string, vscode.Diagnostic[]>();
@@ -23,12 +25,18 @@ export function publishBuildDiagnostics(ctx: UE5_8CursorContext, output: string)
     byFile.set(key, list);
   }
 
-  ctx.diagnosticCollection.clear();
+  for (const file of lastUbtDiagnosticFiles) {
+    if (!byFile.has(file)) ctx.diagnosticCollection.delete(vscode.Uri.file(file));
+  }
+  lastUbtDiagnosticFiles = [...byFile.keys()];
   for (const [filePath, diags] of byFile) {
     ctx.diagnosticCollection.set(vscode.Uri.file(filePath), diags);
   }
 }
 
 export function clearBuildDiagnostics(ctx: UE5_8CursorContext): void {
-  ctx.diagnosticCollection.clear();
+  for (const file of lastUbtDiagnosticFiles) {
+    ctx.diagnosticCollection.delete(vscode.Uri.file(file));
+  }
+  lastUbtDiagnosticFiles = [];
 }

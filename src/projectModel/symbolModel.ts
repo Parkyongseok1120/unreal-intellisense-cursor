@@ -41,6 +41,9 @@ export function enrichReflectionFromHeaderContent(
     reflection.classLine = parsed.line;
     reflection.superClass = parsed.parentClass;
     reflection.declarationRange = declarationRangeFromClassLine(parsed.line, parsed.className);
+    if (parsed.interfaceCompanion) {
+      reflection.interfaceCompanion = parsed.interfaceCompanion;
+    }
   } else {
     const fallback = content.match(/UCLASS\s*\([^)]*\)\s*class\s+\w+\s+(\w+)/);
     if (fallback) {

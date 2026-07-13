@@ -9,14 +9,19 @@
       "result": { "assets": "object[]", "total": "number", "hasMore": "boolean", "offset": "number?" }
     },
     "assetRegistry.get": { "params": { "path": "string" }, "result": { "asset": "object" } },
+    "assetRegistry.delta": { "params": { "since": "number?" }, "result": { "added": "object[]", "removed": "string[]", "updated": "object[]" } },
+    "assetRegistry.referencers": { "params": { "path": "string", "depth": "number?" }, "result": { "referencers": "object[]", "total": "number" } },
+    "assetRegistry.dependencies": { "params": { "path": "string" }, "result": { "dependencies": "object[]", "total": "number" } },
     "blueprint.listDerived": { "params": { "classPath": "string" }, "result": { "derived": "object[]", "total": "number" } },
     "blueprint.findImplementations": { "params": { "classPath": "string" }, "result": { "implementations": "object[]" } },
     "blueprint.propertyOverrides": { "params": { "classPath": "string" }, "result": { "overrides": "object[]" } },
+    "blueprint.compileErrors": { "params": { "classPath": "string?" }, "result": { "errors": "object[]" } },
+    "blueprint.findUFunctionNodes": { "params": { "classPath": "string", "functionName": "string" }, "result": { "nodes": "object[]", "total": "number" } },
     "automation.list": { "params": {}, "result": { "tests": "object[]" } },
     "automation.run": { "params": { "name": "string" }, "result": { "ok": "boolean", "message": "string?" } },
-    "automation.status": { "params": { "name": "string" }, "result": { "state": "string", "message": "string?" } },
+    "automation.status": { "params": { "name": "string" }, "result": { "state": "string", "message": "string?", "durationMs": "number?", "line": "number?", "artifactPath": "string?" } },
     "automation.cancel": { "params": { "name": "string" }, "result": { "ok": "boolean" } },
-    "logs.tail": { "params": { "lines": "number?" }, "result": { "lines": "object[]", "count": "number" } },
+    "logs.tail": { "params": { "lines": "number?", "offset": "number?", "fileId": "string?" }, "result": { "lines": "object[]", "count": "number", "offset": "number", "fileId": "string" } },
     "pie.getState": { "params": {}, "result": { "isPlaying": "boolean", "mode": "string" } }
   },
   "capabilities": ["assetRegistry", "automationTests", "blueprintGraph", "pieState", "unrealLogs"]

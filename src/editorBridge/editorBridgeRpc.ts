@@ -204,8 +204,37 @@ export function isCursorBridgePluginInstalled(project: UEProject): boolean {
   return fs.existsSync(path.join(project.projectRoot, 'Plugins', 'UE58CursorBridge', 'UE58CursorBridge.uplugin'));
 }
 
+export function isBridgePluginBinaryPresent(projectRoot: string, platform = 'Win64'): boolean {
+  return bridgePluginBinaryPresentAt(path.join(projectRoot, 'Plugins', 'UE58CursorBridge'), platform);
+}
+
+function bridgePluginBinaryPresentAt(pluginRoot: string, platform = 'Win64'): boolean {
+  const binariesDir = path.join(pluginRoot, 'Binaries', platform);
+  try {
+    const entries = fs.readdirSync(binariesDir);
+    return entries.some((name) => name.toLowerCase().endsWith('.dll') || name.toLowerCase().endsWith('.dylib'));
+  } catch {
+    return false;
+  }
+}
+
+export function resolveBridgePluginSource(extensionPath: string): { path: string; prebuilt: boolean } | undefined {
+  const candidates = [
+    path.join(extensionPath, 'Saved', 'UE58CursorBridge'),
+    path.join(extensionPath, 'plugins', 'UE58CursorBridge'),
+  ];
+  for (const candidate of candidates) {
+    const uplugin = path.join(candidate, 'UE58CursorBridge.uplugin');
+    if (!fs.existsSync(uplugin)) continue;
+    const prebuilt = bridgePluginBinaryPresentAt(candidate);
+    return { path: candidate, prebuilt };
+  }
+  return undefined;
+}
+
 export async function listCursorBridgePluginFiles(extensionPath: string): Promise<string[]> {
-  const src = path.join(extensionPath, 'plugins', 'UE58CursorBridge');
+  const resolved = resolveBridgePluginSource(extensionPath);
+  const src = resolved?.path ?? path.join(extensionPath, 'plugins', 'UE58CursorBridge');
   const files: string[] = [];
 
   async function walk(dir: string): Promise<void> {
@@ -230,31 +259,54 @@ export interface InstallCursorBridgeOptions {
   consentGranted: boolean;
   enableInUproject?: boolean;
   extensionPath: string;
+  allowUpgrade?: boolean;
 }
 
 export async function installCursorBridgePlugin(
   project: UEProject,
   options: InstallCursorBridgeOptions,
-): Promise<{ ok: boolean; message?: string; copied?: boolean; uprojectUpdated?: boolean }> {
+): Promise<{
+  ok: boolean;
+  message?: string;
+  copied?: boolean;
+  upgraded?: boolean;
+  uprojectUpdated?: boolean;
+  needsBuild?: boolean;
+}> {
   if (!options.consentGranted) {
     return { ok: false, message: 'User consent required' };
   }
 
-  const src = path.join(options.extensionPath, 'plugins', 'UE58CursorBridge');
-  const dest = path.join(project.projectRoot, 'Plugins', 'UE58CursorBridge');
-  if (!(await dirExists(src))) {
+  const resolved = resolveBridgePluginSource(options.extensionPath);
+  if (!resolved) {
     return { ok: false, message: 'Bundled UE58CursorBridge plugin not found in extension' };
   }
-  if (await dirExists(dest)) {
+
+  const src = resolved.path;
+  const dest = path.join(project.projectRoot, 'Plugins', 'UE58CursorBridge');
+  const destExists = await dirExists(dest);
+  const destHasBinary = isBridgePluginBinaryPresent(project.projectRoot);
+
+  if (destExists && destHasBinary) {
     return { ok: true, message: 'Plugin already installed', copied: false };
   }
 
+  if (destExists && !options.allowUpgrade) {
+    return { ok: true, message: 'Plugin folder exists but binaries missing — enable allowUpgrade to refresh', copied: false, needsBuild: !resolved.prebuilt };
+  }
+
   let copied = false;
+  let upgraded = false;
   let uprojectUpdated = false;
 
+  if (destExists) {
+    await fs.promises.rm(dest, { recursive: true, force: true });
+    upgraded = true;
+  }
+  await fs.promises.cp(src, dest, { recursive: true });
+  copied = true;
+
   await runWithTransaction(project.projectRoot, async (tx) => {
-    await copyTreeInTransaction(tx, project.projectRoot, src, dest);
-    copied = true;
     if (options.enableInUproject !== false) {
       uprojectUpdated = await ensurePluginInUProject(project.uprojectPath, 'UE58CursorBridge', tx, {
         consentGranted: true,
@@ -262,11 +314,16 @@ export async function installCursorBridgePlugin(
     }
   });
 
+  const needsBuild = !isBridgePluginBinaryPresent(project.projectRoot);
   return {
     ok: true,
-    message: 'UE58CursorBridge installed',
+    message: needsBuild
+      ? 'UE58CursorBridge installed (source only). Build the plugin with npm run build:ue-plugin, then restart the editor.'
+      : 'UE58CursorBridge installed. Restart the Unreal Editor to load the bridge.',
     copied,
+    upgraded,
     uprojectUpdated,
+    needsBuild,
   };
 }
 

@@ -21,14 +21,14 @@ export class AssetPathDocumentLinkProvider implements vscode.DocumentLinkProvide
 }
 
 export class AssetPathDefinitionProvider implements vscode.DefinitionProvider {
-  constructor(private projectRoot: () => string | undefined) {}
+  constructor(private projectRoot: (uri?: vscode.Uri) => string | undefined) {}
 
   async provideDefinition(
     document: vscode.TextDocument,
     position: vscode.Position,
     _token: vscode.CancellationToken,
   ): Promise<vscode.Location | vscode.Location[] | undefined> {
-    const root = this.projectRoot();
+    const root = this.projectRoot(document.uri);
     if (!root) return undefined;
 
     const line = document.lineAt(position.line).text;

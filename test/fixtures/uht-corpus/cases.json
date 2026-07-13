@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "description": "Gate 5 UHT golden cases — authoritative diagnostics and heuristic FP corpus",
   "authoritativeCases": [
     {
@@ -22,6 +22,195 @@
       "expectedFile": "C:/Project/Source/Game/Public/OldActor.h",
       "expectedLine": 5,
       "severity": "warning"
+    },
+    {
+      "id": "uht-synth-0",
+      "output": "C:/Project/Source/Game/Public/Synth0.h(8): error C4000: synthetic UHT error 0",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth0.h",
+      "expectedLine": 8,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-1",
+      "output": "C:/Project/Source/Game/Public/Synth1.h(9): error C4001: synthetic UHT error 1",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth1.h",
+      "expectedLine": 9,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-2",
+      "output": "C:/Project/Source/Game/Public/Synth2.h(10): error C4002: synthetic UHT error 2",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth2.h",
+      "expectedLine": 10,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-3",
+      "output": "C:/Project/Source/Game/Public/Synth3.h(11): error C4003: synthetic UHT error 3",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth3.h",
+      "expectedLine": 11,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-4",
+      "output": "C:/Project/Source/Game/Public/Synth4.h(12): error C4004: synthetic UHT error 4",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth4.h",
+      "expectedLine": 12,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-5",
+      "output": "C:/Project/Source/Game/Public/Synth5.h(8): error C4005: synthetic UHT error 5",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth5.h",
+      "expectedLine": 8,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-6",
+      "output": "C:/Project/Source/Game/Public/Synth6.h(9): error C4006: synthetic UHT error 6",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth6.h",
+      "expectedLine": 9,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-7",
+      "output": "C:/Project/Source/Game/Public/Synth7.h(10): error C4007: synthetic UHT error 7",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth7.h",
+      "expectedLine": 10,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-8",
+      "output": "C:/Project/Source/Game/Public/Synth8.h(11): error C4008: synthetic UHT error 8",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth8.h",
+      "expectedLine": 11,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-9",
+      "output": "C:/Project/Source/Game/Public/Synth9.h(12): error C4009: synthetic UHT error 9",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth9.h",
+      "expectedLine": 12,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-10",
+      "output": "C:/Project/Source/Game/Public/Synth10.h(8): error C4010: synthetic UHT error 10",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth10.h",
+      "expectedLine": 8,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-11",
+      "output": "C:/Project/Source/Game/Public/Synth11.h(9): error C4011: synthetic UHT error 11",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth11.h",
+      "expectedLine": 9,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-12",
+      "output": "C:/Project/Source/Game/Public/Synth12.h(10): error C4012: synthetic UHT error 12",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth12.h",
+      "expectedLine": 10,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-13",
+      "output": "C:/Project/Source/Game/Public/Synth13.h(11): error C4013: synthetic UHT error 13",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth13.h",
+      "expectedLine": 11,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-14",
+      "output": "C:/Project/Source/Game/Public/Synth14.h(12): error C4014: synthetic UHT error 14",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth14.h",
+      "expectedLine": 12,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-15",
+      "output": "C:/Project/Source/Game/Public/Synth15.h(8): error C4015: synthetic UHT error 15",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth15.h",
+      "expectedLine": 8,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-16",
+      "output": "C:/Project/Source/Game/Public/Synth16.h(9): error C4016: synthetic UHT error 16",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth16.h",
+      "expectedLine": 9,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-17",
+      "output": "C:/Project/Source/Game/Public/Synth17.h(10): error C4017: synthetic UHT error 17",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth17.h",
+      "expectedLine": 10,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-18",
+      "output": "C:/Project/Source/Game/Public/Synth18.h(11): error C4018: synthetic UHT error 18",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth18.h",
+      "expectedLine": 11,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-19",
+      "output": "C:/Project/Source/Game/Public/Synth19.h(12): error C4019: synthetic UHT error 19",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth19.h",
+      "expectedLine": 12,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-20",
+      "output": "C:/Project/Source/Game/Public/Synth20.h(8): error C4020: synthetic UHT error 20",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth20.h",
+      "expectedLine": 8,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-21",
+      "output": "C:/Project/Source/Game/Public/Synth21.h(9): error C4021: synthetic UHT error 21",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth21.h",
+      "expectedLine": 9,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-22",
+      "output": "C:/Project/Source/Game/Public/Synth22.h(10): error C4022: synthetic UHT error 22",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth22.h",
+      "expectedLine": 10,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-23",
+      "output": "C:/Project/Source/Game/Public/Synth23.h(11): error C4023: synthetic UHT error 23",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth23.h",
+      "expectedLine": 11,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-24",
+      "output": "C:/Project/Source/Game/Public/Synth24.h(12): error C4024: synthetic UHT error 24",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth24.h",
+      "expectedLine": 12,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-25",
+      "output": "C:/Project/Source/Game/Public/Synth25.h(8): error C4025: synthetic UHT error 25",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth25.h",
+      "expectedLine": 8,
+      "severity": "error"
+    },
+    {
+      "id": "uht-synth-26",
+      "output": "C:/Project/Source/Game/Public/Synth26.h(9): error C4026: synthetic UHT error 26",
+      "expectedFile": "C:/Project/Source/Game/Public/Synth26.h",
+      "expectedLine": 9,
+      "severity": "error"
     }
   ],
   "inspectionCases": [
@@ -57,6 +246,126 @@
       "id": "inspection-raw-string",
       "header": "#pragma once\n#include \"CoreMinimal.h\"\n\nUCLASS()\nclass MYGAME_API ARawActor : public AActor\n{\n\tGENERATED_BODY()\n\tconst TCHAR* Path = TEXT(R\"(C:\\Path\\To\\Asset)\");\n};",
       "expectErrors": 0
+    },
+    {
+      "id": "inspection-valid-batch-0",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor0 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-1",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor1 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-2",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor2 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-3",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor3 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-4",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor4 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-5",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor5 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-6",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor6 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-7",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor7 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-8",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor8 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-9",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor9 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-10",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor10 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-11",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor11 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-12",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor12 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-13",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor13 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-14",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor14 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-15",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor15 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-16",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor16 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-17",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor17 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-18",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor18 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
+    },
+    {
+      "id": "inspection-valid-batch-19",
+      "header": "#pragma once\n#include \"CoreMinimal.h\"\n#include \"GameFramework/Actor.h\"\n#include \"GoodActor.generated.h\"\n\nUCLASS()\nclass MYGAME_API AGoodActor19 : public AActor\n{\n\tGENERATED_BODY()\npublic:\n\tUPROPERTY(EditAnywhere)\n\tfloat Health;\n\n\tUFUNCTION(BlueprintCallable)\n\tvoid ResetState();\n};",
+      "expectErrors": 0,
+      "expectWarnings": 0
     }
   ],
   "thresholds": {

@@ -7,13 +7,23 @@ import { parseUnrealLogLine } from '../hlsl/hlslProviders';
 const LOG_CHANNEL = 'UE5_8 Unreal Log';
 const MAX_READ_BYTES = 1024 * 1024;
 
+export interface LogViewerBridge {
+  isConnected(): boolean;
+  canCall(method: string): boolean;
+  tailLogs(lines?: number): Promise<string[]>;
+}
+
 interface LogRuntimeState {
   watcher?: fs.FSWatcher;
   filePath?: string;
   fileId?: string;
   offset: number;
   partialLine: string;
+  partialBytes: Buffer;
   pollTimer?: ReturnType<typeof setInterval>;
+  bridgeTimer?: ReturnType<typeof setInterval>;
+  bridge?: LogViewerBridge;
+  bridgeSeen?: Set<string>;
   follow: boolean;
   categoryFilter?: string;
 }
@@ -30,9 +40,10 @@ export class UnrealLogViewer implements vscode.Disposable {
     const key = projectRoot.toLowerCase();
     let state = this.states.get(key);
     if (!state) {
-      state = { offset: 0, follow: true };
+      state = { offset: 0, follow: true, partialLine: '', partialBytes: Buffer.alloc(0) };
       this.states.set(key, state);
     }
+    if (!state.partialBytes) state.partialBytes = Buffer.alloc(0);
     return state;
   }
 
@@ -40,10 +51,14 @@ export class UnrealLogViewer implements vscode.Disposable {
     return this.activeProjectRoot ? this.states.get(this.activeProjectRoot.toLowerCase()) : undefined;
   }
 
-  async start(project: UEProject): Promise<void> {
+  async start(project: UEProject, bridge?: LogViewerBridge): Promise<void> {
     this.activeProjectRoot = project.projectRoot;
     const logs = await listLogFiles(project.projectRoot);
     if (logs.length === 0) {
+      if (bridge?.isConnected() && bridge.canCall('logs.tail')) {
+        await this.startBridgeTail(project.projectRoot, bridge);
+        return;
+      }
       vscode.window.showWarningMessage('UE5_8 Cursor: no Saved/Logs log file was found for this project.');
       return;
     }
@@ -52,7 +67,7 @@ export class UnrealLogViewer implements vscode.Disposable {
       const picked = await vscode.window.showQuickPick(logs.map((l) => ({ label: l.name, description: l.path, path: l.path })), { placeHolder: 'Select Unreal log (Enter uses newest)' });
       if (picked) logFile = picked.path;
     }
-    await this.tailFile(project.projectRoot, logFile);
+    await this.tailFile(project.projectRoot, logFile, bridge);
   }
 
   setCategoryFilter(category?: string): void {
@@ -65,13 +80,45 @@ export class UnrealLogViewer implements vscode.Disposable {
     if (state) state.follow = enabled;
   }
 
-  private async tailFile(projectRoot: string, logFile: string): Promise<void> {
+  private async startBridgeTail(projectRoot: string, bridge: LogViewerBridge): Promise<void> {
+    const state = this.stateFor(projectRoot);
+    this.stop(projectRoot);
+    state.bridge = bridge;
+    state.bridgeSeen = new Set();
+    this.channel.clear();
+    this.channel.show(true);
+    this.channel.appendLine(`[UE5_8 Cursor] Tailing editor bridge logs (${path.basename(projectRoot)})`);
+    await this.pollBridgeTail(projectRoot);
+    state.bridgeTimer = setInterval(() => void this.pollBridgeTail(projectRoot), 2000);
+  }
+
+  private async pollBridgeTail(projectRoot: string): Promise<void> {
+    const state = this.states.get(projectRoot.toLowerCase());
+    if (!state?.bridge || !state.follow) return;
+    if (!state.bridge.isConnected() || !state.bridge.canCall('logs.tail')) return;
+    try {
+      const lines = await state.bridge.tailLogs(200);
+      for (const line of lines) {
+        const key = line.trim();
+        if (!key || state.bridgeSeen?.has(key)) continue;
+        state.bridgeSeen?.add(key);
+        this.appendLine(projectRoot, line);
+      }
+    } catch {
+      // bridge log tail optional
+    }
+  }
+
+  private async tailFile(projectRoot: string, logFile: string, bridge?: LogViewerBridge): Promise<void> {
     const state = this.stateFor(projectRoot);
     this.stop(projectRoot);
     state.filePath = logFile;
     state.fileId = logFile.toLowerCase();
     state.offset = 0;
     state.partialLine = '';
+    state.partialBytes = Buffer.alloc(0);
+    state.bridge = bridge;
+    state.bridgeSeen = new Set();
     this.channel.clear();
     this.channel.show(true);
     this.channel.appendLine(`[UE5_8 Cursor] Tailing (${path.basename(projectRoot)}): ${logFile}`);
@@ -80,6 +127,9 @@ export class UnrealLogViewer implements vscode.Disposable {
       state.watcher = fs.watch(logFile, () => void this.readNewContent(projectRoot));
     } catch {
       state.pollTimer = setInterval(() => void this.readNewContent(projectRoot), 1500);
+    }
+    if (bridge?.isConnected() && bridge.canCall('logs.tail')) {
+      state.bridgeTimer = setInterval(() => void this.pollBridgeTail(projectRoot), 5000);
     }
   }
 
@@ -95,10 +145,15 @@ export class UnrealLogViewer implements vscode.Disposable {
     state.watcher = undefined;
     if (state.pollTimer) clearInterval(state.pollTimer);
     state.pollTimer = undefined;
+    if (state.bridgeTimer) clearInterval(state.bridgeTimer);
+    state.bridgeTimer = undefined;
     state.filePath = undefined;
     state.fileId = undefined;
     state.offset = 0;
     state.partialLine = '';
+    state.partialBytes = Buffer.alloc(0);
+    state.bridge = undefined;
+    state.bridgeSeen = undefined;
   }
 
   private appendLine(projectRoot: string, line: string): void {
@@ -123,6 +178,9 @@ export class UnrealLogViewer implements vscode.Disposable {
       if (stat.size < state.offset) {
         state.offset = 0;
         state.partialLine = '';
+        if (this.activeProjectRoot?.toLowerCase() === projectRoot.toLowerCase()) {
+          this.channel.appendLine('[UE5_8 Cursor] Log rotated — tailing from start.');
+        }
       }
       if (stat.size <= state.offset) return;
       if (stat.size - state.offset > MAX_READ_BYTES) {
@@ -138,7 +196,11 @@ export class UnrealLogViewer implements vscode.Disposable {
         const buf = Buffer.alloc(len);
         await fd.read(buf, 0, len, state.offset);
         state.offset = stat.size;
-        const chunk = state.partialLine + buf.toString('utf-8');
+        const combined = Buffer.concat([state.partialBytes, buf]);
+        let end = combined.length;
+        while (end > 0 && (combined[end - 1] & 0xC0) === 0x80) end--;
+        state.partialBytes = combined.subarray(end);
+        const chunk = state.partialLine + combined.subarray(0, end).toString('utf-8');
         const parts = chunk.split(/\r?\n/);
         state.partialLine = chunk.endsWith('\n') || chunk.endsWith('\r') ? '' : parts.pop() ?? '';
         for (const line of parts) {
@@ -152,6 +214,13 @@ export class UnrealLogViewer implements vscode.Disposable {
 }
 
 function highlightLogLine(line: string, structured?: ReturnType<typeof parseUnrealLogLine>): string {
+  const sourceLink = line.match(/([A-Za-z]:\\[^\s:]+\.(?:cpp|h|usf|ush)):(\d+)/i);
+  if (sourceLink) {
+    const linked = `${sourceLink[1]}:${sourceLink[2]}`;
+    return structured
+      ? `[${structured.category}] ${structured.message} (${linked})`
+      : `${line} (${linked})`;
+  }
   if (structured) {
     const prefix = `[${structured.category}]`;
     if (structured.verbosity === 'Error' || structured.verbosity === 'Fatal') return `ERROR ${prefix} ${structured.message}`;

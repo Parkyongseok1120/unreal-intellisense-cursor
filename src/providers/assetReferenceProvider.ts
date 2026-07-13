@@ -3,7 +3,10 @@ import { findAssetPathsInLine } from '../assets/assetPathParser';
 import { getAssetReferencers, findSourceUsages } from '../assets/assetReferenceService';
 
 export class AssetReferenceProvider implements vscode.ReferenceProvider {
-  constructor(private projectRoot: () => string | undefined) {}
+  constructor(
+    private projectRoot: (uri?: vscode.Uri) => string | undefined,
+    private bridge: (uri?: vscode.Uri) => import('../editorBridge/editorBridgeClient').EditorBridgeClient | undefined = () => undefined,
+  ) {}
 
   async provideReferences(
     document: vscode.TextDocument,
@@ -11,7 +14,7 @@ export class AssetReferenceProvider implements vscode.ReferenceProvider {
     _context: vscode.ReferenceContext,
     _token: vscode.CancellationToken,
   ): Promise<vscode.Location[] | undefined> {
-    const root = this.projectRoot();
+    const root = this.projectRoot(document.uri);
     if (!root) return undefined;
 
     const line = document.lineAt(position.line).text;
@@ -33,7 +36,7 @@ export class AssetReferenceProvider implements vscode.ReferenceProvider {
       );
     }
 
-    const referencers = await getAssetReferencers(hit.assetPath);
+    const referencers = await getAssetReferencers(hit.assetPath, 2, this.bridge(document.uri));
     for (const ref of referencers) {
       const entries = await import('../assets/assetIndex').then((m) => m.getOrBuildAssetIndex(root));
       const entry = entries.find((e) => e.assetPath.toLowerCase() === ref.assetPath.toLowerCase());

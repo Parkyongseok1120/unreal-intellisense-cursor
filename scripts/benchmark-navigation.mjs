@@ -13,7 +13,23 @@ const outPath =
   process.env.NAV_BENCHMARK_PATH ||
   path.join(root, 'test', 'fixtures', 'quality-metrics', 'navigation-benchmark.json');
 
-function loadTsModule(relativePath) {
+const vscodeMock = {
+  Uri: { file: (p) => ({ fsPath: p }) },
+  Range: class Range {
+    constructor(a, b, c, d) {
+      this.start = { line: a, character: b };
+      this.end = { line: c, character: d };
+    }
+  },
+  Location: class Location {
+    constructor(uri, range) {
+      this.uri = uri;
+      this.range = range;
+    }
+  },
+};
+
+function loadTsModule(relativePath, extraRequires = {}) {
   const ts = require('typescript');
   const sourcePath = path.join(root, relativePath);
   const source = fs.readFileSync(sourcePath, 'utf-8');
@@ -25,10 +41,12 @@ function loadTsModule(relativePath) {
     exports: module.exports,
     module,
     require: (id) => {
+      if (extraRequires[id]) return extraRequires[id]();
+      if (id === 'vscode') return vscodeMock;
       if (id.startsWith('.')) {
         const resolved = path.resolve(path.dirname(sourcePath), id);
         for (const candidate of [`${resolved}.ts`, `${resolved}.js`, resolved]) {
-          if (fs.existsSync(candidate)) return loadTsModule(path.relative(root, candidate));
+          if (fs.existsSync(candidate)) return loadTsModule(path.relative(root, candidate), extraRequires);
         }
       }
       return require(id);
@@ -120,11 +138,74 @@ function evaluateHierarchyCases(cases, classCases) {
   return { correct, total: cases.length, failures, precision: cases.length ? correct / cases.length : 1 };
 }
 
+function evaluateReferenceCases(cases) {
+  if (!cases?.length) return { precision: 1, recall: 1, correct: 0, total: 0, failures: [] };
+
+  const refNav = loadTsModule('src/navigation/referenceNavigation.ts', {
+    '../parsers/moduleLayout': () => ({
+      findPairedSourceFile: (file) => (file.endsWith('.h') ? file.replace(/\.h$/i, '.cpp') : undefined),
+    }),
+    './symbolNavigation': () => ({
+      findEnclosingUeClass: () => undefined,
+    }),
+  });
+
+  let correct = 0;
+  let expectedTotal = 0;
+  const failures = [];
+
+  for (const c of cases) {
+    const headerPath = path.join(root, 'test', 'fixtures', 'navigation-corpus', `bench-${c.id}.h`);
+    const cppPath = path.join(root, 'test', 'fixtures', 'navigation-corpus', `bench-${c.id}.cpp`);
+    fs.mkdirSync(path.dirname(headerPath), { recursive: true });
+    fs.writeFileSync(headerPath, c.header);
+    if (c.cpp) fs.writeFileSync(cppPath, c.cpp);
+
+    const lines = c.header.split(/\r?\n/);
+    let symbolLine = 0;
+    let symbolCol = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const idx = lines[i].indexOf(c.symbol);
+      if (idx >= 0) {
+        symbolLine = i;
+        symbolCol = idx;
+        break;
+      }
+    }
+
+    const document = {
+      fileName: headerPath,
+      lineAt: (line) => ({ text: lines[line] ?? '' }),
+      getText: (range) => lines[range.start.line]?.slice(range.start.character, range.end.character) ?? '',
+      getWordRangeAtPosition: (pos, re) => {
+        const text = lines[pos.line] ?? '';
+        const match = text.match(re);
+        if (!match) return undefined;
+        const start = text.indexOf(match[0]);
+        return { start: { line: pos.line, character: start }, end: { line: pos.line, character: start + match[0].length } };
+      },
+    };
+
+    const locations = refNav.findUeReferences(document, { line: symbolLine, character: symbolCol }, { moduleScan: false });
+    expectedTotal += c.expectedLocations ?? 1;
+    if (locations.length >= (c.expectedLocations ?? 1)) {
+      correct += c.expectedLocations ?? 1;
+    } else {
+      failures.push({ id: c.id, expected: c.expectedLocations ?? 1, actual: locations.length });
+    }
+  }
+
+  const precision = expectedTotal ? correct / expectedTotal : 1;
+  const recall = cases.length ? correct / (cases.reduce((s, c) => s + (c.expectedLocations ?? 1), 0)) : 1;
+  return { precision, recall, correct, total: expectedTotal, failures };
+}
+
 const corpus = JSON.parse(fs.readFileSync(corpusPath, 'utf-8'));
 const classLine = evaluateClassLineCases(corpus.cases);
 const enrichment = evaluateReflectionEnrichment(corpus.cases);
 const symbolIds = evaluateSymbolIdCases(corpus.symbolIdCases ?? []);
 const hierarchy = evaluateHierarchyCases(corpus.hierarchyCases ?? [], corpus.cases);
+const references = evaluateReferenceCases(corpus.referenceCases ?? []);
 
 const definitionPrecision = (classLine.precision + enrichment.precision) / 2;
 const hierarchyAccuracy = hierarchy.precision;
@@ -139,19 +220,22 @@ const result = {
     enrichmentPrecision: enrichment.precision,
     symbolIdPrecision: symbolIds.precision,
     hierarchyAccuracy,
-    referencePrecision: enrichment.precision,
-    referenceRecall: enrichment.precision * 0.9,
+    referencePrecision: references.precision,
+    referenceRecall: references.recall,
   },
   counts: {
     classLine: classLine,
     enrichment,
     symbolIds,
     hierarchy,
+    references,
   },
   thresholds: corpus.thresholds,
   passed:
     definitionPrecision >= corpus.thresholds.definitionPrecision &&
-    hierarchyAccuracy >= corpus.thresholds.hierarchyAccuracy,
+    hierarchyAccuracy >= corpus.thresholds.hierarchyAccuracy &&
+    references.precision >= (corpus.thresholds.referencePrecision ?? 0.98) &&
+    references.recall >= (corpus.thresholds.referenceRecall ?? 0.85),
 };
 
 fs.mkdirSync(path.dirname(outPath), { recursive: true });

@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { UEInstallation, UEProject, BuildConfiguration } from '../types';
-import { buildSymbolSearchPaths, resolveEditorProgramPath, resolveGameExecutable, resolveNatvisPath } from '../platform/debug';
+import { buildSymbolSearchPaths, resolveEditorProgramPath, resolveGameExecutable, resolveNatvisPath, resolveServerExecutable } from '../platform/debug';
 import { buildCommandLine, resolveTargetName } from '../build/ubt';
 import { getDebuggerType, getDebuggerMIMode } from '../platform/platform';
 import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
@@ -66,6 +66,8 @@ export function buildLaunchJson(input: DebugConfigInput): object {
   const editorProgram = resolveEditorProgramPath(engine.root, debugConfiguration, platform as 'Win64');
   const editorTarget = resolveTargetName(project, 'Editor');
   const gameTarget = resolveTargetName(project, 'Game');
+  const serverTarget = resolveTargetName(project, 'Server');
+  const serverExe = resolveServerExecutable(project, debugConfiguration, platform as 'Win64');
   const dbgType = getDebuggerType();
   const miMode = getDebuggerMIMode();
 
@@ -116,6 +118,65 @@ export function buildLaunchJson(input: DebugConfigInput): object {
         stopAtEntry: false,
         ...launchExtras(autoBuildBeforeLaunch, DEBUG_TASK_BUILD_EDITOR),
       }),
+      makeConfig(`UE5_8: PIE Host (${project.name})`, {
+        request: 'launch',
+        program: editorProgram,
+        args: ['-game', `-project=${project.uprojectPath}`, '-server', '-log'],
+        cwd: project.projectRoot,
+        stopAtEntry: false,
+        ...launchExtras(autoBuildBeforeLaunch, DEBUG_TASK_BUILD_EDITOR),
+      }),
+      makeConfig('UE5_8: PIE Client 1', {
+        request: 'launch',
+        program: editorProgram,
+        args: ['-game', `-project=${project.uprojectPath}`, '-PIEVirtualPort=7777', '-log'],
+        cwd: project.projectRoot,
+        stopAtEntry: false,
+        ...launchExtras(autoBuildBeforeLaunch, DEBUG_TASK_BUILD_EDITOR),
+      }),
+      makeConfig(`UE5_8: PIE Client 2`, {
+        request: 'launch',
+        program: editorProgram,
+        args: ['-game', `-project=${project.uprojectPath}`, '-PIEVirtualPort=7778', '-log'],
+        cwd: project.projectRoot,
+        stopAtEntry: false,
+        ...launchExtras(autoBuildBeforeLaunch, DEBUG_TASK_BUILD_EDITOR),
+      }),
+      makeConfig(`UE5_8: Launch ${serverTarget} Dedicated Server (${debugConfiguration})`, {
+        request: 'launch',
+        program: serverExe,
+        args: [`-project=${project.uprojectPath}`, '-log'],
+        cwd: project.projectRoot,
+        stopAtEntry: false,
+        ...launchExtras(autoBuildBeforeLaunch, DEBUG_TASK_BUILD_GAME),
+      }),
+      makeConfig(`UE5_8: Dedicated Server Client (${debugConfiguration})`, {
+        request: 'launch',
+        program: gameExe,
+        args: [`-project=${project.uprojectPath}`, '-log'],
+        cwd: project.projectRoot,
+        stopAtEntry: false,
+        ...launchExtras(autoBuildBeforeLaunch, DEBUG_TASK_BUILD_GAME),
+      }),
+    ],
+    compounds: [
+      {
+        name: 'UE5_8: Multiplayer (Host + 2 Clients)',
+        configurations: [
+          `UE5_8: PIE Host (${project.name})`,
+          'UE5_8: PIE Client 1',
+          'UE5_8: PIE Client 2',
+        ],
+        stopAll: true,
+      },
+      {
+        name: 'UE5_8: Dedicated Server + Client',
+        configurations: [
+          `UE5_8: Launch ${serverTarget} Dedicated Server (${debugConfiguration})`,
+          `UE5_8: Dedicated Server Client (${debugConfiguration})`,
+        ],
+        stopAll: true,
+      },
     ],
   };
 }

@@ -64,7 +64,7 @@ export async function refreshSemanticGraph(
   await saveBuildSnapshot(project.projectRoot, snapshot);
   snapshotCache.set(project.projectRoot, snapshot);
 
-  const graph = await buildSemanticGraph(project);
+  const graph = await buildSemanticGraph(project, { engineRoot: options?.engine?.root });
   graph.fingerprint = snapshot.fingerprint;
   graph.generation = Date.now();
   graph.engineId = project.engineAssociation;

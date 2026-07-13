@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ensureDataDir } from '../platform/dataDir';
-import { parseGeneratedHeader, parseHeaderUProperties, parseHeaderUFunctions, type UClassReflection } from './generatedHeaderParser';
+import { parseGeneratedHeader, parseHeaderMembersForClass, type UClassReflection } from './generatedHeaderParser';
+import { parseUClassFromText } from '../blueprint/cppClassParser';
 import { enrichReflectionFromHeaderContent } from '../projectModel/symbolModel';
 
 export interface ReflectionIndexCache {
@@ -55,27 +56,27 @@ async function enrichFromSourceHeaders(projectRoot: string, classes: UClassRefle
       if (entry.isFile() && entry.name.endsWith('.h') && !entry.name.endsWith('.generated.h')) {
         try {
           const content = await fs.promises.readFile(full, 'utf-8');
-          const classMatch = content.match(/UCLASS\s*\([^)]*\)\s*class\s+\w+\s+(\w+)/);
-          const className = classMatch?.[1];
-          if (!className) continue;
+          const parsedClasses = parseUClassFromText(content);
+          for (const parsed of parsedClasses) {
+            const className = parsed.className;
+            let reflection = byName.get(className.toLowerCase());
+            if (!reflection) {
+              reflection = {
+                className,
+                filePath: full,
+                properties: [],
+                functions: [],
+              };
+              classes.push(reflection);
+              byName.set(className.toLowerCase(), reflection);
+            }
 
-          let reflection = byName.get(className.toLowerCase());
-          if (!reflection) {
-            reflection = {
-              className,
-              filePath: full,
-              properties: [],
-              functions: [],
-            };
-            classes.push(reflection);
-            byName.set(className.toLowerCase(), reflection);
+            const { properties, functions } = parseHeaderMembersForClass(content, className);
+            if (properties.length > 0) reflection.properties = properties;
+            if (functions.length > 0) reflection.functions = functions;
+            reflection.filePath = full;
+            enrichReflectionFromHeaderContent(reflection, content, full);
           }
-
-          const props = parseHeaderUProperties(content);
-          const funcs = parseHeaderUFunctions(content);
-          if (props.length > 0) reflection.properties = props;
-          if (funcs.length > 0) reflection.functions = funcs;
-          enrichReflectionFromHeaderContent(reflection, content, full);
         } catch {
           // skip
         }
@@ -158,23 +159,32 @@ export function findClassReflection(classes: UClassReflection[], className: stri
 export async function refreshReflectionForHeader(projectRoot: string, headerPath: string): Promise<void> {
   try {
     const content = await fs.promises.readFile(headerPath, 'utf-8');
-    const classMatch = content.match(/UCLASS\s*\([^)]*\)\s*class\s+\w+\s+(\w+)/);
-    const className = classMatch?.[1];
-    if (!className) return;
+    const parsedClasses = parseUClassFromText(content);
+    if (parsedClasses.length === 0) return;
 
     const classes = await loadReflectionIndex(projectRoot);
-    let reflection = findClassReflection(classes, className);
-    if (!reflection) {
-      reflection = { className, filePath: headerPath, properties: [], functions: [] };
-      classes.push(reflection);
+    const touched = new Set<string>();
+
+    for (const parsed of parsedClasses) {
+      const className = parsed.className;
+      touched.add(className.toLowerCase());
+      let reflection = findClassReflection(classes, className);
+      if (!reflection) {
+        reflection = { className, filePath: headerPath, properties: [], functions: [] };
+        classes.push(reflection);
+      }
+
+      const { properties, functions } = parseHeaderMembersForClass(content, className);
+      reflection.properties = properties;
+      reflection.functions = functions;
+      reflection.filePath = headerPath;
+      enrichReflectionFromHeaderContent(reflection, content, headerPath);
     }
 
-    reflection.properties = parseHeaderUProperties(content);
-    reflection.functions = parseHeaderUFunctions(content);
-    reflection.filePath = headerPath;
-    enrichReflectionFromHeaderContent(reflection, content, headerPath);
-
     await saveReflectionIndex(projectRoot, classes);
+
+    const { patchSemanticGraphForHeader } = await import('../projectModel/projectModelService');
+    await patchSemanticGraphForHeader(projectRoot, headerPath, classes.filter((c) => touched.has(c.className.toLowerCase())));
   } catch {
     // ignore
   }

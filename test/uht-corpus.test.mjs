@@ -52,6 +52,7 @@ describe('uht corpus', () => {
   }
 
   it('meets minimum corpus size', () => {
-    assert.ok(corpus.authoritativeCases.length + corpus.inspectionCases.length >= 6);
+    assert.ok(corpus.authoritativeCases.length >= 30);
+    assert.ok(corpus.inspectionCases.length >= 20);
   });
 });

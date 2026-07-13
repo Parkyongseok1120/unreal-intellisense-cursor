@@ -14,7 +14,10 @@ function findOwningClass(text: string, functionLine: number): string | undefined
 }
 
 export class UFunctionCodeLensProvider implements vscode.CodeLensProvider {
-  constructor(private projectRoot: () => string | undefined) {}
+  constructor(
+    private projectRoot: (uri?: vscode.Uri) => string | undefined,
+    private bridge: (uri?: vscode.Uri) => import('../editorBridge/editorBridgeClient').EditorBridgeClient | undefined = () => undefined,
+  ) {}
 
   async provideCodeLenses(document: vscode.TextDocument): Promise<vscode.CodeLens[]> {
     if (document.languageId !== 'cpp' || !document.fileName.endsWith('.h')) return [];
@@ -22,7 +25,7 @@ export class UFunctionCodeLensProvider implements vscode.CodeLensProvider {
     const text = document.getText();
     const funcs = parseUFunctions(text);
     const lenses: vscode.CodeLens[] = [];
-    const root = this.projectRoot();
+    const root = this.projectRoot(document.uri);
 
     let reflectionByClass: Map<string, Set<string>> | undefined;
     if (root) {
@@ -61,10 +64,11 @@ export class UFunctionCodeLensProvider implements vscode.CodeLensProvider {
       if (fn.isBlueprintCallable || fn.isBlueprintPure) {
         const showBpLens = !reflectionByClass || inReflection || !className;
         if (showBpLens) {
+          const bridgeHint = this.bridge(document.uri)?.isConnected() ? ' (Bridge)' : '';
           lenses.push(
             new vscode.CodeLens(range, {
               title: '$(link-external) Find BP usages',
-              tooltip: `${className ?? 'Class'}::${fn.name} Blueprint 노드 검색`,
+              tooltip: `${className ?? 'Class'}::${fn.name} Blueprint 노드 검색${bridgeHint}`,
               command: 'ue58rider.findUFunctionBlueprints',
               arguments: [fn.name, className, document.uri.fsPath],
             }),

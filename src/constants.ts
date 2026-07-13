@@ -30,6 +30,7 @@ export const Commands = {
   DebugLaunchGame: `${EXTENSION_ID}.debugLaunchGame`,
   DebugPIE: `${EXTENSION_ID}.debugPIE`,
   DebugMultiplayer: `${EXTENSION_ID}.debugMultiplayer`,
+  StopMultiplayerDebug: `${EXTENSION_ID}.stopMultiplayerDebug`,
   NewCppClass: `${EXTENSION_ID}.newCppClass`,
   OpenBlueprint: `${EXTENSION_ID}.openBlueprint`,
   FindBlueprints: `${EXTENSION_ID}.findBlueprints`,
@@ -61,6 +62,9 @@ export const Commands = {
   GoToDefinition: `${EXTENSION_ID}.goToDefinition`,
   GoToImplementation: `${EXTENSION_ID}.goToImplementation`,
   GoToReferences: `${EXTENSION_ID}.goToReferences`,
+  RollbackWorkspaceChanges: `${EXTENSION_ID}.rollbackWorkspaceChanges`,
+  FindBlueprintImplementations: `${EXTENSION_ID}.findBlueprintImplementations`,
+  ShowBlueprintPropertyOverrides: `${EXTENSION_ID}.showBlueprintPropertyOverrides`,
 } as const;
 
 export const ContextKeys = {

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { buildReferenceGraph } from './assetReferenceService';
+import { buildReferenceGraph, type AssetReferenceBridge } from './assetReferenceService';
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -81,13 +81,16 @@ function renderGraphHtml(
 }
 
 let panel: vscode.WebviewPanel | undefined;
+let openAssetHandler: ((path: string) => void) | undefined;
 
 export async function showReferenceGraphPanel(
   projectRoot: string,
   assetPath: string,
   onOpenAsset: (path: string) => void,
+  bridge?: AssetReferenceBridge,
 ): Promise<void> {
-  const graph = await buildReferenceGraph(projectRoot, assetPath);
+  openAssetHandler = onOpenAsset;
+  const graph = await buildReferenceGraph(projectRoot, assetPath, bridge);
 
   if (!panel) {
     panel = vscode.window.createWebviewPanel(
@@ -100,7 +103,7 @@ export async function showReferenceGraphPanel(
       panel = undefined;
     });
     panel.webview.onDidReceiveMessage((msg: { type: string; path?: string; file?: string; line?: number }) => {
-      if (msg.type === 'openAsset' && msg.path) onOpenAsset(msg.path);
+      if (msg.type === 'openAsset' && msg.path) openAssetHandler?.(msg.path);
       if (msg.type === 'launchEditor') void vscode.commands.executeCommand('ue58rider.launchEditor');
       if (msg.type === 'verifyMcp') void vscode.commands.executeCommand('ue58rider.verifyMcp');
       if (msg.type === 'openSource' && msg.file) {

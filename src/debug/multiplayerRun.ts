@@ -4,6 +4,18 @@ import type { UE5_8CursorSettings } from '../config/settings';
 import { baseCppDebuggerOptions, resolveEditorProgramPath, resolveServerExecutable } from '../platform/debug';
 import { resolveDebugWorkspaceFolder } from '../commands/debugCommands';
 
+async function waitForServerReady(serverExe: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await import('fs/promises').then((fs) => fs.access(serverExe));
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+}
+
 const trackedMultiplayerSessions = new Set<string>();
 
 export async function stopMultiplayerDebug(): Promise<void> {
@@ -81,7 +93,8 @@ export async function launchMultiplayerDebug(
   const sessions: Thenable<boolean>[] = [];
 
   if (options.dedicatedServer) {
-    const serverExe = resolveServerExecutable(ctx.project);
+    const serverExe = resolveServerExecutable(ctx.project, settings.debugBuildConfiguration, settings.platform);
+    await waitForServerReady(serverExe, 8000);
     sessions.push(
       vscode.debug.startDebugging(folder, {
         ...base,
@@ -93,6 +106,14 @@ export async function launchMultiplayerDebug(
       }),
     );
   } else {
+    const pieState = ctx.editorBridge?.hasCapability('pieState')
+      ? await ctx.editorBridge.getPieState()
+      : undefined;
+    if (pieState?.isPlaying) {
+      vscode.window.showWarningMessage('UE5_8 Cursor: PIE is already running — stop it before launching multiplayer debug.');
+      return;
+    }
+
     const listenArgs = options.listenServer
       ? ['-game', `-project=${ctx.project.uprojectPath}`, '-server', '-log']
       : ['-game', `-project=${ctx.project.uprojectPath}`, '-log'];

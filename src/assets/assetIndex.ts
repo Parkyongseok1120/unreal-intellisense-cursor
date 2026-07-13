@@ -126,12 +126,27 @@ async function entryFromFileEnriched(contentDir: string, filePath: string, mtime
 }
 
 export async function buildAssetIndex(projectRoot: string, maxDepth = 16): Promise<AssetIndexEntry[]> {
-  const contentDir = path.join(projectRoot, 'Content');
+  const contentDirs = [path.join(projectRoot, 'Content')];
+  const pluginsDir = path.join(projectRoot, 'Plugins');
+  try {
+    const plugins = await fs.promises.readdir(pluginsDir, { withFileTypes: true });
+    for (const plugin of plugins) {
+      if (plugin.isDirectory()) {
+        contentDirs.push(path.join(pluginsDir, plugin.name, 'Content'));
+      }
+    }
+  } catch {
+    // no plugins
+  }
+
   const allFiles: string[] = [];
-  await findUassetsRecursive(contentDir, maxDepth, allFiles);
+  for (const contentDir of contentDirs) {
+    await findUassetsRecursive(contentDir, maxDepth, allFiles);
+  }
 
   const entries: AssetIndexEntry[] = [];
   for (const filePath of allFiles) {
+    const contentDir = contentDirs.find((d) => filePath.startsWith(d)) ?? path.join(projectRoot, 'Content');
     try {
       const stat = await fs.promises.stat(filePath);
       entries.push(await entryFromFileEnriched(contentDir, filePath, stat.mtimeMs));
@@ -184,23 +199,37 @@ export async function loadAssetIndex(projectRoot: string): Promise<AssetIndexEnt
 }
 
 async function incrementalRefresh(projectRoot: string, existing: AssetIndexCache): Promise<AssetIndexEntry[]> {
-  const contentDir = path.join(projectRoot, 'Content');
+  const contentDirs = [path.join(projectRoot, 'Content')];
+  const pluginsDir = path.join(projectRoot, 'Plugins');
+  try {
+    const plugins = await fs.promises.readdir(pluginsDir, { withFileTypes: true });
+    for (const plugin of plugins) {
+      if (plugin.isDirectory()) {
+        contentDirs.push(path.join(pluginsDir, plugin.name, 'Content'));
+      }
+    }
+  } catch {
+    // no plugins
+  }
+
   const byDisk = new Map(existing.entries.map((e) => [e.diskPath.toLowerCase(), e]));
-  const allFiles: string[] = [];
-  await findUassetsRecursive(contentDir, 16, allFiles);
   const seen = new Set<string>();
 
-  for (const filePath of allFiles) {
-    seen.add(filePath.toLowerCase());
-    try {
-      const stat = await fs.promises.stat(filePath);
-      const prev = byDisk.get(filePath.toLowerCase());
-      if (prev && prev.mtimeMs === stat.mtimeMs) {
-        continue;
+  for (const contentDir of contentDirs) {
+    const allFiles: string[] = [];
+    await findUassetsRecursive(contentDir, 16, allFiles);
+    for (const filePath of allFiles) {
+      seen.add(filePath.toLowerCase());
+      try {
+        const stat = await fs.promises.stat(filePath);
+        const prev = byDisk.get(filePath.toLowerCase());
+        if (prev && prev.mtimeMs === stat.mtimeMs) {
+          continue;
+        }
+        byDisk.set(filePath.toLowerCase(), await entryFromFileEnriched(contentDir, filePath, stat.mtimeMs));
+      } catch {
+        byDisk.set(filePath.toLowerCase(), await entryFromFileEnriched(contentDir, filePath, 0));
       }
-      byDisk.set(filePath.toLowerCase(), await entryFromFileEnriched(contentDir, filePath, stat.mtimeMs));
-    } catch {
-      byDisk.set(filePath.toLowerCase(), await entryFromFileEnriched(contentDir, filePath, 0));
     }
   }
 
@@ -209,6 +238,47 @@ async function incrementalRefresh(projectRoot: string, existing: AssetIndexCache
   }
 
   return [...byDisk.values()].sort((a, b) => a.assetPath.localeCompare(b.assetPath));
+}
+
+export async function applyBridgeAssetDelta(
+  projectRoot: string,
+  delta: { added: Array<{ assetPath: string; className?: string }>; removed: string[]; updated: Array<{ assetPath: string; className?: string }> },
+): Promise<AssetIndexEntry[]> {
+  const entries = await loadAssetIndex(projectRoot);
+  const byPath = new Map(entries.map((e) => [e.assetPath.toLowerCase(), e]));
+
+  for (const removed of delta.removed) {
+    byPath.delete(removed.toLowerCase());
+  }
+
+  const upsert = (asset: { assetPath: string; className?: string }) => {
+    const key = asset.assetPath.toLowerCase();
+    const name = asset.assetPath.split('/').pop()?.split('.')[0] ?? 'Asset';
+    const existing = byPath.get(key);
+    if (existing) {
+      existing.packageClass = asset.className ?? existing.packageClass;
+      existing.source = 'bridge';
+      existing.confidence = 'authoritative';
+      return;
+    }
+    byPath.set(key, {
+      diskPath: '',
+      assetPath: asset.assetPath,
+      fileName: name,
+      assetName: name,
+      packageClass: asset.className,
+      inferredClass: asset.className ?? inferClassFromName(name),
+      source: 'bridge',
+      confidence: 'authoritative',
+    });
+  };
+
+  for (const asset of delta.added) upsert(asset);
+  for (const asset of delta.updated) upsert(asset);
+
+  const merged = [...byPath.values()].sort((a, b) => a.assetPath.localeCompare(b.assetPath));
+  await saveAssetIndex(projectRoot, merged);
+  return merged;
 }
 
 export async function enrichAssetFromMcp(entry: AssetIndexEntry): Promise<AssetIndexEntry> {

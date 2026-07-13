@@ -15,6 +15,11 @@ function run(cmd, args) {
 
 const steps = [
   ['npm', ['test']],
+  ['node', ['--test', 'test/cursor-bridge-plugin-install.test.mjs']],
+  ['node', ['--test', 'test/bridge-rpc-contract.test.mjs']],
+  ['node', ['scripts/deploy-project-mjs-plugin.mjs']],
+  ['node', ['--test', 'test/project-mjs-navigation.test.mjs']],
+  ['node', ['--test', 'test/project-mjs-uht.test.mjs']],
   ['node', ['scripts/benchmark-navigation.mjs']],
   ['node', ['scripts/benchmark-uht.mjs']],
   ['node', ['scripts/collect-quality-metrics.mjs']],

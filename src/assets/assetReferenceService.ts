@@ -3,6 +3,7 @@ import * as path from 'path';
 import { mcpCallLogical } from '../blueprint/mcpBlueprintBridge';
 import { findAssetPathsInDocument } from './assetPathParser';
 import { loadAssetIndex, type AssetIndexEntry } from './assetIndex';
+import type { EditorBridgeClient } from '../editorBridge/editorBridgeClient';
 
 export interface AssetReference {
   assetPath: string;
@@ -11,6 +12,13 @@ export interface AssetReference {
   direction: 'referencer' | 'dependency' | 'source-usage';
   sourceFile?: string;
   sourceLine?: number;
+  authoritative?: boolean;
+}
+
+export interface AssetReferenceBridge {
+  getAssetReferencers(assetPath: string, depth?: number): Promise<Array<{ assetPath: string; className?: string }>>;
+  getAssetDependencies(assetPath: string): Promise<Array<{ assetPath: string; className?: string }>>;
+  isConnected(): boolean;
 }
 
 function parseAssetList(text: string): Array<{ assetPath: string; assetName: string; assetClass?: string }> {
@@ -42,7 +50,26 @@ function parseAssetList(text: string): Array<{ assetPath: string; assetName: str
     });
 }
 
-export async function getAssetReferencers(assetPath: string, depth = 1): Promise<AssetReference[]> {
+export async function getAssetReferencers(
+  assetPath: string,
+  depth = 1,
+  bridge?: AssetReferenceBridge,
+): Promise<AssetReference[]> {
+  if (bridge?.isConnected()) {
+    try {
+      const refs = await bridge.getAssetReferencers(assetPath, depth);
+      return refs.map((a) => ({
+        assetPath: a.assetPath,
+        assetName: a.assetPath.split('/').pop()?.split('.')[0] ?? '',
+        assetClass: a.className,
+        direction: 'referencer' as const,
+        authoritative: true,
+      }));
+    } catch {
+      // fall through to MCP
+    }
+  }
+
   const seen = new Set<string>();
   const results: AssetReference[] = [];
 
@@ -68,7 +95,25 @@ export async function getAssetReferencers(assetPath: string, depth = 1): Promise
   return results;
 }
 
-export async function getAssetDependencies(assetPath: string): Promise<AssetReference[]> {
+export async function getAssetDependencies(
+  assetPath: string,
+  bridge?: AssetReferenceBridge,
+): Promise<AssetReference[]> {
+  if (bridge?.isConnected()) {
+    try {
+      const deps = await bridge.getAssetDependencies(assetPath);
+      return deps.map((a) => ({
+        assetPath: a.assetPath,
+        assetName: a.assetPath.split('/').pop()?.split('.')[0] ?? '',
+        assetClass: a.className,
+        direction: 'dependency' as const,
+        authoritative: true,
+      }));
+    } catch {
+      // fall through to MCP
+    }
+  }
+
   const result = await mcpCallLogical('getAssetDependencies', { assetPath });
   if (!result.ok || !result.text) return [];
   return parseAssetList(result.text).map((a) => ({
@@ -134,6 +179,7 @@ export async function findSourceUsages(projectRoot: string, assetPath: string): 
 export async function buildReferenceGraph(
   projectRoot: string,
   centerAssetPath: string,
+  bridge?: AssetReferenceBridge,
 ): Promise<{
   center: string;
   referencers: AssetReference[];
@@ -141,12 +187,15 @@ export async function buildReferenceGraph(
   sourceUsages: AssetReference[];
   editorConnected: boolean;
 }> {
-  const { probeMcpEndpoint } = await import('../cursor/mcpConfig');
-  const editorConnected = await probeMcpEndpoint(8000, 500);
+  let editorConnected = bridge?.isConnected() ?? false;
+  if (!editorConnected) {
+    const { probeMcpEndpoint } = await import('../cursor/mcpConfig');
+    editorConnected = await probeMcpEndpoint(8000, 500);
+  }
 
   const [referencers, dependencies, sourceUsages] = await Promise.all([
-    getAssetReferencers(centerAssetPath, 2),
-    getAssetDependencies(centerAssetPath),
+    getAssetReferencers(centerAssetPath, 2, bridge),
+    getAssetDependencies(centerAssetPath, bridge),
     findSourceUsages(projectRoot, centerAssetPath),
   ]);
 

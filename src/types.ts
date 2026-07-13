@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import type { EditorBridgeClient } from './editorBridge/editorBridgeClient';
 
 export interface UEInstallation {
   version: string;
@@ -44,6 +45,7 @@ export interface UE5_8CursorContext {
   engine: UEInstallation | undefined;
   outputChannel: vscode.OutputChannel;
   diagnosticCollection: vscode.DiagnosticCollection;
+  editorBridge?: EditorBridgeClient;
 }
 
 /** @deprecated Use UE5_8CursorContext */

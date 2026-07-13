@@ -125,7 +125,10 @@ export async function buildProjectModel(project: UEProject): Promise<ProjectMode
   };
 }
 
-export async function buildSemanticGraph(project: UEProject): Promise<SemanticGraph> {
+export async function buildSemanticGraph(
+  project: UEProject,
+  options?: { engineRoot?: string },
+): Promise<SemanticGraph> {
   const layouts = await discoverModuleLayouts(project.projectRoot);
   const modules: ModuleNode[] = [];
 
@@ -176,7 +179,9 @@ export async function buildSemanticGraph(project: UEProject): Promise<SemanticGr
   const compileActions = await collectCompileActionsFromProject(project.projectRoot);
   const generatedArtifacts = await linkGeneratedArtifacts(project, reflection);
 
-  const symbols = reflectionToSymbols(reflection, generatedArtifacts, modules);
+  let symbols = reflectionToSymbols(reflection, generatedArtifacts, modules);
+  symbols = appendPluginNavigableSymbols(symbols, modules, plugins, reflection);
+  symbols = appendEngineBaseSymbols(symbols, options?.engineRoot);
 
   return {
     version: SEMANTIC_GRAPH_VERSION,
@@ -201,31 +206,50 @@ export function reflectionToSymbols(
   modules: ModuleNode[],
 ): UeClassSymbol[] {
   const genByHeader = new Map(artifacts.map((a) => [path.normalize(a.headerPath).toLowerCase(), a.generatedPath]));
-  return reflection
-    .filter((r) => r.filePath && !r.filePath.endsWith('.generated.h'))
-    .map((r) => {
-      const sourceFile = path.normalize(r.filePath);
-      const mod = modules.find((m) => sourceFile.startsWith(path.normalize(m.root)));
-      const generatedHeader = genByHeader.get(sourceFile.toLowerCase());
-      const provenance: SymbolProvenance = generatedHeader ? 'generated-header' : 'source-parser';
-      const confidence: SymbolConfidence = generatedHeader ? 'authoritative' : 'derived';
-      const classLine = r.classLine ?? r.declarationRange?.startLine;
-      const sourceLine = classLine ?? r.properties[0]?.line ?? r.functions[0]?.line ?? 0;
-      return {
-        id: buildStableSymbolId(mod?.name, r.className, sourceFile),
-        name: r.className,
-        sourceFile,
-        sourceLine,
-        classLine: classLine ?? sourceLine,
-        declarationRange: r.declarationRange,
-        baseClass: r.superClass,
-        generatedHeader,
-        moduleName: mod?.name,
-        members: r.members,
-        provenance,
-        confidence,
-      };
+  const symbols: UeClassSymbol[] = [];
+
+  for (const r of reflection.filter((entry) => entry.filePath && !entry.filePath.endsWith('.generated.h'))) {
+    const sourceFile = path.normalize(r.filePath);
+    const mod = modules.find((m) => sourceFile.startsWith(path.normalize(m.root)));
+    const generatedHeader = genByHeader.get(sourceFile.toLowerCase());
+    const provenance: SymbolProvenance = generatedHeader ? 'generated-header' : 'source-parser';
+    const confidence: SymbolConfidence = generatedHeader ? 'authoritative' : 'derived';
+    const classLine = r.classLine ?? r.declarationRange?.startLine;
+    const sourceLine = classLine ?? r.properties[0]?.line ?? r.functions[0]?.line ?? 0;
+    symbols.push({
+      id: buildStableSymbolId(mod?.name, r.className, sourceFile),
+      name: r.className,
+      sourceFile,
+      sourceLine,
+      classLine: classLine ?? sourceLine,
+      declarationRange: r.declarationRange,
+      baseClass: r.superClass,
+      generatedHeader,
+      moduleName: mod?.name,
+      members: r.members,
+      provenance,
+      confidence,
+      interfaces: r.interfaceCompanion ? [r.interfaceCompanion] : undefined,
     });
+
+    if (r.interfaceCompanion) {
+      const companionLine = r.classLine !== undefined ? r.classLine + 4 : sourceLine + 4;
+      symbols.push({
+        id: buildStableSymbolId(mod?.name, r.interfaceCompanion, sourceFile),
+        name: r.interfaceCompanion,
+        sourceFile,
+        sourceLine: companionLine,
+        classLine: companionLine,
+        baseClass: r.interfaceCompanion.startsWith('I') ? undefined : r.superClass,
+        moduleName: mod?.name,
+        provenance: 'source-parser',
+        confidence: 'derived',
+        interfaces: [r.className],
+      });
+    }
+  }
+
+  return symbols;
 }
 
 export async function saveSemanticGraph(projectRoot: string, graph: SemanticGraph): Promise<string> {
@@ -233,6 +257,117 @@ export async function saveSemanticGraph(projectRoot: string, graph: SemanticGrap
   const filePath = path.join(dir, SEMANTIC_GRAPH_FILE);
   await fs.promises.writeFile(filePath, JSON.stringify(graph, null, 2) + '\n', 'utf-8');
   return filePath;
+}
+
+/** Per-header incremental patch — avoids full graph rebuild on single-file edits. */
+export async function patchSemanticGraphForHeader(
+  projectRoot: string,
+  headerPath: string,
+  updatedReflection: UClassReflection[],
+): Promise<void> {
+  const graph = await loadSemanticGraph(projectRoot);
+  if (!graph) return;
+
+  const normHeader = path.normalize(headerPath).toLowerCase();
+  const touched = new Set(updatedReflection.map((r) => r.className.toLowerCase()));
+
+  graph.reflection = graph.reflection.filter(
+    (r) => !(path.normalize(r.filePath).toLowerCase() === normHeader && touched.has(r.className.toLowerCase())),
+  );
+  graph.reflection.push(...updatedReflection);
+
+  const deduped = new Map<string, UClassReflection>();
+  for (const r of graph.reflection) deduped.set(r.className.toLowerCase(), r);
+  graph.reflection = [...deduped.values()].sort((a, b) => a.className.localeCompare(b.className));
+
+  graph.symbols = reflectionToSymbols(graph.reflection, graph.generatedArtifacts ?? [], graph.modules ?? []);
+  graph.updatedAt = new Date().toISOString();
+  graph.generation = Date.now();
+
+  await saveSemanticGraph(projectRoot, graph);
+}
+
+const ENGINE_CLASS_SEARCH: Array<{ name: string; relPaths: string[] }> = [
+  { name: 'AActor', relPaths: ['Engine/Source/Runtime/Engine/Classes/GameFramework/Actor.h'] },
+  { name: 'APawn', relPaths: ['Engine/Source/Runtime/Engine/Classes/GameFramework/Pawn.h'] },
+  { name: 'ACharacter', relPaths: ['Engine/Source/Runtime/Engine/Classes/GameFramework/Character.h'] },
+  { name: 'UObject', relPaths: ['Engine/Source/Runtime/CoreUObject/Public/UObject/Object.h'] },
+  { name: 'UActorComponent', relPaths: ['Engine/Source/Runtime/Engine/Classes/Components/ActorComponent.h'] },
+  { name: 'UInterface', relPaths: ['Engine/Source/Runtime/CoreUObject/Public/UObject/Interface.h'] },
+  { name: 'AGameModeBase', relPaths: ['Engine/Source/Runtime/Engine/Classes/GameFramework/GameModeBase.h'] },
+];
+
+function resolveEngineClassHeader(engineRoot: string, className: string): string | undefined {
+  const entry = ENGINE_CLASS_SEARCH.find((c) => c.name === className);
+  if (!entry) return undefined;
+  for (const rel of entry.relPaths) {
+    const candidate = path.join(engineRoot, rel);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+export function appendPluginNavigableSymbols(
+  symbols: UeClassSymbol[],
+  modules: ModuleNode[],
+  plugins: PluginNode[],
+  reflection: UClassReflection[],
+): UeClassSymbol[] {
+  const seen = new Set(symbols.map((s) => s.id));
+  const pluginModuleNames = new Set(plugins.flatMap((p) => p.modules));
+  const pluginModules = modules.filter((m) => pluginModuleNames.has(m.name));
+  const extra: UeClassSymbol[] = [];
+
+  for (const r of reflection) {
+    const sourceFile = path.normalize(r.filePath);
+    const norm = sourceFile.replace(/\\/g, '/').toLowerCase();
+    if (!norm.includes('/plugins/')) continue;
+    const mod = pluginModules.find((m) => sourceFile.startsWith(path.normalize(m.root)));
+    if (!mod) continue;
+    const id = buildStableSymbolId(mod.name, r.className, sourceFile);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const classLine = r.classLine ?? r.declarationRange?.startLine ?? 0;
+    extra.push({
+      id,
+      name: r.className,
+      sourceFile,
+      sourceLine: classLine,
+      classLine,
+      declarationRange: r.declarationRange,
+      baseClass: r.superClass,
+      moduleName: mod.name,
+      members: r.members,
+      provenance: 'source-parser',
+      confidence: 'derived',
+    });
+  }
+
+  return extra.length ? [...symbols, ...extra] : symbols;
+}
+
+export function appendEngineBaseSymbols(
+  symbols: UeClassSymbol[],
+  engineRoot?: string,
+): UeClassSymbol[] {
+  if (!engineRoot || !fs.existsSync(engineRoot)) return symbols;
+  const seen = new Set(symbols.map((s) => s.name.toLowerCase()));
+  const engineSymbols: UeClassSymbol[] = [];
+  for (const { name } of ENGINE_CLASS_SEARCH) {
+    if (seen.has(name.toLowerCase())) continue;
+    const header = resolveEngineClassHeader(engineRoot, name);
+    if (!header) continue;
+    engineSymbols.push({
+      id: buildStableSymbolId('Engine', name, header),
+      name,
+      sourceFile: header,
+      sourceLine: 0,
+      provenance: 'source-parser',
+      confidence: 'derived',
+    });
+    seen.add(name.toLowerCase());
+  }
+  return [...symbols, ...engineSymbols];
 }
 
 export async function loadSemanticGraph(projectRoot: string): Promise<SemanticGraph | undefined> {

@@ -12,6 +12,8 @@ import type { UE5_8CursorSettings } from '../config/settings';
 import { Commands } from '../constants';
 
 const PAGE_SIZE = 100;
+const WINDOW_ROWS = 4;
+const ROW_HEIGHT = 110;
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -81,10 +83,10 @@ export async function showContentBrowserWebview(
       await vscode.env.clipboard.writeText(msg.path);
       vscode.window.showInformationMessage(`복사됨: ${msg.path}`);
     }
-    if (msg.type === 'filter' || msg.type === 'search' || msg.type === 'page') {
+    if (msg.type === 'filter' || msg.type === 'search' || msg.type === 'page' || msg.type === 'scroll') {
       const filtered = applyFilters(entries, msg.filter ?? 'All', msg.query ?? '');
-      const page = msg.page ?? 0;
-      panel.webview.html = buildHtml(filtered, page, editorConnected, dndEnabled, msg.filter ?? 'All', msg.query ?? '');
+      const scrollTop = msg.scrollTop ?? 0;
+      panel.webview.html = buildHtml(filtered, scrollTop, editorConnected, dndEnabled, msg.filter ?? 'All', msg.query ?? '');
     }
     if (msg.type === 'drop' && msg.filePaths?.length) {
       const { importFilesFromDrop } = await import('./assetImportService');
@@ -119,17 +121,24 @@ function updateWebview(
 
 function buildHtml(
   entries: AssetIndexEntry[],
-  page: number,
+  scrollTop: number,
   editorConnected: boolean,
   dndEnabled: boolean,
   classFilter: string,
   query: string,
 ): string {
   const filtered = applyFilters(entries, classFilter, query);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages - 1);
-  const slice = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const cols = 6;
+  const totalRows = Math.max(1, Math.ceil(filtered.length / cols));
+  const viewportRows = WINDOW_ROWS + 2;
+  const startRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 1);
+  const endRow = Math.min(totalRows, startRow + viewportRows);
+  const startIndex = startRow * cols;
+  const endIndex = Math.min(filtered.length, endRow * cols);
+  const slice = filtered.slice(startIndex, endIndex);
   const cards = slice.map(renderCard).join('');
+  const topSpacer = startRow * ROW_HEIGHT;
+  const bottomSpacer = Math.max(0, (totalRows - endRow) * ROW_HEIGHT);
   const filterOptions = CLASS_FILTER_OPTIONS.map(
     (o) => `<option value="${o}"${o === classFilter ? ' selected' : ''}>${o}</option>`,
   ).join('');
@@ -151,6 +160,7 @@ function buildHtml(
   .toolbar { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
   .toolbar input, .toolbar select { padding: 4px 8px; flex: 1; min-width: 120px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  .scroll { max-height: 70vh; overflow-y: auto; }
   .card { border: 1px solid var(--vscode-panel-border); padding: 6px; border-radius: 4px; cursor: pointer; text-align: center; }
   .card:hover { background: var(--vscode-list-hoverBackground); }
   .thumb { width: 64px; height: 64px; object-fit: contain; margin: 0 auto 4px; display: block; }
@@ -171,11 +181,13 @@ function buildHtml(
     <input id="q" placeholder="Search..." value="${escapeHtml(query)}" />
     <select id="classFilter">${filterOptions}</select>
   </div>
-  <div class="grid" id="grid">${cards}</div>
+  <div class="scroll" id="scroll">
+    <div style="height:${topSpacer}px" id="topSpacer"></div>
+    <div class="grid" id="grid">${cards}</div>
+    <div style="height:${bottomSpacer}px" id="bottomSpacer"></div>
+  </div>
   <div class="pager">
-    <button id="prev" ${safePage <= 0 ? 'disabled' : ''}>Prev</button>
-    <span>Page ${safePage + 1} / ${totalPages} (${filtered.length} assets)</span>
-    <button id="next" ${safePage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+    <span>${filtered.length} assets · virtual window rows ${startRow + 1}-${endRow} / ${totalRows}</span>
   </div>
   <div class="ctx" id="ctx">
     <button data-act="open">Open in Editor</button>
@@ -188,13 +200,35 @@ function buildHtml(
     const post = (type, extra) => vscode.postMessage({ type, ...extra });
 
     document.getElementById('q').addEventListener('input', (e) => {
-      post('search', { query: e.target.value, filter: document.getElementById('classFilter').value, page: 0 });
+      post('search', { query: e.target.value, filter: document.getElementById('classFilter').value, scrollTop: 0 });
     });
     document.getElementById('classFilter').addEventListener('change', (e) => {
-      post('filter', { filter: e.target.value, query: document.getElementById('q').value, page: 0 });
+      post('filter', { filter: e.target.value, query: document.getElementById('q').value, scrollTop: 0 });
     });
-    document.getElementById('prev')?.addEventListener('click', () => post('page', { page: ${safePage - 1}, filter: document.getElementById('classFilter').value, query: document.getElementById('q').value }));
-    document.getElementById('next')?.addEventListener('click', () => post('page', { page: ${safePage + 1}, filter: document.getElementById('classFilter').value, query: document.getElementById('q').value }));
+    let scrollTimer;
+    document.getElementById('scroll')?.addEventListener('scroll', (e) => {
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
+        post('scroll', {
+          scrollTop: e.target.scrollTop,
+          filter: document.getElementById('classFilter').value,
+          query: document.getElementById('q').value,
+        });
+      }, 80);
+    });
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          post('scroll', {
+            scrollTop: document.getElementById('scroll')?.scrollTop ?? 0,
+            filter: document.getElementById('classFilter').value,
+            query: document.getElementById('q').value,
+          });
+        }
+      }
+    }, { root: document.getElementById('scroll'), rootMargin: '200px' });
+    document.getElementById('topSpacer') && observer.observe(document.getElementById('topSpacer'));
+    document.getElementById('bottomSpacer') && observer.observe(document.getElementById('bottomSpacer'));
 
     document.querySelectorAll('.card').forEach(c => {
       c.addEventListener('click', (e) => {

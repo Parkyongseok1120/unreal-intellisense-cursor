@@ -52,8 +52,27 @@ describe('bridge protocol contract', () => {
     const caps = Object.keys(protocol.BRIDGE_CAPABILITIES);
     assert.ok(caps.includes('assetRegistry'));
     assert.ok(caps.includes('automationTests'));
+    assert.ok(caps.includes('blueprintGraph'));
+    assert.ok(caps.includes('pieState'));
+    assert.ok(caps.includes('unrealLogs'));
     if (protocol.BRIDGE_IMPLEMENTED_METHODS.has('blueprint.listDerived')) {
       assert.ok(caps.includes('blueprintGraph'));
+    }
+  });
+
+  it('C++ descriptor and handshake advertise all TS capability groups', () => {
+    const cppPath = path.join(
+      process.cwd(),
+      'plugins',
+      'UE58CursorBridge',
+      'Source',
+      'UE58CursorBridge',
+      'Private',
+      'CursorBridgeHttpServer.cpp',
+    );
+    const cppSource = fs.readFileSync(cppPath, 'utf-8');
+    for (const cap of ['assetRegistry', 'automationTests', 'blueprintGraph', 'pieState', 'unrealLogs']) {
+      assert.ok(cppSource.includes(`TEXT("${cap}")`), `C++ missing capability ${cap}`);
     }
   });
 

@@ -46,7 +46,7 @@ export async function findUFunctionBlueprints(
 
   const usages = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `BP usages: ${ownerClass}::${functionName}` },
-    () => findUFunctionBlueprintUsages(ctx.project!, ctx.engine, ownerClass!, functionName),
+    () => findUFunctionBlueprintUsages(ctx.project!, ctx.engine, ownerClass!, functionName, ctx.editorBridge),
   );
 
   if (usages.length === 0) {

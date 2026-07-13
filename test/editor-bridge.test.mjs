@@ -46,7 +46,10 @@ before(async () => {
       const reqJson = JSON.parse(body);
       let result = {};
       if (reqJson.method === 'handshake') {
-        result = { ok: true, capabilities: ['assetRegistry', 'automationTests'] };
+        result = {
+          ok: true,
+          capabilities: ['assetRegistry', 'automationTests', 'blueprintGraph', 'pieState', 'unrealLogs'],
+        };
       } else if (reqJson.method === 'automation.list') {
         result = { tests: [{ name: 'Project.Smoke', source: 'automation' }] };
       } else if (reqJson.method === 'assetRegistry.list') {
@@ -73,7 +76,7 @@ before(async () => {
       pid: process.pid,
       token,
       protocolVersion: 1,
-      capabilities: ['assetRegistry', 'automationTests'],
+      capabilities: ['assetRegistry', 'automationTests', 'blueprintGraph', 'pieState', 'unrealLogs'],
       transport: 'http',
     }),
   );

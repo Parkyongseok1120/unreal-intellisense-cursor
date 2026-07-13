@@ -2,7 +2,7 @@
   "name": "ue5-8-cursor",
   "displayName": "UE5_8 Cursor",
   "description": "Cursor dedicated Unreal Engine 5.8 C++ workflow — IntelliSense, build, Live Coding, MCP",
-  "version": "7.0.12",
+  "version": "8.0.0",
   "publisher": "truesync",
   "license": "MIT",
   "repository": {
@@ -207,6 +207,21 @@
         "category": "UE5_8 Cursor"
       },
       {
+        "command": "ue58rider.findBlueprintImplementations",
+        "title": "Find Blueprint Implementations (Bridge)",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.showBlueprintPropertyOverrides",
+        "title": "Show Blueprint Property Overrides",
+        "category": "UE5_8 Cursor"
+      },
+      {
+        "command": "ue58rider.rollbackWorkspaceChanges",
+        "title": "Rollback Workspace Changes",
+        "category": "UE5_8 Cursor"
+      },
+      {
         "command": "ue58rider.installCursorBridgePlugin",
         "title": "Install Editor Bridge Plugin",
         "category": "UE5_8 Cursor",
@@ -270,6 +285,12 @@
         "title": "Debug: Multiplayer PIE / Dedicated Server",
         "category": "UE5_8 Cursor",
         "icon": "$(debug-alt)"
+      },
+      {
+        "command": "ue58rider.stopMultiplayerDebug",
+        "title": "Debug: Stop Multiplayer Sessions",
+        "category": "UE5_8 Cursor",
+        "icon": "$(debug-stop)"
       },
       {
         "command": "ue58rider.findUFunctionBlueprints",
@@ -442,6 +463,21 @@
           "default": true,
           "description": "부트스트랩 시 확인 대화상자 없이 status bar + Output만 사용."
         },
+        "ue58rider.bridge.promptInstallOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "프로젝트 열 때 UE58CursorBridge 미설치 시 설치 안내 표시."
+        },
+        "ue58rider.bridge.autoInstallOnOpen": {
+          "type": "boolean",
+          "default": false,
+          "description": "프로젝트 감지 시 UE58CursorBridge 자동 설치 (동의 없음)."
+        },
+        "ue58rider.bridge.autoInstallSilent": {
+          "type": "boolean",
+          "default": true,
+          "description": "자동 설치 시 확인 대화상자 없이 Output만 사용."
+        },
         "ue58rider.autoGenerateCompileCommands": {
           "type": "boolean",
           "default": true,
@@ -593,14 +629,14 @@
         },
         "ue58rider.semantic.navigation.enabled": {
           "type": "boolean",
-          "default": false,
-          "description": "UE semantic navigation providers. Off until authoritative graph is ready.",
+          "default": true,
+          "description": "UE semantic navigation providers (definition/reference/hierarchy overlay).",
           "scope": "resource"
         },
         "ue58rider.uht.inspections.enabled": {
           "type": "boolean",
-          "default": false,
-          "description": "UE heuristic inspections on UHT diagnostics. Off until safe corpus passes.",
+          "default": true,
+          "description": "UE heuristic inspections layered on UHT diagnostics.",
           "scope": "resource"
         },
         "ue58rider.autoStartLogViewer": {

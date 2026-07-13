@@ -21,6 +21,8 @@
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Blueprint/BlueprintSupport.h"
+#include "K2Node_CallFunction.h"
+#include "EdGraph/EdGraph.h"
 #endif
 
 static constexpr uint16 BRIDGE_BASE_PORT = 19321;
@@ -34,10 +36,24 @@ struct FAutomationRunRecord
 {
 	FString State;
 	double StartTime = 0.0;
+	double EndTime = 0.0;
 	FString ExecutionId;
+	FString Message;
+	int32 Line = 0;
+	FString ArtifactPath;
 };
 
 static TMap<FString, FAutomationRunRecord> GAutomationTestStates;
+static FString GActiveAutomationTestName;
+
+struct FAssetSnapshotEntry
+{
+	FString ClassName;
+	FString PackageName;
+};
+
+static TMap<FString, FAssetSnapshotEntry> GAssetRegistrySnapshot;
+static int64 GAssetRegistrySnapshotSince = 0;
 
 static FString MakeBridgeToken()
 {
@@ -52,6 +68,29 @@ static TSharedPtr<FJsonObject> MakeErrorObject(int32 Code, const FString& Messag
 	return Obj;
 }
 
+#if WITH_EDITOR
+static FString BlueprintClassMatchToken(const FString& ClassPath)
+{
+	FString Token = ClassPath.Contains(TEXT("."))
+		? ClassPath.Mid(ClassPath.Find(TEXT("."), ESearchCase::IgnoreCase, ESearchDir::FromEnd) + 1)
+		: ClassPath;
+	if (Token.Len() > 1 && (Token[0] == TCHAR('A') || Token[0] == TCHAR('U')) && FChar::IsUpper(Token[1]))
+	{
+		Token = Token.Mid(1);
+	}
+	return Token;
+}
+
+static bool BlueprintMatchesClassToken(const FAssetData& Data, const FString& ClassToken)
+{
+	const FString ParentClass = Data.GetTagValueRef<FString>(FBlueprintTags::ParentClassPath);
+	const FString NativeParent = Data.GetTagValueRef<FString>(FBlueprintTags::NativeParentClassPath);
+	const bool bParentMatch = !ParentClass.IsEmpty() && ParentClass.Contains(ClassToken, ESearchCase::IgnoreCase);
+	const bool bNativeMatch = !NativeParent.IsEmpty() && NativeParent.Contains(ClassToken, ESearchCase::IgnoreCase);
+	return bParentMatch || bNativeMatch;
+}
+#endif
+
 static bool IsImplementedBridgeMethod(const FString& Method)
 {
 	static const TSet<FString> Implemented = {
@@ -59,6 +98,9 @@ static bool IsImplementedBridgeMethod(const FString& Method)
 		TEXT("ping"),
 		TEXT("assetRegistry.list"),
 		TEXT("assetRegistry.get"),
+		TEXT("assetRegistry.delta"),
+		TEXT("assetRegistry.referencers"),
+		TEXT("assetRegistry.dependencies"),
 		TEXT("automation.list"),
 		TEXT("automation.run"),
 		TEXT("automation.status"),
@@ -66,6 +108,8 @@ static bool IsImplementedBridgeMethod(const FString& Method)
 		TEXT("blueprint.listDerived"),
 		TEXT("blueprint.findImplementations"),
 		TEXT("blueprint.propertyOverrides"),
+		TEXT("blueprint.compileErrors"),
+		TEXT("blueprint.findUFunctionNodes"),
 		TEXT("logs.tail"),
 		TEXT("pie.getState"),
 	};
@@ -129,6 +173,9 @@ void FCursorBridgeHttpServer::WriteDescriptor() const
 	TArray<TSharedPtr<FJsonValue>> Caps;
 	Caps.Add(MakeShared<FJsonValueString>(TEXT("assetRegistry")));
 	Caps.Add(MakeShared<FJsonValueString>(TEXT("automationTests")));
+	Caps.Add(MakeShared<FJsonValueString>(TEXT("blueprintGraph")));
+	Caps.Add(MakeShared<FJsonValueString>(TEXT("pieState")));
+	Caps.Add(MakeShared<FJsonValueString>(TEXT("unrealLogs")));
 	Descriptor->SetArrayField(TEXT("capabilities"), Caps);
 
 	FString Out;
@@ -182,6 +229,10 @@ void FCursorBridgeHttpServer::RefreshRunningAutomationStates()
 			FAutomationTestExecutionInfo IgnoredExecutionInfo;
 			Framework.StopTest(IgnoredExecutionInfo);
 			Pair.Value.State = TEXT("timedOut");
+			if (GActiveAutomationTestName == Pair.Key)
+			{
+				GActiveAutomationTestName.Empty();
+			}
 			continue;
 		}
 
@@ -190,7 +241,18 @@ void FCursorBridgeHttpServer::RefreshRunningAutomationStates()
 			FAutomationTestExecutionInfo ExecutionInfo;
 			const bool bStopped = Framework.StopTest(ExecutionInfo);
 			const bool bPassed = bStopped && ExecutionInfo.GetErrorTotal() == 0;
+			Pair.Value.EndTime = Now;
 			Pair.Value.State = bPassed ? TEXT("passed") : TEXT("failed");
+			Pair.Value.ArtifactPath = FPaths::ProjectLogDir() / (FString(FApp::GetProjectName()) + TEXT(".log"));
+			if (!bPassed && ExecutionInfo.GetErrorTotal() > 0)
+			{
+				Pair.Value.Message = FString::Printf(TEXT("%d automation error(s)"), ExecutionInfo.GetErrorTotal());
+				Pair.Value.Line = 1;
+			}
+			if (GActiveAutomationTestName == Pair.Key)
+			{
+				GActiveAutomationTestName.Empty();
+			}
 		}
 	}
 #endif
@@ -217,6 +279,9 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 		TArray<TSharedPtr<FJsonValue>> Caps;
 		Caps.Add(MakeShared<FJsonValueString>(TEXT("assetRegistry")));
 		Caps.Add(MakeShared<FJsonValueString>(TEXT("automationTests")));
+		Caps.Add(MakeShared<FJsonValueString>(TEXT("blueprintGraph")));
+		Caps.Add(MakeShared<FJsonValueString>(TEXT("pieState")));
+		Caps.Add(MakeShared<FJsonValueString>(TEXT("unrealLogs")));
 		Result->SetArrayField(TEXT("capabilities"), Caps);
 		Result->SetNumberField(TEXT("capabilityVersion"), 1);
 		return Result;
@@ -255,16 +320,26 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 		IAssetRegistry& Registry = AssetRegistryModule.Get();
 		TArray<FAssetData> AssetDataList;
 
-		if (!PathFilter.IsEmpty())
+		if (!PathFilter.IsEmpty() || !ClassFilter.IsEmpty())
 		{
 			FARFilter Filter;
 			Filter.bRecursivePaths = true;
-			Filter.PackagePaths.Add(FName(*PathFilter));
+			if (!PathFilter.IsEmpty())
+			{
+				Filter.PackagePaths.Add(FName(*PathFilter));
+			}
+			if (!ClassFilter.IsEmpty())
+			{
+				Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/Engine"), FName(*ClassFilter)));
+			}
 			Registry.GetAssets(Filter, AssetDataList);
 		}
 		else
 		{
-			Registry.GetAllAssets(AssetDataList, true);
+			FARFilter Filter;
+			Filter.bRecursivePaths = true;
+			Filter.PackagePaths.Add(FName(TEXT("/Game")));
+			Registry.GetAssets(Filter, AssetDataList);
 		}
 
 		TArray<TSharedPtr<FJsonValue>> Assets;
@@ -319,10 +394,23 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 		}
 
 		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-		const FAssetData Data = AssetRegistryModule.Get().GetAssetByObjectPath(FSoftObjectPath(AssetPath));
+		IAssetRegistry& Registry = AssetRegistryModule.Get();
+		FSoftObjectPath RequestedPath(AssetPath);
+		FAssetData Data = Registry.GetAssetByObjectPath(RequestedPath);
 		if (!Data.IsValid())
 		{
 			return nullptr;
+		}
+
+		if (Data.AssetClassPath.GetAssetName() == FName(TEXT("ObjectRedirector")))
+		{
+			const FSoftObjectPath RedirectedPath = Registry.GetRedirectedObjectPath(RequestedPath);
+			const FAssetData Redirected = Registry.GetAssetByObjectPath(RedirectedPath);
+			if (Redirected.IsValid())
+			{
+				Data = Redirected;
+				AssetPath = Redirected.GetObjectPathString();
+			}
 		}
 
 		TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
@@ -332,6 +420,208 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 
 		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetObjectField(TEXT("asset"), Entry);
+		return Result;
+	}
+
+	if (Method == TEXT("assetRegistry.delta"))
+	{
+		double SinceNum = 0;
+		if (Params.IsValid())
+		{
+			Params->TryGetNumberField(TEXT("since"), SinceNum);
+		}
+
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		IAssetRegistry& Registry = AssetRegistryModule.Get();
+		TArray<FAssetData> AssetDataList;
+		FARFilter Filter;
+		Filter.bRecursivePaths = true;
+		Filter.PackagePaths.Add(FName(TEXT("/Game")));
+		Registry.GetAssets(Filter, AssetDataList);
+
+		TMap<FString, FAssetSnapshotEntry> Current;
+		for (const FAssetData& Data : AssetDataList)
+		{
+			const FString ObjectPath = Data.GetObjectPathString();
+			FAssetSnapshotEntry Entry;
+			Entry.ClassName = Data.AssetClassPath.GetAssetName().ToString();
+			Entry.PackageName = Data.PackageName.ToString();
+			Current.Add(ObjectPath, Entry);
+		}
+
+		TArray<TSharedPtr<FJsonValue>> Added;
+		TArray<TSharedPtr<FJsonValue>> Updated;
+		TArray<TSharedPtr<FJsonValue>> Removed;
+		const int64 SinceTs = static_cast<int64>(SinceNum);
+		if (SinceTs <= 0 && GAssetRegistrySnapshot.Num() > 0)
+		{
+			TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetArrayField(TEXT("added"), TArray<TSharedPtr<FJsonValue>>());
+			Result->SetArrayField(TEXT("updated"), TArray<TSharedPtr<FJsonValue>>());
+			Result->SetArrayField(TEXT("removed"), TArray<TSharedPtr<FJsonValue>>());
+			Result->SetNumberField(TEXT("since"), GAssetRegistrySnapshotSince);
+			return Result;
+		}
+		const bool bBaseline = SinceTs <= 0 || GAssetRegistrySnapshot.Num() == 0;
+
+		if (bBaseline)
+		{
+			for (const TPair<FString, FAssetSnapshotEntry>& Pair : Current)
+			{
+				TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+				Entry->SetStringField(TEXT("assetPath"), Pair.Key);
+				Entry->SetStringField(TEXT("className"), Pair.Value.ClassName);
+				Entry->SetStringField(TEXT("packageName"), Pair.Value.PackageName);
+				Added.Add(MakeShared<FJsonValueObject>(Entry));
+			}
+		}
+		else
+		{
+			for (const TPair<FString, FAssetSnapshotEntry>& Pair : Current)
+			{
+				const FAssetSnapshotEntry* Previous = GAssetRegistrySnapshot.Find(Pair.Key);
+				if (!Previous)
+				{
+					TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+					Entry->SetStringField(TEXT("assetPath"), Pair.Key);
+					Entry->SetStringField(TEXT("className"), Pair.Value.ClassName);
+					Entry->SetStringField(TEXT("packageName"), Pair.Value.PackageName);
+					Added.Add(MakeShared<FJsonValueObject>(Entry));
+					continue;
+				}
+				if (Previous->ClassName != Pair.Value.ClassName || Previous->PackageName != Pair.Value.PackageName)
+				{
+					TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+					Entry->SetStringField(TEXT("assetPath"), Pair.Key);
+					Entry->SetStringField(TEXT("className"), Pair.Value.ClassName);
+					Entry->SetStringField(TEXT("packageName"), Pair.Value.PackageName);
+					Updated.Add(MakeShared<FJsonValueObject>(Entry));
+				}
+			}
+			for (const TPair<FString, FAssetSnapshotEntry>& Pair : GAssetRegistrySnapshot)
+			{
+				if (!Current.Contains(Pair.Key))
+				{
+					Removed.Add(MakeShared<FJsonValueString>(Pair.Key));
+				}
+			}
+		}
+
+		GAssetRegistrySnapshot = Current;
+		GAssetRegistrySnapshotSince = FDateTime::UtcNow().ToUnixTimestamp();
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("added"), Added);
+		Result->SetArrayField(TEXT("updated"), Updated);
+		Result->SetArrayField(TEXT("removed"), Removed);
+		Result->SetNumberField(TEXT("since"), GAssetRegistrySnapshotSince);
+		return Result;
+	}
+
+	if (Method == TEXT("assetRegistry.referencers"))
+	{
+		FString AssetPath;
+		int32 Depth = 1;
+		if (!Params.IsValid() || !Params->TryGetStringField(TEXT("path"), AssetPath))
+		{
+			return nullptr;
+		}
+		Params->TryGetNumberField(TEXT("depth"), Depth);
+		Depth = FMath::Clamp(Depth, 1, 4);
+
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		IAssetRegistry& Registry = AssetRegistryModule.Get();
+		const FAssetData Data = Registry.GetAssetByObjectPath(FSoftObjectPath(AssetPath));
+		if (!Data.IsValid())
+		{
+			return nullptr;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> Referencers;
+		TSet<FString> SeenPaths;
+		TArray<FString> Frontier;
+		Frontier.Add(AssetPath);
+
+		for (int32 Hop = 0; Hop < Depth && Frontier.Num() > 0; ++Hop)
+		{
+			TArray<FString> NextFrontier;
+			for (const FString& Path : Frontier)
+			{
+				const FAssetData FrontierData = Registry.GetAssetByObjectPath(FSoftObjectPath(Path));
+				if (!FrontierData.IsValid())
+				{
+					continue;
+				}
+
+				TArray<FName> ReferencerPackages;
+				Registry.GetReferencers(FrontierData.PackageName, ReferencerPackages, UE::AssetRegistry::EDependencyCategory::Package);
+				for (const FName& PackageName : ReferencerPackages)
+				{
+					TArray<FAssetData> PackageAssets;
+					Registry.GetAssetsByPackageName(PackageName, PackageAssets);
+					for (const FAssetData& RefData : PackageAssets)
+					{
+						const FString RefPath = RefData.GetObjectPathString();
+						if (SeenPaths.Contains(RefPath))
+						{
+							continue;
+						}
+						SeenPaths.Add(RefPath);
+
+						TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+						Entry->SetStringField(TEXT("assetPath"), RefPath);
+						Entry->SetStringField(TEXT("className"), RefData.AssetClassPath.GetAssetName().ToString());
+						Entry->SetStringField(TEXT("packageName"), RefData.PackageName.ToString());
+						Referencers.Add(MakeShared<FJsonValueObject>(Entry));
+						NextFrontier.Add(RefPath);
+					}
+				}
+			}
+			Frontier = MoveTemp(NextFrontier);
+		}
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("referencers"), Referencers);
+		Result->SetNumberField(TEXT("total"), Referencers.Num());
+		return Result;
+	}
+
+	if (Method == TEXT("assetRegistry.dependencies"))
+	{
+		FString AssetPath;
+		if (!Params.IsValid() || !Params->TryGetStringField(TEXT("path"), AssetPath))
+		{
+			return nullptr;
+		}
+
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		IAssetRegistry& Registry = AssetRegistryModule.Get();
+		const FAssetData Data = Registry.GetAssetByObjectPath(FSoftObjectPath(AssetPath));
+		if (!Data.IsValid())
+		{
+			return nullptr;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> Dependencies;
+		TArray<FName> DependencyPackages;
+		Registry.GetDependencies(Data.PackageName, DependencyPackages, UE::AssetRegistry::EDependencyCategory::Package);
+		for (const FName& PackageName : DependencyPackages)
+		{
+			TArray<FAssetData> PackageAssets;
+			Registry.GetAssetsByPackageName(PackageName, PackageAssets);
+			for (const FAssetData& DepData : PackageAssets)
+			{
+				TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+				Entry->SetStringField(TEXT("assetPath"), DepData.GetObjectPathString());
+				Entry->SetStringField(TEXT("className"), DepData.AssetClassPath.GetAssetName().ToString());
+				Entry->SetStringField(TEXT("packageName"), DepData.PackageName.ToString());
+				Dependencies.Add(MakeShared<FJsonValueObject>(Entry));
+			}
+		}
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("dependencies"), Dependencies);
+		Result->SetNumberField(TEXT("total"), Dependencies.Num());
 		return Result;
 	}
 
@@ -352,21 +642,15 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 		Registry.GetAssets(Filter, AssetDataList);
 
 		TArray<TSharedPtr<FJsonValue>> Derived;
-		const FString ClassToken = ClassPath.Contains(TEXT("."))
-			? ClassPath.Mid(ClassPath.Find(TEXT("."), ESearchCase::IgnoreCase, ESearchDir::FromEnd) + 1)
-			: ClassPath;
+		const FString ClassToken = BlueprintClassMatchToken(ClassPath);
 
 		for (const FAssetData& Data : AssetDataList)
 		{
+			if (!BlueprintMatchesClassToken(Data, ClassToken))
+			{
+				continue;
+			}
 			const FString ParentClass = Data.GetTagValueRef<FString>(FBlueprintTags::ParentClassPath);
-			if (ParentClass.IsEmpty())
-			{
-				continue;
-			}
-			if (!ParentClass.Contains(ClassToken, ESearchCase::IgnoreCase))
-			{
-				continue;
-			}
 			TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
 			Entry->SetStringField(TEXT("assetPath"), Data.GetObjectPathString());
 			Entry->SetStringField(TEXT("className"), Data.AssetClassPath.GetAssetName().ToString());
@@ -388,10 +672,38 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 			return nullptr;
 		}
 
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		IAssetRegistry& Registry = AssetRegistryModule.Get();
+		FARFilter Filter;
+		Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/Engine"), TEXT("Blueprint")));
+		TArray<FAssetData> AssetDataList;
+		Registry.GetAssets(Filter, AssetDataList);
+
 		TArray<TSharedPtr<FJsonValue>> Implementations;
+		const FString InterfaceToken = ClassPath.Contains(TEXT("."))
+			? ClassPath.Mid(ClassPath.Find(TEXT("."), ESearchCase::IgnoreCase, ESearchDir::FromEnd) + 1)
+			: ClassPath;
+
+		for (const FAssetData& Data : AssetDataList)
+		{
+			const FString ImplementedInterfaces = Data.GetTagValueRef<FString>(FBlueprintTags::ImplementedInterfaces);
+			const FString ObjectPath = Data.GetObjectPathString();
+			const bool bMatchesInterface =
+				(!ImplementedInterfaces.IsEmpty() && ImplementedInterfaces.Contains(InterfaceToken, ESearchCase::IgnoreCase))
+				|| ObjectPath.Contains(InterfaceToken, ESearchCase::IgnoreCase);
+			if (!bMatchesInterface)
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+			Entry->SetStringField(TEXT("assetPath"), Data.GetObjectPathString());
+			Entry->SetStringField(TEXT("className"), Data.AssetClassPath.GetAssetName().ToString());
+			Implementations.Add(MakeShared<FJsonValueObject>(Entry));
+		}
+
 		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetArrayField(TEXT("implementations"), Implementations);
-		Result->SetNumberField(TEXT("total"), 0);
+		Result->SetNumberField(TEXT("total"), Implementations.Num());
 		return Result;
 	}
 
@@ -404,9 +716,164 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 		}
 
 		TArray<TSharedPtr<FJsonValue>> Overrides;
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		IAssetRegistry& Registry = AssetRegistryModule.Get();
+		FARFilter Filter;
+		Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/Engine"), TEXT("Blueprint")));
+		TArray<FAssetData> AssetDataList;
+		Registry.GetAssets(Filter, AssetDataList);
+
+		const FString ClassToken = BlueprintClassMatchToken(ClassPath);
+
+		for (const FAssetData& Data : AssetDataList)
+		{
+			if (!BlueprintMatchesClassToken(Data, ClassToken))
+			{
+				continue;
+			}
+
+			const FString AssetPath = Data.GetObjectPathString();
+			{
+				TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+				Entry->SetStringField(TEXT("property"), TEXT("assetPath"));
+				Entry->SetStringField(TEXT("value"), AssetPath);
+				Overrides.Add(MakeShared<FJsonValueObject>(Entry));
+			}
+			const FString NativeParent = Data.GetTagValueRef<FString>(FBlueprintTags::NativeParentClassPath);
+			if (!NativeParent.IsEmpty())
+			{
+				TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+				Entry->SetStringField(TEXT("property"), FString::Printf(TEXT("%s.NativeParentClassPath"), *AssetPath));
+				Entry->SetStringField(TEXT("value"), NativeParent);
+				Overrides.Add(MakeShared<FJsonValueObject>(Entry));
+			}
+			const FString ParentClassTag = Data.GetTagValueRef<FString>(FBlueprintTags::ParentClassPath);
+			if (!ParentClassTag.IsEmpty())
+			{
+				TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+				Entry->SetStringField(TEXT("property"), FString::Printf(TEXT("%s.ParentClassPath"), *AssetPath));
+				Entry->SetStringField(TEXT("value"), ParentClassTag);
+				Overrides.Add(MakeShared<FJsonValueObject>(Entry));
+			}
+		}
+
 		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetArrayField(TEXT("overrides"), Overrides);
-		Result->SetNumberField(TEXT("total"), 0);
+		Result->SetNumberField(TEXT("total"), Overrides.Num());
+		return Result;
+	}
+
+	if (Method == TEXT("blueprint.findUFunctionNodes"))
+	{
+		FString ClassPath;
+		FString FunctionName;
+		if (!Params.IsValid()
+			|| !Params->TryGetStringField(TEXT("classPath"), ClassPath)
+			|| !Params->TryGetStringField(TEXT("functionName"), FunctionName))
+		{
+			return nullptr;
+		}
+
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		IAssetRegistry& Registry = AssetRegistryModule.Get();
+		FARFilter Filter;
+		Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/Engine"), TEXT("Blueprint")));
+		TArray<FAssetData> AssetDataList;
+		Registry.GetAssets(Filter, AssetDataList);
+
+		TArray<TSharedPtr<FJsonValue>> Nodes;
+		const FString ClassToken = BlueprintClassMatchToken(ClassPath);
+		const FName FunctionFName(*FunctionName);
+
+		for (const FAssetData& Data : AssetDataList)
+		{
+			if (!BlueprintMatchesClassToken(Data, ClassToken))
+			{
+				continue;
+			}
+
+			UBlueprint* Blueprint = Cast<UBlueprint>(Data.ToSoftObjectPath().TryLoad());
+			if (!Blueprint)
+			{
+				continue;
+			}
+
+			auto ScanGraph = [&](UEdGraph* Graph)
+			{
+				if (!Graph)
+				{
+					return;
+				}
+				for (UEdGraphNode* Node : Graph->Nodes)
+				{
+					const UK2Node_CallFunction* CallNode = Cast<UK2Node_CallFunction>(Node);
+					if (!CallNode)
+					{
+						continue;
+					}
+					if (CallNode->FunctionReference.GetMemberName() != FunctionFName)
+					{
+						continue;
+					}
+					TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+					Entry->SetStringField(TEXT("assetPath"), Data.GetObjectPathString());
+					Entry->SetStringField(TEXT("nodeName"), FunctionName);
+					Entry->SetStringField(TEXT("graphName"), Graph->GetName());
+					Entry->SetNumberField(TEXT("nodeX"), Node->NodePosX);
+					Entry->SetNumberField(TEXT("nodeY"), Node->NodePosY);
+					Nodes.Add(MakeShared<FJsonValueObject>(Entry));
+				}
+			};
+
+			for (UEdGraph* Graph : Blueprint->UbergraphPages)
+			{
+				ScanGraph(Graph);
+			}
+			for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+			{
+				ScanGraph(Graph);
+			}
+		}
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("nodes"), Nodes);
+		Result->SetNumberField(TEXT("total"), Nodes.Num());
+		return Result;
+	}
+
+	if (Method == TEXT("blueprint.compileErrors"))
+	{
+		FString ClassPath;
+		if (Params.IsValid())
+		{
+			Params->TryGetStringField(TEXT("classPath"), ClassPath);
+		}
+
+		TArray<TSharedPtr<FJsonValue>> Errors;
+		const FString EditorLogFilePath = FPaths::ProjectLogDir() / (FString(FApp::GetProjectName()) + TEXT(".log"));
+		FString LogContent;
+		if (FFileHelper::LoadFileToString(LogContent, *EditorLogFilePath))
+		{
+			TArray<FString> Lines;
+			LogContent.ParseIntoArrayLines(Lines);
+			const int32 Start = FMath::Max(0, Lines.Num() - 500);
+			for (int32 i = Start; i < Lines.Num(); ++i)
+			{
+				const FString& Line = Lines[i];
+				if (!Line.Contains(TEXT("Blueprint"), ESearchCase::IgnoreCase)) continue;
+				if (!Line.Contains(TEXT("Error"), ESearchCase::IgnoreCase) && !Line.Contains(TEXT("Compile"), ESearchCase::IgnoreCase)) continue;
+				if (!ClassPath.IsEmpty() && !Line.Contains(ClassPath, ESearchCase::IgnoreCase)) continue;
+
+				TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+				Entry->SetStringField(TEXT("assetPath"), ClassPath);
+				Entry->SetStringField(TEXT("message"), Line.TrimStartAndEnd());
+				Errors.Add(MakeShared<FJsonValueObject>(Entry));
+			}
+		}
+
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetArrayField(TEXT("errors"), Errors);
+		Result->SetNumberField(TEXT("total"), Errors.Num());
 		return Result;
 	}
 
@@ -434,21 +901,36 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 	if (Method == TEXT("logs.tail"))
 	{
 		int32 Lines = 50;
+		int64 Offset = 0;
+		FString FileId;
 		if (Params.IsValid())
 		{
 			double LinesNum = 0;
+			double OffsetNum = 0;
 			if (Params->TryGetNumberField(TEXT("lines"), LinesNum))
 			{
 				Lines = FMath::Clamp(static_cast<int32>(LinesNum), 1, 500);
 			}
+			if (Params->TryGetNumberField(TEXT("offset"), OffsetNum))
+			{
+				Offset = static_cast<int64>(OffsetNum);
+			}
+			Params->TryGetStringField(TEXT("fileId"), FileId);
 		}
 
 		const FString LogDir = FPaths::ProjectLogDir();
-		const FString LogFile = FPaths::Combine(LogDir, FApp::GetProjectName() + TEXT(".log"));
-		FString Content;
+		const FString LogFile = FPaths::Combine(LogDir, FString(FApp::GetProjectName()) + TEXT(".log"));
+		const FString ResolvedFileId = FileId.IsEmpty() ? LogFile.ToLower() : FileId;
 		TArray<TSharedPtr<FJsonValue>> LineEntries;
+		int64 NewOffset = Offset;
+
+		FString Content;
 		if (FFileHelper::LoadFileToString(Content, *LogFile))
 		{
+			if (Offset > 0 && Offset < Content.Len())
+			{
+				Content = Content.Mid(static_cast<int32>(Offset));
+			}
 			TArray<FString> SplitLines;
 			Content.ParseIntoArrayLines(SplitLines);
 			const int32 Start = FMath::Max(0, SplitLines.Num() - Lines);
@@ -459,11 +941,14 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 				Entry->SetStringField(TEXT("text"), SplitLines[i]);
 				LineEntries.Add(MakeShared<FJsonValueObject>(Entry));
 			}
+			NewOffset = IFileManager::Get().FileSize(*LogFile);
 		}
 
 		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetArrayField(TEXT("lines"), LineEntries);
 		Result->SetNumberField(TEXT("count"), LineEntries.Num());
+		Result->SetNumberField(TEXT("offset"), static_cast<double>(NewOffset));
+		Result->SetStringField(TEXT("fileId"), ResolvedFileId);
 		return Result;
 	}
 
@@ -479,6 +964,11 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 			TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
 			Entry->SetStringField(TEXT("name"), Info.GetDisplayName());
 			Entry->SetStringField(TEXT("source"), TEXT("automation"));
+			const FString SourceFile = Info.GetSourceFile();
+			if (!SourceFile.IsEmpty())
+			{
+				Entry->SetStringField(TEXT("path"), SourceFile);
+			}
 			Tests.Add(MakeShared<FJsonValueObject>(Entry));
 		}
 
@@ -519,8 +1009,13 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 		FAutomationRunRecord Record;
 		Record.State = TEXT("running");
 		Record.StartTime = FPlatformTime::Seconds();
+		Record.EndTime = 0.0;
 		Record.ExecutionId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
-		GAutomationTestStates.Add(TestName, MoveTemp(Record));
+		Record.Message.Empty();
+		Record.Line = 0;
+		Record.ArtifactPath.Empty();
+		GAutomationTestStates.FindOrAdd(TestName) = MoveTemp(Record);
+		GActiveAutomationTestName = TestName;
 		Result->SetBoolField(TEXT("ok"), true);
 		Result->SetStringField(TEXT("message"), TEXT("started"));
 		Result->SetStringField(TEXT("executionId"), GAutomationTestStates[TestName].ExecutionId);
@@ -547,9 +1042,25 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 		}
 
 		Result->SetStringField(TEXT("state"), Record->State);
+		if (!Record->Message.IsEmpty())
+		{
+			Result->SetStringField(TEXT("message"), Record->Message);
+		}
 		if (!Record->ExecutionId.IsEmpty())
 		{
 			Result->SetStringField(TEXT("executionId"), Record->ExecutionId);
+		}
+		if (Record->EndTime > Record->StartTime)
+		{
+			Result->SetNumberField(TEXT("durationMs"), static_cast<int64>((Record->EndTime - Record->StartTime) * 1000.0));
+		}
+		if (Record->Line > 0)
+		{
+			Result->SetNumberField(TEXT("line"), Record->Line);
+		}
+		if (!Record->ArtifactPath.IsEmpty())
+		{
+			Result->SetStringField(TEXT("artifactPath"), Record->ArtifactPath);
 		}
 		return Result;
 	}
@@ -563,9 +1074,16 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 		}
 
 		FAutomationTestExecutionInfo IgnoredExecutionInfo;
-		FAutomationTestFramework::Get().StopTest(IgnoredExecutionInfo);
-		FAutomationRunRecord& Record = GAutomationTestStates.FindOrAdd(TestName);
-		Record.State = TEXT("cancelled");
+		FAutomationRunRecord* Record = GAutomationTestStates.Find(TestName);
+		if (Record && Record->State == TEXT("running") && GActiveAutomationTestName == TestName)
+		{
+			FAutomationTestFramework::Get().StopTest(IgnoredExecutionInfo);
+			GActiveAutomationTestName.Empty();
+		}
+		if (Record)
+		{
+			Record->State = TEXT("cancelled");
+		}
 		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetBoolField(TEXT("ok"), true);
 		return Result;

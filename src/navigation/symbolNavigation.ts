@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import type { UEProject } from '../types';
 import { findPairedSourceFile } from '../parsers/moduleLayout';
+import { interfaceCompanionName, findInterfaceCompanionLine } from '../blueprint/cppClassParser';
 import { parseHeaderUFunctions } from '../uht/generatedHeaderParser';
 import {
   findGeneratedPair,
@@ -221,12 +222,38 @@ export function isHeaderMethodDeclarationLine(
   ).test(line);
 }
 
+function resolveInterfaceCompanionNavigation(
+  document: vscode.TextDocument,
+  word: string,
+): vscode.Location | undefined {
+  if (!isHeader(document.fileName)) return undefined;
+  let targetName = word;
+  if (word.startsWith('U') && word.length > 2) {
+    targetName = interfaceCompanionName(word);
+  } else if (word.startsWith('I') && word.length > 2) {
+    targetName = `U${word.slice(1)}`;
+  } else {
+    return undefined;
+  }
+  const anchor = word.startsWith('U') ? word : targetName;
+  const line = findInterfaceCompanionLine(document.getText(), anchor);
+  if (line === undefined) return undefined;
+  const column = Math.max(0, document.lineAt(line).text.indexOf(targetName));
+  return new vscode.Location(
+    document.uri,
+    new vscode.Range(line, column, line, column + targetName.length),
+  );
+}
+
 export function resolvePairedFileNavigation(
   document: vscode.TextDocument,
   position: vscode.Position,
   word: string,
   mode: 'definition' | 'implementation',
 ): vscode.Location | undefined {
+  const interfaceLoc = resolveInterfaceCompanionNavigation(document, word);
+  if (interfaceLoc) return interfaceLoc;
+
   const currentPath = document.fileName;
   const paired = findPairedSourceFile(currentPath);
   if (!paired) return undefined;
