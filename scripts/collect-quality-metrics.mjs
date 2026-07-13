@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * Collect measured quality metrics from test results and optional E2E artifact.
- * Writes quality-metrics.json for release-scorecard (never string-probe scores).
+ * Collect measured quality metrics from test/typecheck artifacts.
+ * Never hardcode e2ePassed: true without evidence artifacts.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const root = process.cwd();
+const metricsDir = path.join(root, 'Saved', 'quality-metrics');
 const outPath =
   process.env.QUALITY_METRICS_PATH ||
   path.join(root, 'test', 'fixtures', 'quality-metrics', 'ci-baseline.json');
@@ -23,7 +24,9 @@ function mergeE2e(base, e2ePath) {
   const e2e = readJsonSafe(e2ePath);
   if (!e2e?.areas) return base;
   for (const [id, metrics] of Object.entries(e2e.areas)) {
-    base.areas[id] = { ...base.areas[id], ...metrics, e2ePassed: metrics.e2ePassed ?? true };
+    if (metrics.e2ePassed === true) {
+      base.areas[id] = { ...base.areas[id], ...metrics, e2ePassed: true };
+    }
   }
   base.source = 'ci-merge';
   return base;
@@ -32,14 +35,14 @@ function mergeE2e(base, e2ePath) {
 function mergeBenchmarks(base) {
   const nav = readJsonSafe(path.join(root, 'test', 'fixtures', 'quality-metrics', 'navigation-benchmark.json'));
   const uht = readJsonSafe(path.join(root, 'test', 'fixtures', 'quality-metrics', 'uht-benchmark.json'));
-  if (nav?.metrics) {
+  if (nav?.metrics && nav.passed === true) {
     const m = nav.metrics;
     base.areas.semantic = {
       ...base.areas.semantic,
       accuracy: Math.max(m.definitionPrecision ?? 0, base.areas.semantic.accuracy),
       completeness: Math.max(m.referenceRecall ?? 0, base.areas.semantic.completeness),
       verification: Math.max(m.hierarchyAccuracy ?? 0, base.areas.semantic.verification),
-      e2ePassed: !!nav.passed,
+      e2ePassed: true,
       details: {
         ...base.areas.semantic.details,
         definitionPrecision: m.definitionPrecision,
@@ -50,14 +53,14 @@ function mergeBenchmarks(base) {
       },
     };
   }
-  if (uht?.metrics) {
+  if (uht?.metrics && uht.passed === true) {
     const m = uht.metrics;
     base.areas.uht = {
       ...base.areas.uht,
       accuracy: m.uhtLocationAccuracy ?? base.areas.uht.accuracy,
       completeness: m.uhtErrorRecall ?? base.areas.uht.completeness,
       verification: 1 - (m.heuristicWarningFalsePositiveRate ?? 0),
-      e2ePassed: !!uht.passed,
+      e2ePassed: true,
       details: {
         ...base.areas.uht.details,
         uhtErrorRecall: m.uhtErrorRecall,
@@ -72,7 +75,62 @@ function mergeBenchmarks(base) {
   return base;
 }
 
-/** Measured from unit/integration tests — not file-existence probes. */
+function applyUnitArtifacts(base) {
+  const unitReport = readJsonSafe(path.join(metricsDir, 'unit-test-report.json'));
+  const typecheckReport = readJsonSafe(path.join(metricsDir, 'typecheck-report.json'));
+
+  if (typecheckReport?.ok === true) {
+    base.areas.trust = {
+      ...base.areas.trust,
+      verification: Math.max(base.areas.trust.verification, 0.9),
+      details: { ...base.areas.trust.details, typecheckClean: true },
+    };
+  }
+
+  if (unitReport && typeof unitReport.pass === 'number' && unitReport.total > 0) {
+    const passRate = unitReport.pass / unitReport.total;
+    const unitOk = unitReport.fail === 0;
+    base.areas.testing = {
+      ...base.areas.testing,
+      verification: passRate,
+      e2ePassed: unitOk,
+      details: {
+        ...base.areas.testing.details,
+        unitPass: unitReport.pass,
+        unitFail: unitReport.fail,
+        unitTotal: unitReport.total,
+      },
+    };
+    base.areas.projectRuntime = {
+      ...base.areas.projectRuntime,
+      e2ePassed: unitOk && !!unitReport.projectRuntimeTests,
+    };
+    base.areas.trust = {
+      ...base.areas.trust,
+      e2ePassed: unitOk && typecheckReport?.ok === true,
+      completeness: unitOk ? Math.max(base.areas.trust.completeness, 0.82) : base.areas.trust.completeness,
+    };
+    base.areas.workflow = {
+      ...base.areas.workflow,
+      e2ePassed: unitOk,
+    };
+    base.areas.schemas = {
+      ...base.areas.schemas,
+      e2ePassed: unitOk && fs.existsSync('schemas/editor-bridge-v1.json'),
+    };
+    base.areas.buildSnapshot = { ...base.areas.buildSnapshot, e2ePassed: unitOk };
+    base.areas.bridge = { ...base.areas.bridge, e2ePassed: unitOk };
+    base.areas.ci = {
+      ...base.areas.ci,
+      e2ePassed: unitOk && typecheckReport?.ok === true,
+      verification: unitOk ? 1 : base.areas.ci.verification,
+    };
+  }
+
+  return base;
+}
+
+/** Baseline scores — e2ePassed defaults false until artifacts prove otherwise. */
 const metrics = {
   version: 1,
   generatedAt: new Date().toISOString(),
@@ -83,17 +141,17 @@ const metrics = {
       completeness: 0.82,
       resilience: 0.8,
       performance: 0.75,
-      verification: 0.92,
-      e2ePassed: true,
-      details: { bridgeContractTests: true, noFalsePassContract: true, typecheckClean: true },
+      verification: 0.85,
+      e2ePassed: false,
+      details: { bridgeContractTests: true, noFalsePassContract: true, typecheckClean: false },
     },
     schemas: {
       accuracy: 0.82,
       completeness: 0.82,
       resilience: 0.8,
       performance: 0.8,
-      verification: 0.88,
-      e2ePassed: true,
+      verification: 0.85,
+      e2ePassed: false,
       details: { editorBridgeSchema: fs.existsSync('schemas/editor-bridge-v1.json') },
     },
     buildSnapshot: {
@@ -102,7 +160,7 @@ const metrics = {
       resilience: 0.8,
       performance: 0.78,
       verification: 0.88,
-      e2ePassed: true,
+      e2ePassed: false,
       details: {
         buildSnapshotV3: true,
         snapshotKeyComposite: true,
@@ -119,7 +177,7 @@ const metrics = {
       resilience: 0.75,
       performance: 0.7,
       verification: 0.85,
-      e2ePassed: true,
+      e2ePassed: false,
       details: { blueprintRpcImplemented: true, pieGetState: true, logsTail: true, assetPaging: true },
     },
     semantic: {
@@ -128,7 +186,7 @@ const metrics = {
       resilience: 0.8,
       performance: 0.72,
       verification: 0.8,
-      e2ePassed: true,
+      e2ePassed: false,
       details: { clangdDelegation: true, ueOverlayFirst: true, semanticReferenceProvider: true },
     },
     uht: {
@@ -137,7 +195,7 @@ const metrics = {
       resilience: 0.78,
       performance: 0.75,
       verification: 0.85,
-      e2ePassed: true,
+      e2ePassed: false,
       details: { inspectionsCorpus200: true, cacheSeparated: true, manifestCacheKey: true, braceScanner: true },
     },
     testing: {
@@ -145,17 +203,17 @@ const metrics = {
       completeness: 0.82,
       resilience: 0.8,
       performance: 0.76,
-      verification: 0.86,
-      e2ePassed: true,
-      details: { automationCompletionTicker: true, executionId: true, debugProfile: true, projectRuntimeTests: true },
+      verification: 0.8,
+      e2ePassed: false,
+      details: { automationCompletionTicker: true, executionId: true, debugProfile: true, projectRuntimeTests: false },
     },
     workflow: {
       accuracy: 0.84,
       completeness: 0.82,
       resilience: 0.8,
       performance: 0.76,
-      verification: 0.86,
-      e2ePassed: true,
+      verification: 0.82,
+      e2ePassed: false,
       details: {
         testExplorerUri: true,
         serverTarget: true,
@@ -170,8 +228,8 @@ const metrics = {
       completeness: 0.82,
       resilience: 0.8,
       performance: 0.74,
-      verification: 0.88,
-      e2ePassed: true,
+      verification: 0.85,
+      e2ePassed: false,
       details: {
         registryWired: true,
         uriResolution: true,
@@ -185,8 +243,8 @@ const metrics = {
       completeness: 0.58,
       resilience: 0.55,
       performance: 0.5,
-      verification: 0.72,
-      e2ePassed: true,
+      verification: 0.65,
+      e2ePassed: false,
       details: {
         artifactBasedScorecard: true,
         verifyStructureSplit: true,
@@ -200,6 +258,7 @@ const metrics = {
 const e2eArtifact =
   process.env.UE_E2E_METRICS_PATH || path.join(root, 'Saved', 'quality-metrics', 'ue-e2e.json');
 let merged = mergeBenchmarks(metrics);
+merged = applyUnitArtifacts(merged);
 merged = mergeE2e(merged, e2eArtifact);
 
 fs.mkdirSync(path.dirname(outPath), { recursive: true });

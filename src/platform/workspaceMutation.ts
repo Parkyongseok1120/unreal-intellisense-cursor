@@ -54,6 +54,7 @@ interface MutationJournal {
   backupDir: string;
   records: MutationRecord[];
   startedAt: number;
+  state?: 'active' | 'committing' | 'committed' | 'rollingBack' | 'rollback-conflict';
 }
 
 const activeTransactions = new Map<string, WorkspaceMutationTransaction>();
@@ -276,7 +277,36 @@ export async function recoverIncompleteMutations(projectRoot: string): Promise<M
     return { recovered: false, rolledBack: false, conflict: false, message: 'Active transaction in progress' };
   }
   const journal = await loadJournal(projectRoot);
-  if (!journal || journal.records.length === 0) {
+  if (!journal) {
+    return { recovered: true, rolledBack: false, conflict: false };
+  }
+  if (journal.state === 'committed') {
+    try {
+      await fs.promises.unlink(journalPath(projectRoot));
+    } catch {
+      // best-effort cleanup
+    }
+    return {
+      recovered: true,
+      rolledBack: false,
+      conflict: false,
+      message: 'Cleared committed mutation journal',
+    };
+  }
+  if (journal.state === 'rollback-conflict') {
+    return {
+      recovered: false,
+      rolledBack: false,
+      conflict: true,
+      message: 'Mutation journal requires manual resolution (rollback conflict)',
+    };
+  }
+  if (journal.records.length === 0) {
+    try {
+      await fs.promises.unlink(journalPath(projectRoot));
+    } catch {
+      // best-effort cleanup
+    }
     return { recovered: true, rolledBack: false, conflict: false };
   }
   const result = await rollbackJournalRecords(projectRoot, journal);
@@ -310,6 +340,7 @@ export class WorkspaceMutationTransaction {
   private readonly sessionId: string;
   private committed = false;
   private rolledBack = false;
+  private journalState: MutationJournal['state'] = 'active';
   private readonly createdDirs = new Set<string>();
   private writeChain: Promise<void> = Promise.resolve();
 
@@ -320,13 +351,13 @@ export class WorkspaceMutationTransaction {
   }
 
   static async begin(projectRoot: string): Promise<WorkspaceMutationTransaction> {
-    const key = sessionKey(projectRoot);
-    if (activeTransactions.has(key)) {
-      throw new Error(`Mutation transaction already active for ${projectRoot}`);
-    }
     await recoverIncompleteMutations(projectRoot);
     const release = await acquireLock(projectRoot);
     try {
+      const key = sessionKey(projectRoot);
+      if (activeTransactions.has(key)) {
+        throw new Error(`Mutation transaction already active for ${projectRoot}`);
+      }
       const backupDir = path.join(projectRoot, '.ue5_8cursor', 'backups', String(Date.now()));
       await fs.promises.mkdir(backupDir, { recursive: true });
       const sessionId = crypto.randomBytes(8).toString('hex');
@@ -339,13 +370,15 @@ export class WorkspaceMutationTransaction {
     }
   }
 
-  private async persistJournal(): Promise<void> {
+  private async persistJournal(state?: MutationJournal['state']): Promise<void> {
+    if (state) this.journalState = state;
     const journal: MutationJournal = {
       sessionId: this.sessionId,
       projectRoot: this.projectRoot,
       backupDir: this.backupDir,
       records: this.records,
       startedAt: Date.now(),
+      state: this.journalState,
     };
     const finalPath = journalPath(this.projectRoot);
     const tempPath = `${finalPath}.${this.sessionId}.tmp`;
@@ -568,9 +601,16 @@ export class WorkspaceMutationTransaction {
   async commit(): Promise<MutationCommitResult> {
     this.ensureOpen();
     await this.writeChain;
+    await this.persistJournal('committing');
     this.committed = true;
+    for (const record of this.records) record.status = 'committed';
+    await this.persistJournal('committed');
     activeTransactions.delete(sessionKey(this.projectRoot));
-    await this.clearJournal();
+    try {
+      await this.clearJournal();
+    } catch {
+      // Journal records committed state; recovery will clear without rollback.
+    }
     return {
       ok: true,
       changedFiles: this.records.map((r) => r.relativeTargetPath),
@@ -583,6 +623,7 @@ export class WorkspaceMutationTransaction {
     }
     await this.writeChain;
     this.rolledBack = true;
+    await this.persistJournal('rollingBack');
     const restoredFiles: string[] = [];
     const deletedFiles: string[] = [];
     const failedFiles: string[] = [];
@@ -618,11 +659,24 @@ export class WorkspaceMutationTransaction {
       }
     }
 
+    const ok = failedFiles.length === 0 && conflictFiles.length === 0;
+    if (!ok) {
+      await this.persistJournal('rollback-conflict');
+      activeTransactions.delete(sessionKey(this.projectRoot));
+      return {
+        ok: false,
+        restoredFiles,
+        deletedFiles,
+        failedFiles,
+        conflictFiles,
+      };
+    }
+
     this.records.length = 0;
     activeTransactions.delete(sessionKey(this.projectRoot));
     await this.clearJournal();
     return {
-      ok: failedFiles.length === 0 && conflictFiles.length === 0,
+      ok: true,
       restoredFiles,
       deletedFiles,
       failedFiles,

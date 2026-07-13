@@ -34,6 +34,16 @@ describe('bridge C++ stability helpers', () => {
     assert.ok(cppSrc.includes('SetBoolField(TEXT("truncated")'));
     assert.ok(cppSrc.includes('BuildFindUFunctionNodesResult'));
     assert.ok(cppSrc.includes('ENamedThreads::GameThread'));
+    assert.ok(cppSrc.includes('bTimedOut'));
+    assert.ok(cppSrc.includes('AsyncState->Done = nullptr'));
+    const timeoutBlock = cppSrc.slice(cppSrc.indexOf('if (!bCompleted)'), cppSrc.indexOf('return AsyncState->Result'));
+    assert.equal(timeoutBlock.includes('ReturnSynchEventToPool'), false);
+  });
+
+  it('tails logs using byte offsets and UTF-8 decode', () => {
+    assert.ok(cppSrc.includes('LoadFileToArray(FileBytes'));
+    assert.ok(cppSrc.includes('FUTF8ToTCHAR'));
+    assert.ok(cppSrc.includes('NewOffset = FileBytes.Num()'));
   });
 
   it('limits automation state updates to the active test', () => {

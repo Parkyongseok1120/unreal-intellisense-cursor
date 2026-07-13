@@ -315,6 +315,42 @@ async function enrichBatch(entries: AssetIndexEntry[]): Promise<AssetIndexEntry[
   return result;
 }
 
+export function replaceBridgeAuthoritative(
+  diskEntries: AssetIndexEntry[],
+  bridgeAssets: Array<{ assetPath: string; className?: string }>,
+): AssetIndexEntry[] {
+  const diskByPath = new Map(diskEntries.map((e) => [e.assetPath.toLowerCase(), e]));
+  const bridgePaths = new Set(bridgeAssets.map((a) => a.assetPath.toLowerCase()));
+  const result: AssetIndexEntry[] = [];
+
+  for (const asset of bridgeAssets) {
+    const key = asset.assetPath.toLowerCase();
+    const disk = diskByPath.get(key);
+    const name = asset.assetPath.split('/').pop()?.split('.')[0] ?? 'Asset';
+    result.push({
+      diskPath: disk?.diskPath ?? '',
+      assetPath: asset.assetPath,
+      fileName: disk?.fileName ?? name,
+      assetName: disk?.assetName ?? name,
+      packageClass: asset.className ?? disk?.packageClass,
+      inferredClass: asset.className ?? disk?.inferredClass,
+      thumbnailUri: disk?.thumbnailUri,
+      mtimeMs: disk?.mtimeMs,
+      source: 'bridge',
+      confidence: 'authoritative',
+    });
+  }
+
+  for (const entry of diskEntries) {
+    const key = entry.assetPath.toLowerCase();
+    if (!bridgePaths.has(key) && entry.source !== 'bridge') {
+      result.push(entry);
+    }
+  }
+
+  return result;
+}
+
 export async function mergeBridgeAssets(
   entries: AssetIndexEntry[],
   bridgeAssets: Array<{ assetPath: string; className?: string }>,
@@ -345,7 +381,12 @@ export async function mergeBridgeAssets(
 
 export async function refreshAssetIndex(
   projectRoot: string,
-  options: { enrichMcp?: boolean; forceFull?: boolean; bridgeAssets?: Array<{ assetPath: string; className?: string }> } = {},
+  options: {
+    enrichMcp?: boolean;
+    forceFull?: boolean;
+    bridgeAssets?: Array<{ assetPath: string; className?: string }>;
+    authoritativeBridge?: boolean;
+  } = {},
 ): Promise<AssetIndexEntry[]> {
   const existing = await loadAssetIndexCache(projectRoot);
   let entries: AssetIndexEntry[];
@@ -360,7 +401,9 @@ export async function refreshAssetIndex(
     entries = await enrichBatch(entries);
   }
 
-  if (options.bridgeAssets?.length) {
+  if (options.authoritativeBridge && options.bridgeAssets !== undefined) {
+    entries = replaceBridgeAuthoritative(entries, options.bridgeAssets);
+  } else if (options.bridgeAssets?.length) {
     entries = await mergeBridgeAssets(entries, options.bridgeAssets);
   }
 

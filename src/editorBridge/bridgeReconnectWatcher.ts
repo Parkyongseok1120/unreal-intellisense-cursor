@@ -49,6 +49,12 @@ export function startBridgeReconnectWatcher(
           const ctx = options.getCtx();
           const descriptor = await readEditorBridgeDescriptor(root);
           const descriptorKey = descriptorIdentityKey(descriptor);
+
+          if (state.wasConnected && bridge.isConnected() && descriptorKey && descriptorKey === state.lastDescriptorKey) {
+            const alive = await bridge.ping(5_000);
+            if (alive) continue;
+          }
+
           const info = await bridge.connect(root, 10_000);
           const connected = info.connected;
           const identityChanged =

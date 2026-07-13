@@ -36,6 +36,9 @@ interface PendingBatch {
   reflectionFlushInFlight?: boolean;
   tuFlushInFlight?: boolean;
   compileFlushInFlight?: boolean;
+  reflectionReschedule?: boolean;
+  tuReschedule?: boolean;
+  compileReschedule?: boolean;
 }
 
 function createPending(): PendingBatch {
@@ -105,7 +108,10 @@ export function watchSourceChanges(
 
   const flushReflectionBatch = (runtime: SourceWatcherRuntime, pending: PendingBatch): void => {
     if (!runtimeStillOwned(runtime) || !runtime.ctx.project || pending.headers.size === 0) return;
-    if (pending.reflectionFlushInFlight) return;
+    if (pending.reflectionFlushInFlight) {
+      pending.reflectionReschedule = true;
+      return;
+    }
     pending.reflectionFlushInFlight = true;
     const headers = [...pending.headers];
     pending.headers.clear();
@@ -119,13 +125,20 @@ export function watchSourceChanges(
         runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] Reflection refresh failed: ${err}`);
       } finally {
         pending.reflectionFlushInFlight = false;
+        if (pending.reflectionReschedule || pending.headers.size > 0) {
+          pending.reflectionReschedule = false;
+          flushReflectionBatch(runtime, pending);
+        }
       }
     })();
   };
 
   const flushTuBatch = async (runtime: SourceWatcherRuntime, pending: PendingBatch): Promise<void> => {
     if (!runtimeStillOwned(runtime) || !runtime.ctx.project || pending.translationUnits.size === 0) return;
-    if (pending.tuFlushInFlight) return;
+    if (pending.tuFlushInFlight) {
+      pending.tuReschedule = true;
+      return;
+    }
     pending.tuFlushInFlight = true;
     try {
       const tus = [...pending.translationUnits];
@@ -152,12 +165,19 @@ export function watchSourceChanges(
       runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] Translation unit flush failed: ${err}`);
     } finally {
       pending.tuFlushInFlight = false;
+      if (pending.tuReschedule || pending.translationUnits.size > 0) {
+        pending.tuReschedule = false;
+        void flushTuBatch(runtime, pending);
+      }
     }
   };
 
   const flushCompileRefreshBatch = (runtime: SourceWatcherRuntime, pending: PendingBatch): void => {
     if (!runtimeStillOwned(runtime) || !runtime.ctx.project) return;
-    if (pending.compileFlushInFlight) return;
+    if (pending.compileFlushInFlight) {
+      pending.compileReschedule = true;
+      return;
+    }
     pending.compileFlushInFlight = true;
     const scopes: string[] = [];
     const uhtHeaders = [...pending.uhtModules];
@@ -178,6 +198,18 @@ export function watchSourceChanges(
       onRefresh(runtime);
     } finally {
       pending.compileFlushInFlight = false;
+      const hasPending =
+        pending.projectModel
+        || pending.modules.size > 0
+        || pending.uhtModules.size > 0
+        || pending.targetModules.size > 0
+        || pending.deletedPaths.size > 0;
+      if (pending.compileReschedule && hasPending) {
+        pending.compileReschedule = false;
+        flushCompileRefreshBatch(runtime, pending);
+      } else {
+        pending.compileReschedule = false;
+      }
     }
   };
 

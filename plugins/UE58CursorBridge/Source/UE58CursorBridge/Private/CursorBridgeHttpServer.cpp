@@ -964,19 +964,28 @@ static constexpr double UFUNCTION_RPC_WAIT_SEC = 30.0;
 		{
 			TSharedPtr<FJsonObject> Result;
 			FEvent* Done = nullptr;
+			bool bTimedOut = false;
 		};
 		TSharedPtr<FFindUFunctionNodesSharedState> AsyncState = MakeShared<FFindUFunctionNodesSharedState>();
 		AsyncState->Done = FPlatformProcess::GetSynchEventFromPool(false);
 		const TSharedPtr<FJsonObject> ParamsCopy = Params;
 		AsyncTask(ENamedThreads::GameThread, [ParamsCopy, AsyncState]()
 		{
-			AsyncState->Result = BuildFindUFunctionNodesResult(ParamsCopy);
-			AsyncState->Done->Trigger();
+			if (!AsyncState->bTimedOut)
+			{
+				AsyncState->Result = BuildFindUFunctionNodesResult(ParamsCopy);
+			}
+			if (AsyncState->Done)
+			{
+				AsyncState->Done->Trigger();
+				FPlatformProcess::ReturnSynchEventToPool(AsyncState->Done);
+				AsyncState->Done = nullptr;
+			}
 		});
 		const bool bCompleted = AsyncState->Done->Wait(FTimespan::FromSeconds(UFUNCTION_RPC_WAIT_SEC));
-		FPlatformProcess::ReturnSynchEventToPool(AsyncState->Done);
 		if (!bCompleted)
 		{
+			AsyncState->bTimedOut = true;
 			TSharedPtr<FJsonObject> TimeoutResult = MakeShared<FJsonObject>();
 			TimeoutResult->SetArrayField(TEXT("nodes"), TArray<TSharedPtr<FJsonValue>>());
 			TimeoutResult->SetNumberField(TEXT("total"), 0);
@@ -1070,12 +1079,18 @@ static constexpr double UFUNCTION_RPC_WAIT_SEC = 30.0;
 		TArray<TSharedPtr<FJsonValue>> LineEntries;
 		int64 NewOffset = Offset;
 
-		FString Content;
-		if (FFileHelper::LoadFileToString(Content, *LogFile))
+		TArray<uint8> FileBytes;
+		if (FFileHelper::LoadFileToArray(FileBytes, *LogFile))
 		{
-			if (Offset > 0 && Offset < Content.Len())
+			const int64 StartOffset = FMath::Clamp(Offset, (int64)0, (int64)FileBytes.Num());
+			const int64 TailLen = FileBytes.Num() - StartOffset;
+			FString Content;
+			if (TailLen > 0)
 			{
-				Content = Content.Mid(static_cast<int32>(Offset));
+				FUTF8ToTCHAR Convert(
+					reinterpret_cast<const ANSICHAR*>(FileBytes.GetData() + StartOffset),
+					static_cast<int32>(TailLen));
+				Content = FString(Convert.Length(), Convert.Get());
 			}
 			TArray<FString> SplitLines;
 			Content.ParseIntoArrayLines(SplitLines);
@@ -1087,7 +1102,7 @@ static constexpr double UFUNCTION_RPC_WAIT_SEC = 30.0;
 				Entry->SetStringField(TEXT("text"), SplitLines[i]);
 				LineEntries.Add(MakeShared<FJsonValueObject>(Entry));
 			}
-			NewOffset = IFileManager::Get().FileSize(*LogFile);
+			NewOffset = FileBytes.Num();
 		}
 
 		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();

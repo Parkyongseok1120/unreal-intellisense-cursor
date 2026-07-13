@@ -25,6 +25,7 @@ export class CommandBridge implements vscode.Disposable {
   private server: http.Server | undefined;
   private port = 0;
   private readonly token: string;
+  private startPromise: Promise<number> | undefined;
 
   constructor(private readonly projectRoot: string) {
     this.token = crypto.randomBytes(32).toString('hex');
@@ -36,24 +37,38 @@ export class CommandBridge implements vscode.Disposable {
 
   async start(): Promise<number> {
     if (this.server) return this.port;
+    if (this.startPromise) return this.startPromise;
 
+    this.startPromise = this.startInternal();
+    try {
+      return await this.startPromise;
+    } finally {
+      this.startPromise = undefined;
+    }
+  }
+
+  private async startInternal(): Promise<number> {
     for (let i = 0; i < PORT_RANGE; i++) {
       const port = BASE_PORT + i;
+      const server = await this.tryListen(port);
+      if (!server) continue;
       try {
-        await this.listen(port);
+        await this.writeBridgeFile(port);
+        this.server = server;
         this.port = port;
-        await this.writeBridgeFile();
         return port;
-      } catch {
-        // try next
+      } catch (err) {
+        await this.closeServer(server);
+        throw err;
       }
     }
     throw new Error('UE5_8 Cursor: command bridge port unavailable');
   }
 
-  private listen(port: number): Promise<void> {
-    return new Promise((resolve, reject) => {
+  private tryListen(port: number): Promise<http.Server | undefined> {
+    return new Promise((resolve) => {
       const server = http.createServer(async (req, res) => {
+        res.on('error', () => {});
         if (req.method !== 'POST' || req.url !== '/command') {
           res.writeHead(404);
           res.end();
@@ -67,23 +82,33 @@ export class CommandBridge implements vscode.Disposable {
           return;
         }
 
-        let body = '';
+        const chunks: Buffer[] = [];
+        let bodyBytes = 0;
         let tooLarge = false;
-        req.on('data', (chunk: Buffer | string) => {
-          body += chunk;
-          if (body.length > BRIDGE_MAX_BODY_BYTES) {
+
+        req.on('data', (chunk: Buffer) => {
+          bodyBytes += chunk.length;
+          if (bodyBytes > BRIDGE_MAX_BODY_BYTES) {
             tooLarge = true;
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Request body too large' }));
             req.destroy();
+            return;
+          }
+          chunks.push(chunk);
+        });
+
+        req.on('error', () => {
+          if (!res.headersSent) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Request error' }));
           }
         });
 
         req.on('end', async () => {
-          if (tooLarge) {
-            res.writeHead(413, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: false, error: 'Request body too large' }));
-            return;
-          }
+          if (tooLarge || res.writableEnded) return;
 
+          const body = Buffer.concat(chunks).toString('utf-8');
           const validation = validateCommandBridgeRequest(body);
           if (!validation.ok) {
             res.writeHead(validation.status, { 'Content-Type': 'application/json' });
@@ -93,9 +118,6 @@ export class CommandBridge implements vscode.Disposable {
 
           try {
             const { command, args } = validation.request;
-            // Keep the authenticated endpoint's owning .uproject attached to
-            // the command. Generic VS Code commands otherwise resolve from the
-            // currently focused editor and can target a different workspace.
             await vscode.commands.executeCommand('ue58rider.executeProjectBridgeCommand', {
               projectRoot: this.projectRoot,
               command,
@@ -109,19 +131,23 @@ export class CommandBridge implements vscode.Disposable {
           }
         });
       });
-      server.once('error', reject);
-      server.listen(port, '127.0.0.1', () => {
-        this.server = server;
-        resolve();
-      });
+
+      server.once('error', () => resolve(undefined));
+      server.listen(port, '127.0.0.1', () => resolve(server));
     });
   }
 
-  private async writeBridgeFile(): Promise<void> {
+  private closeServer(server: http.Server): Promise<void> {
+    return new Promise((resolve) => server.close(() => resolve()));
+  }
+
+  private async writeBridgeFile(port: number): Promise<void> {
     const dir = await ensureDataDir(this.projectRoot);
-    const info: CommandBridgeInfo = { port: this.port, pid: process.pid, token: this.token };
+    const info: CommandBridgeInfo = { port, pid: process.pid, token: this.token };
     const filePath = path.join(dir, BRIDGE_FILE);
-    await fs.promises.writeFile(filePath, JSON.stringify(info, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+    const tempPath = `${filePath}.${process.pid}.tmp`;
+    await fs.promises.writeFile(tempPath, JSON.stringify(info, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+    await fs.promises.rename(tempPath, filePath);
   }
 
   private async removeBridgeFile(): Promise<void> {
@@ -134,8 +160,10 @@ export class CommandBridge implements vscode.Disposable {
   }
 
   dispose(): void {
-    this.server?.close();
+    const server = this.server;
     this.server = undefined;
+    this.port = 0;
+    server?.close();
     void this.removeBridgeFile();
   }
 }

@@ -107,6 +107,7 @@ export class EditorBridgeClient implements vscode.Disposable {
   private connectionState: BridgeConnectionState = 'offline';
   private connectionGeneration = 0;
   private connectAbort: AbortController | undefined;
+  private readonly activeRpcControllers = new Set<AbortController>();
 
   constructor(
     private projectRoot?: string,
@@ -117,8 +118,22 @@ export class EditorBridgeClient implements vscode.Disposable {
     return this.connectionState;
   }
 
+  private isDisposed(): boolean {
+    return this.connectionState === 'disposed';
+  }
+
   async connect(projectRoot?: string, timeoutMs = 5000): Promise<EditorBridgeInfo> {
     const root = projectRoot ?? this.projectRoot;
+    if (
+      root
+      && this.projectRoot === root
+      && this.connectionState === 'connected'
+      && this.descriptor
+    ) {
+      const alive = await this.ping(timeoutMs);
+      if (alive) return this.info;
+    }
+
     const gen = ++this.connectionGeneration;
     this.connectAbort?.abort();
     const controller = new AbortController();
@@ -188,7 +203,7 @@ export class EditorBridgeClient implements vscode.Disposable {
   }
 
   private async bridgeCall<T>(method: BridgeMethod, params?: unknown, timeoutMs?: number): Promise<BridgeResult<T>> {
-    if (this.connectionState === 'disposed') {
+    if (this.isDisposed()) {
       return bridgeFailure('disposed', 'Bridge disposed');
     }
     const descriptor = this.descriptor;
@@ -200,6 +215,7 @@ export class EditorBridgeClient implements vscode.Disposable {
     }
     const gen = this.connectionGeneration;
     const controller = new AbortController();
+    this.activeRpcControllers.add(controller);
     const ms = timeoutMs ?? this.rpcOptions.timeoutMs ?? 3000;
     const timer = setTimeout(() => controller.abort(), ms);
     try {
@@ -211,16 +227,45 @@ export class EditorBridgeClient implements vscode.Disposable {
       if (gen !== this.connectionGeneration) {
         return bridgeFailure('aborted', 'Superseded connection');
       }
+      if (this.isDisposed()) {
+        return bridgeFailure('disposed', 'Bridge disposed');
+      }
       return bridgeSuccess(result as T);
     } catch (err) {
       const kind: BridgeErrorKind = controller.signal.aborted ? 'timeout' : 'rpc';
-      if (gen === this.connectionGeneration) {
+      if (gen === this.connectionGeneration && !this.isDisposed()) {
         this.connectionState = 'degraded';
         this.info = { ...this.info, state: 'degraded', lastError: `${kind}: ${method}` };
       }
       return bridgeFailure(kind, err instanceof Error ? err.message : String(err));
     } finally {
       clearTimeout(timer);
+      this.activeRpcControllers.delete(controller);
+    }
+  }
+
+  /** Lightweight handshake without tearing down an established connection. */
+  async ping(timeoutMs = 3000): Promise<boolean> {
+    if (this.connectionState !== 'connected' || !this.descriptor) {
+      return false;
+    }
+    const gen = this.connectionGeneration;
+    const controller = new AbortController();
+    this.activeRpcControllers.add(controller);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const result = (await editorBridgeRpc(
+        this.descriptor,
+        'handshake',
+        { client: 'ue58rider', version: 1 },
+        { ...this.rpcOptions, timeoutMs, signal: controller.signal },
+      )) as { ok?: boolean };
+      return gen === this.connectionGeneration && this.connectionState === 'connected' && !!result?.ok;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+      this.activeRpcControllers.delete(controller);
     }
   }
 
@@ -528,8 +573,11 @@ export class EditorBridgeClient implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.connectionGeneration++;
     this.connectionState = 'disconnecting';
     this.connectAbort?.abort();
+    for (const controller of this.activeRpcControllers) controller.abort();
+    this.activeRpcControllers.clear();
     this.connectionState = 'disposed';
     this.resetOffline('disposed');
   }

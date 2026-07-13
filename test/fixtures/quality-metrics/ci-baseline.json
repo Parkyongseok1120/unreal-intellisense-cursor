@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-13T17:18:10.107Z",
+  "generatedAt": "2026-07-13T17:38:01.755Z",
   "source": "ci-merge",
   "areas": {
     "trust": {
@@ -8,7 +8,7 @@
       "completeness": 0.82,
       "resilience": 0.8,
       "performance": 0.75,
-      "verification": 0.92,
+      "verification": 0.9,
       "e2ePassed": true,
       "details": {
         "bridgeContractTests": true,
@@ -21,7 +21,7 @@
       "completeness": 0.82,
       "resilience": 0.8,
       "performance": 0.8,
-      "verification": 0.88,
+      "verification": 0.85,
       "e2ePassed": true,
       "details": {
         "editorBridgeSchema": true
@@ -98,13 +98,16 @@
       "completeness": 0.82,
       "resilience": 0.8,
       "performance": 0.76,
-      "verification": 0.86,
+      "verification": 0.9973890339425587,
       "e2ePassed": true,
       "details": {
         "automationCompletionTicker": true,
         "executionId": true,
         "debugProfile": true,
-        "projectRuntimeTests": true
+        "projectRuntimeTests": false,
+        "unitPass": 382,
+        "unitFail": 0,
+        "unitTotal": 383
       }
     },
     "workflow": {
@@ -112,7 +115,7 @@
       "completeness": 0.82,
       "resilience": 0.8,
       "performance": 0.76,
-      "verification": 0.86,
+      "verification": 0.82,
       "e2ePassed": true,
       "details": {
         "testExplorerUri": true,
@@ -128,7 +131,7 @@
       "completeness": 0.82,
       "resilience": 0.8,
       "performance": 0.74,
-      "verification": 0.88,
+      "verification": 0.85,
       "e2ePassed": true,
       "details": {
         "registryWired": true,
