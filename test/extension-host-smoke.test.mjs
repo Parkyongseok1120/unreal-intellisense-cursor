@@ -24,9 +24,10 @@ describe('extension host smoke', () => {
     const extSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'extension.ts'), 'utf8');
     assert.ok(extSrc.includes('ExtensionMode.Test'));
     assert.ok(extSrc.includes('isExtensionTestHost'));
-    const fixtureSettings = path.join(process.cwd(), 'test', 'fixtures', 'synthetic-ue-project', '.vscode', 'settings.json');
-    assert.ok(fs.existsSync(fixtureSettings));
-    const settings = JSON.parse(fs.readFileSync(fixtureSettings, 'utf8'));
-    assert.equal(settings['ue58rider.autoSetupOnOpen'], false);
+    assert.match(extSrc, /if \(isExtensionTestHost\(\)\)/);
+
+    const runnerSrc = fs.readFileSync(path.join(process.cwd(), 'test', 'run-extension-host.mjs'), 'utf8');
+    assert.ok(runnerSrc.includes('VSCODE_TEST_RUNNER'));
+    assert.ok(runnerSrc.includes('extensionTestsEnv'));
   });
 });
