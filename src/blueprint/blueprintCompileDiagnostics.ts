@@ -1,22 +1,30 @@
 import * as vscode from 'vscode';
 import type { EditorBridgeClient } from '../editorBridge/editorBridgeClient';
 
-export const BLUEPRINT_COMPILE_DIAG_URI = vscode.Uri.parse('unreal://blueprint-compile-errors');
+export function blueprintCompileDiagUri(projectRoot: string): vscode.Uri {
+  return vscode.Uri.parse(`unreal://blueprint-compile-errors/${encodeURIComponent(projectRoot)}`);
+}
+
+/** @deprecated Use blueprintCompileDiagUri(projectRoot) for multi-root workspaces. */
+export const BLUEPRINT_COMPILE_DIAG_URI = blueprintCompileDiagUri('default');
 
 export function startBlueprintCompileDiagnosticsWatch(
+  projectRoot: string,
   getBridge: () => EditorBridgeClient | undefined,
   collection: vscode.DiagnosticCollection,
   intervalMs = 60_000,
 ): vscode.Disposable {
+  const diagUri = blueprintCompileDiagUri(projectRoot);
+
   const refresh = async () => {
     const bridge = getBridge();
     if (!bridge) {
-      collection.delete(BLUEPRINT_COMPILE_DIAG_URI);
+      collection.delete(diagUri);
       return;
     }
     const errors = await bridge.getBlueprintCompileErrors();
     if (errors.length === 0) {
-      collection.delete(BLUEPRINT_COMPILE_DIAG_URI);
+      collection.delete(diagUri);
       return;
     }
 
@@ -28,7 +36,7 @@ export function startBlueprintCompileDiagnosticsWatch(
           vscode.DiagnosticSeverity.Error,
         ),
     );
-    collection.set(BLUEPRINT_COMPILE_DIAG_URI, diags);
+    collection.set(diagUri, diags);
   };
 
   const timer = setInterval(() => void refresh(), intervalMs);
@@ -38,8 +46,7 @@ export function startBlueprintCompileDiagnosticsWatch(
 
 export function registerBlueprintCompileDiagnostics(
   context: vscode.ExtensionContext,
-  getBridge: () => EditorBridgeClient | undefined,
   collection: vscode.DiagnosticCollection,
 ): void {
-  context.subscriptions.push(startBlueprintCompileDiagnosticsWatch(getBridge, collection));
+  context.subscriptions.push(collection);
 }

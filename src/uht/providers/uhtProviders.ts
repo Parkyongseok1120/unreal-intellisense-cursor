@@ -15,13 +15,13 @@ function findEnclosingClass(document: vscode.TextDocument, line: number): string
 }
 
 export class UPropertyCodeLensProvider implements vscode.CodeLensProvider {
-  constructor(private projectRoot: () => string | undefined) {}
+  constructor(private projectRoot: (uri?: vscode.Uri) => string | undefined) {}
 
   async provideCodeLenses(
     document: vscode.TextDocument,
     _token: vscode.CancellationToken,
   ): Promise<vscode.CodeLens[]> {
-    const root = this.projectRoot();
+    const root = this.projectRoot(document.uri);
     if (!root || document.languageId !== 'cpp') return [];
 
     const lenses: vscode.CodeLens[] = [];
@@ -59,14 +59,14 @@ export class UPropertyCodeLensProvider implements vscode.CodeLensProvider {
 }
 
 export class GeneratedSymbolHoverProvider implements vscode.HoverProvider {
-  constructor(private projectRoot: () => string | undefined) {}
+  constructor(private projectRoot: (uri?: vscode.Uri) => string | undefined) {}
 
   async provideHover(
     document: vscode.TextDocument,
     position: vscode.Position,
     _token: vscode.CancellationToken,
   ): Promise<vscode.Hover | undefined> {
-    const root = this.projectRoot();
+    const root = this.projectRoot(document.uri);
     if (!root) return undefined;
 
     const line = document.lineAt(position.line).text;

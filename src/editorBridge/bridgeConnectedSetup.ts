@@ -5,6 +5,11 @@ import { startBlueprintCompileDiagnosticsWatch } from '../blueprint/blueprintCom
 
 const setupsByProject = new Map<string, vscode.Disposable>();
 
+export type BridgeConnectedSetupOptions = {
+  /** Called after bridge asset index is synced or a delta is applied. */
+  onAssetIndexChanged?: (projectRoot: string) => void;
+};
+
 /** Tear down bridge polling timers for a project (or all projects). */
 export function disposeBridgeConnectedSetup(projectRoot?: string): void {
   if (projectRoot) {
@@ -25,9 +30,10 @@ export async function ensureBridgeServicesForProject(
   projectRoot: string,
   getBridge: () => EditorBridgeClient | undefined,
   diagnosticCollection: vscode.DiagnosticCollection,
+  options?: BridgeConnectedSetupOptions,
 ): Promise<void> {
   if (isBridgeSetupActive(projectRoot)) return;
-  await setupBridgeConnectedServices(projectRoot, getBridge, diagnosticCollection);
+  await setupBridgeConnectedServices(projectRoot, getBridge, diagnosticCollection, options);
 }
 
 /** Bootstrap asset index sync and bridge polling after a successful handshake. */
@@ -35,6 +41,7 @@ export async function setupBridgeConnectedServices(
   projectRoot: string,
   getBridge: () => EditorBridgeClient | undefined,
   diagnosticCollection: vscode.DiagnosticCollection,
+  options?: BridgeConnectedSetupOptions,
 ): Promise<void> {
   const key = projectRoot.toLowerCase();
   setupsByProject.get(key)?.dispose();
@@ -51,6 +58,7 @@ export async function setupBridgeConnectedServices(
     if (bridgeResult?.length) {
       const { refreshAssetIndex } = await import('../assets/assetIndex');
       await refreshAssetIndex(projectRoot, { bridgeAssets: bridgeResult });
+      options?.onAssetIndexChanged?.(projectRoot);
     }
     const handshake = await bridge.queryAssetDelta(0);
     assetDeltaSince = handshake.since;
@@ -69,6 +77,7 @@ export async function setupBridgeConnectedServices(
         if (delta.added.length || delta.removed.length || delta.updated.length) {
           const { applyBridgeAssetDelta } = await import('../assets/assetIndex');
           await applyBridgeAssetDelta(projectRoot, delta);
+          options?.onAssetIndexChanged?.(projectRoot);
         }
         assetDeltaSince = delta.since;
       } catch {
@@ -80,7 +89,7 @@ export async function setupBridgeConnectedServices(
   }, 30_000);
   disposables.push({ dispose: () => clearInterval(deltaTimer) });
 
-  disposables.push(startBlueprintCompileDiagnosticsWatch(getBridge, diagnosticCollection));
+  disposables.push(startBlueprintCompileDiagnosticsWatch(projectRoot, getBridge, diagnosticCollection));
 
   const bundle: vscode.Disposable = { dispose: () => disposables.forEach((d) => d.dispose()) };
   setupsByProject.set(key, bundle);

@@ -96,6 +96,28 @@ function bridgeGetterForProject(projectRoot: string): () => EditorBridgeClient |
   return () => projectRegistry().getByRoot(projectRoot)?.editorBridge;
 }
 
+function bridgeConnectedSetupOptions(): import('./editorBridge/bridgeConnectedSetup').BridgeConnectedSetupOptions {
+  return {
+    onAssetIndexChanged: (projectRoot) => {
+      const browserRoot = contentBrowser?.getProjectRoot()?.toLowerCase();
+      if (browserRoot && browserRoot === projectRoot.toLowerCase()) {
+        void contentBrowser?.refresh();
+      }
+    },
+  };
+}
+
+/** Session that owns detection/bootstrap jobs for a project (or the global fallback). */
+function resolvePipelineSession(projectRoot?: string): ProjectSession | undefined {
+  if (projectRoot) {
+    const runtime = projectRegistry().getByRoot(projectRoot);
+    if (runtime) return runtime.session;
+  }
+  const active = resolveRuntime();
+  if (active) return active.session;
+  return projectSession;
+}
+
 /** Project-scoped view used by commands launched from the active editor. */
 function runtimeContext(uri?: vscode.Uri): UE5_8CursorContext {
   const runtime = resolveRuntime(uri);
@@ -146,6 +168,7 @@ async function reportHeaderCompileContext(document: vscode.TextDocument): Promis
 
 function cleanupProjectExtensionState(projectRoot: string): void {
   disposeBridgeConnectedSetup(projectRoot);
+  logViewer?.stop(projectRoot);
   const timer = pluginIndexRestartTimers.get(projectRoot);
   if (timer) {
     clearTimeout(timer);
@@ -209,7 +232,7 @@ function settingsAffectsIntellisenseOrDebug(event: vscode.ConfigurationChangeEve
 }
 
 async function handleSettingsChange(event: vscode.ConfigurationChangeEvent): Promise<void> {
-  await statusBar.update(ctx, settings);
+  await statusBar.update(runtimeContext(), settings);
   if (ctx.project) {
     void openContentBrowserForProject({ reopen: false });
   }
@@ -261,8 +284,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           testExplorer?.setRuntime(root, resolveEditorBridge());
           void testExplorer?.refresh(runtimeContext());
           const { setupBridgeConnectedServices } = await import('./editorBridge/bridgeConnectedSetup');
-          await setupBridgeConnectedServices(root, bridgeGetterForProject(root), ctx.diagnosticCollection);
+          await setupBridgeConnectedServices(root, bridgeGetterForProject(root), ctx.diagnosticCollection, bridgeConnectedSetupOptions());
         }
+      },
+      onEditorIdentityChanged: async (root) => {
+        const { disposeBridgeConnectedSetup } = await import('./editorBridge/bridgeConnectedSetup');
+        disposeBridgeConnectedSetup(root);
       },
       onDisconnect: () => {
         statusBar.setBridgeStatus({ connected: false, capabilities: [], protocolVersion: 1 });
@@ -312,6 +339,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const { registerContentBrowser } = await import('./assets/contentBrowserProvider');
   contentBrowser = registerContentBrowser(extensionContext);
+  extensionContext.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri: async (uri) => {
+        if (uri.scheme !== 'ue58rider' || uri.authority !== 'asset') return;
+        const assetPath = decodeURIComponent(uri.path.replace(/^\//, ''));
+        const commandCtx = runtimeContext();
+        if (!commandCtx.project || !commandCtx.engine || !assetPath) return;
+        const { openAssetInEditor } = await import('./blueprint/blueprintEditor');
+        await openAssetInEditor(commandCtx.engine, commandCtx.project, assetPath);
+      },
+    }),
+  );
 
   const { registerMcpDiagnostics } = await import('./mcp/mcpDiagnosticsProvider');
   mcpDiagnostics = registerMcpDiagnostics(extensionContext, () => resolveProjectRoot());
@@ -360,11 +399,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.languages.registerCodeLensProvider(
       { language: 'cpp', scheme: 'file' },
-      new UPropertyCodeLensProvider(() => resolveProjectRoot()),
+      new UPropertyCodeLensProvider((uri) => resolveProjectRoot(uri)),
     ),
     vscode.languages.registerHoverProvider(
       { language: 'cpp', scheme: 'file' },
-      new GeneratedSymbolHoverProvider(() => resolveProjectRoot()),
+      new GeneratedSymbolHoverProvider((uri) => resolveProjectRoot(uri)),
     ),
     vscode.languages.registerCodeActionsProvider(
       { language: 'cpp', scheme: 'file' },
@@ -391,7 +430,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         ]),
     vscode.tasks.registerTaskProvider(
       UE5_8CursorTaskProvider.type,
-      new UE5_8CursorTaskProvider(() => ctx, () => settings),
+      new UE5_8CursorTaskProvider(() => runtimeContext(), () => settings),
     ),
   );
 
@@ -443,6 +482,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             runtime.project.projectRoot,
             bridgeGetterForProject(runtime.project.projectRoot),
             ctx.diagnosticCollection,
+            bridgeConnectedSetupOptions(),
           ),
         );
       }
@@ -524,6 +564,52 @@ async function openContentBrowserForProject(options?: { reopen?: boolean }): Pro
   }
 }
 
+async function connectProjectBridge(projectRoot: string, options: { primary: boolean }): Promise<void> {
+  const bridge = projectRegistry().getByRoot(projectRoot)?.editorBridge;
+  if (!bridge) return;
+
+  const bridgeInfo = await withBridgeTimeout(bridge.connect(projectRoot), 5000);
+  if (!bridgeInfo) {
+    if (options.primary) {
+      const { isBridgePluginReady } = await import('./editorBridge/bridgePluginInstall');
+      statusBar.setBridgePluginMissing(!isBridgePluginReady(projectRoot));
+    }
+    return;
+  }
+
+  if (options.primary) {
+    editorBridge = bridge;
+    ctx.editorBridge = bridge;
+    testExplorer?.setRuntime(projectRoot, bridge);
+    ctx.outputChannel.appendLine(`[UE5_8 Cursor] ${formatBridgeStatus(bridgeInfo)}`);
+    statusBar.setBridgeStatus(bridgeInfo);
+    const { isBridgePluginReady, maybePromptRestartEditor } = await import('./editorBridge/bridgePluginInstall');
+    const pluginReady = isBridgePluginReady(projectRoot);
+    statusBar.setBridgePluginMissing(!bridgeInfo.connected && !pluginReady);
+    if (!bridgeInfo.connected) {
+      await maybePromptRestartEditor(bridgeInfo.connected, pluginReady, ctx.outputChannel);
+    }
+  } else if (bridgeInfo.connected) {
+    ctx.outputChannel.appendLine(
+      `[UE5_8 Cursor] Bridge (${path.basename(projectRoot)}): ${formatBridgeStatus(bridgeInfo)}`,
+    );
+  }
+
+  if (bridgeInfo.connected) {
+    try {
+      const { setupBridgeConnectedServices } = await import('./editorBridge/bridgeConnectedSetup');
+      await setupBridgeConnectedServices(
+        projectRoot,
+        bridgeGetterForProject(projectRoot),
+        ctx.diagnosticCollection,
+        bridgeConnectedSetupOptions(),
+      );
+    } catch (err) {
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Bridge setup failed (${projectRoot}): ${err}`);
+    }
+  }
+}
+
 async function scheduleCompileRefresh(commandCtx = runtimeContext(), session = resolveRuntime()?.session ?? projectSession): Promise<void> {
   if (!session || !commandCtx.project || !extensionPath) return;
   const gen = session.getGeneration();
@@ -559,20 +645,26 @@ async function runSilentCompileRefresh(commandCtx: UE5_8CursorContext, session: 
  * notification, then regenerate compile_commands from the now-warm cache and
  * upgrade IntelliSense to 'ready' — without ever blocking editor activation.
  */
-async function scheduleBackgroundCacheWarmup(pipelineGeneration: number): Promise<void> {
-  if (!projectSession || !ctx.project || !extensionPath) return;
-  const token = projectSession.getActiveToken() ?? new vscode.CancellationTokenSource().token;
-  await projectSession.runJob('warmup', ctx.project.projectRoot, pipelineGeneration, token, async () => {
-    await runBackgroundCacheWarmup(pipelineGeneration, token);
+async function scheduleBackgroundCacheWarmup(
+  pipelineGeneration: number,
+  session: ProjectSession,
+  commandCtx: UE5_8CursorContext,
+): Promise<void> {
+  if (!commandCtx.project || !extensionPath) return;
+  const token = session.getActiveToken() ?? new vscode.CancellationTokenSource().token;
+  await session.runJob('warmup', commandCtx.project.projectRoot, pipelineGeneration, token, async () => {
+    await runBackgroundCacheWarmup(pipelineGeneration, token, session, commandCtx);
   });
 }
 
 async function runBackgroundCacheWarmup(
   pipelineGeneration: number,
   token: vscode.CancellationToken,
+  session: ProjectSession,
+  commandCtx: UE5_8CursorContext,
 ): Promise<void> {
-  if (!ctx.project || !extensionPath || !projectSession) return;
-  const log = (msg: string) => ctx.outputChannel.appendLine(msg);
+  if (!commandCtx.project || !extensionPath) return;
+  const log = (msg: string) => commandCtx.outputChannel.appendLine(msg);
   try {
     const { runCacheWarmup, ensureCompileDatabase } = await import('./cursor/bootstrapProject');
     await vscode.window.withProgress(
@@ -582,7 +674,7 @@ async function runBackgroundCacheWarmup(
         cancellable: false,
       },
       async (progress) => {
-        await runCacheWarmup(ctx, settings, log, (line) => {
+        await runCacheWarmup(commandCtx, settings, log, (line) => {
           const p = parseBuildProgress(line);
           if (p) {
             const pct = Math.round((p.current / p.total) * 100);
@@ -590,19 +682,19 @@ async function runBackgroundCacheWarmup(
             statusBar.setBuildProgress(p.current, p.total);
           }
         }, token);
-        if (projectSession!.isStale(pipelineGeneration) || token.isCancellationRequested) return;
+        if (session.isStale(pipelineGeneration) || token.isCancellationRequested) return;
         statusBar.clearBuildProgress();
         progress.report({ message: 'compile_commands 재생성 중...' });
-        const result = await ensureCompileDatabase(ctx, settings, extensionPath, log, {
+        const result = await ensureCompileDatabase(commandCtx, settings, extensionPath, log, {
           force: true,
           token,
         });
-        if (projectSession!.isStale(pipelineGeneration) || token.isCancellationRequested) return;
+        if (session.isStale(pipelineGeneration) || token.isCancellationRequested) return;
         const { ensureUhtIntellisense } = await import('./cursor/projectSetup');
-        await ensureUhtIntellisense(ctx.project!, extensionPath, undefined, { lazyPluginIndexing: settings.clangdLazyPluginIndexing });
+        await ensureUhtIntellisense(commandCtx.project!, extensionPath, undefined, { lazyPluginIndexing: settings.clangdLazyPluginIndexing });
         statusBar.setIntelliSense(result.mode);
-        void statusBar.update(ctx, settings);
-        await requestClangdRestart(ctx.project!.projectRoot, 'UHT cache warm-up', log);
+        void statusBar.update(commandCtx, settings);
+        await requestClangdRestart(commandCtx.project!.projectRoot, 'UHT cache warm-up', log);
       },
     );
   } catch (err) {
@@ -611,10 +703,11 @@ async function runBackgroundCacheWarmup(
   }
 }
 
-async function runDetectionPipeline(options?: { allowAutoSetup?: boolean }): Promise<void> {
-  if (!projectSession) return;
-  await projectSession.runPipeline(async (runOptions, token) => {
-    await executeDetectionPipeline(runOptions, token);
+async function runDetectionPipeline(options?: { allowAutoSetup?: boolean; projectRoot?: string }): Promise<void> {
+  const session = resolvePipelineSession(options?.projectRoot);
+  if (!session) return;
+  await session.runPipeline(async (runOptions, token) => {
+    await executeDetectionPipeline(runOptions, token, session);
   }, options);
 }
 
@@ -630,12 +723,13 @@ function bridgeLogAdapter(bridge?: EditorBridgeClient): LogViewerBridge | undefi
 async function executeDetectionPipeline(
   options: { allowAutoSetup?: boolean },
   token: vscode.CancellationToken,
+  session: ProjectSession,
 ): Promise<void> {
-  if (token.isCancellationRequested || !projectSession) return;
-  const gen = projectSession.getGeneration();
+  if (token.isCancellationRequested) return;
+  const gen = session.getGeneration();
 
   const projects = await detectProjects();
-  projectSession.markLoadingProjectModel();
+  session.markLoadingProjectModel();
 
   if (projects.length === 0) {
     ctx.outputChannel.appendLine('[UE5_8 Cursor] No UE 5.8 .uproject found in workspace.');
@@ -659,7 +753,7 @@ async function executeDetectionPipeline(
     return;
   }
 
-  if (token.isCancellationRequested || projectSession.isStale(gen)) return;
+  if (token.isCancellationRequested || session.isStale(gen)) return;
 
   await setContext(ContextKeys.ProjectDetected, true);
   ctx.outputChannel.appendLine(`[UE5_8 Cursor] Project: ${ctx.project.name} (${ctx.project.projectRoot})`);
@@ -672,7 +766,7 @@ async function executeDetectionPipeline(
     await maybePromptInstallBridgePlugin(ctx, settings, extensionPath, extensionContext);
   }
 
-  if (token.isCancellationRequested || projectSession.isStale(gen)) return;
+  if (token.isCancellationRequested || session.isStale(gen)) return;
 
   let discoveredEngines: Awaited<ReturnType<typeof discoverEngines>> = [];
   if (settings.engineRoot) {
@@ -711,37 +805,14 @@ async function executeDetectionPipeline(
   editorBridge = runtime.editorBridge;
   ctx.editorBridge = editorBridge;
 
-  if (editorBridge) {
-    const bridgeInfo = await withBridgeTimeout(editorBridge.connect(ctx.project.projectRoot), 5000);
-    if (bridgeInfo) {
-      testExplorer?.setRuntime(ctx.project.projectRoot, editorBridge);
-      ctx.outputChannel.appendLine(`[UE5_8 Cursor] ${formatBridgeStatus(bridgeInfo)}`);
-      statusBar.setBridgeStatus(bridgeInfo);
-      const { isBridgePluginReady, maybePromptRestartEditor } = await import('./editorBridge/bridgePluginInstall');
-      const pluginReady = isBridgePluginReady(ctx.project.projectRoot);
-      statusBar.setBridgePluginMissing(!bridgeInfo.connected && !pluginReady);
-      if (!bridgeInfo.connected) {
-        await maybePromptRestartEditor(bridgeInfo.connected, pluginReady, ctx.outputChannel);
-      }
-      if (bridgeInfo.connected) {
-        try {
-          const { setupBridgeConnectedServices } = await import('./editorBridge/bridgeConnectedSetup');
-          await setupBridgeConnectedServices(
-            ctx.project.projectRoot,
-            bridgeGetterForProject(ctx.project.projectRoot),
-            ctx.diagnosticCollection,
-          );
-        } catch {
-          // bridge asset sync optional
-        }
-      }
-    } else if (ctx.project) {
-      const { isBridgePluginReady } = await import('./editorBridge/bridgePluginInstall');
-      statusBar.setBridgePluginMissing(!isBridgePluginReady(ctx.project.projectRoot));
+  await connectProjectBridge(ctx.project.projectRoot, { primary: true });
+  for (const project of projects) {
+    if (project.projectRoot !== ctx.project.projectRoot) {
+      await connectProjectBridge(project.projectRoot, { primary: false });
     }
   }
   testExplorer?.setRuntime(ctx.project.projectRoot, editorBridge);
-  void testExplorer?.refresh(ctx);
+  void testExplorer?.refresh(runtimeContext());
 
   if (ctx.project) {
     const graph = await refreshSemanticGraph(ctx.project, {
@@ -770,7 +841,7 @@ async function executeDetectionPipeline(
     }
   }
 
-  if (token.isCancellationRequested || projectSession.isStale(gen)) return;
+  if (token.isCancellationRequested || session.isStale(gen)) return;
 
   await setContext(ContextKeys.EngineFound, !!ctx.engine);
   if (ctx.engine) {
@@ -782,7 +853,7 @@ async function executeDetectionPipeline(
   void mcpDiagnostics?.refresh();
 
   if (ctx.project && options?.allowAutoSetup !== false && settings.autoSetupOnOpen && extensionPath) {
-    projectSession?.markRefreshing();
+    session?.markRefreshing();
     const metricsProjectRoot = ctx.project.projectRoot;
     const metrics = await startIntelliSenseMetricsRun(metricsProjectRoot, {
       onPhase: (phase, snapshot) => {
@@ -811,13 +882,13 @@ async function executeDetectionPipeline(
       }
     }
     if (result.warmupPending) {
-      projectSession.markWarmingUht();
-      void scheduleBackgroundCacheWarmup(gen);
+      session.markWarmingUht();
+      void scheduleBackgroundCacheWarmup(gen, session, runtimeContext());
     }
   }
 
-  projectSession.markIndexing();
-  void statusBar.update(ctx, settings);
+  session.markIndexing();
+  void statusBar.update(runtimeContext(), settings);
 
   if (ctx.project) {
     // CommandBridge is owned by each project runtime. Every discovered project

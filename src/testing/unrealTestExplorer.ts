@@ -95,9 +95,7 @@ export class UnrealTestExplorer implements vscode.Disposable {
         return state.tests;
       }
     }
-    state.tests = [];
     state.offlineMessage = 'Editor Bridge offline; automation tests unavailable.';
-    this.controller.items.replace([]);
     this.emitter.fire();
     return state.tests;
   }

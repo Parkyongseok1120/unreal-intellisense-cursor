@@ -56,7 +56,6 @@ export class WorkspaceProjectRegistry {
       runtime.project = project;
       runtime.engine = engine;
     }
-    this.activeRoot = key;
     return runtime;
   }
 

@@ -32,4 +32,22 @@ describe('asset reference bridge authority', () => {
     const deps = await assetRefs.getAssetDependencies('/Game/Foo.Bar', bridge);
     assert.deepEqual(deps, []);
   });
+
+  it('falls back to MCP when connected bridge RPC throws', async () => {
+    const refsWithFallback = loadTsModule('src/assets/assetReferenceService.ts', {
+      '../blueprint/mcpBlueprintBridge': () => ({
+        mcpCallLogical: async () => ({ ok: true, text: '[]' }),
+      }),
+      './assetPathParser': () => ({ findAssetPathsInDocument: async () => [] }),
+      './assetIndex': () => ({ loadAssetIndex: async () => [] }),
+    });
+    const bridge = {
+      isConnected: () => true,
+      getAssetReferencers: async () => {
+        throw new Error('rpc failed');
+      },
+    };
+    const refs = await refsWithFallback.getAssetReferencers('/Game/Foo.Bar', 1, bridge);
+    assert.equal(Array.isArray(refs), true);
+  });
 });

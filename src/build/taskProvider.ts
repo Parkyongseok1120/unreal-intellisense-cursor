@@ -1,9 +1,18 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { EXTENSION_ID } from '../constants';
 import { buildCommandLine, cleanCommandLine, generateClangDatabaseCommandLine } from '../build/ubt';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 import type { UE5_8CursorTaskDefinition } from '../types';
+
+function workspaceFolderForProject(project: { projectRoot: string }): vscode.WorkspaceFolder | undefined {
+  const root = path.resolve(project.projectRoot).toLowerCase();
+  return vscode.workspace.workspaceFolders?.find((folder) => {
+    const folderRoot = path.resolve(folder.uri.fsPath).toLowerCase();
+    return root === folderRoot || root.startsWith(`${folderRoot}${path.sep}`);
+  });
+}
 
 export class UE5_8CursorTaskProvider implements vscode.TaskProvider {
   static readonly type = 'ue58rider';
@@ -18,7 +27,7 @@ export class UE5_8CursorTaskProvider implements vscode.TaskProvider {
     const settings = this.getSettings();
     if (!ctx.project || !ctx.engine) return [];
 
-    const folder = vscode.workspace.workspaceFolders?.[0];
+    const folder = workspaceFolderForProject(ctx.project);
     if (!folder) return [];
 
     const defs: Array<{ action: UE5_8CursorTaskDefinition['action']; label: string }> = [
@@ -37,7 +46,7 @@ export class UE5_8CursorTaskProvider implements vscode.TaskProvider {
 
     const ctx = this.getCtx();
     const settings = this.getSettings();
-    const folder = vscode.workspace.workspaceFolders?.[0];
+    const folder = ctx.project ? workspaceFolderForProject(ctx.project) : undefined;
     if (!ctx.project || !ctx.engine || !folder) return undefined;
 
     return this.makeTask(folder, ctx, settings, def.action, task.name);

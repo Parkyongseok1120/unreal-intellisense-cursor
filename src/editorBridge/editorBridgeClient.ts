@@ -29,6 +29,13 @@ export interface EditorBridgeInfo {
   protocolVersion: number;
 }
 
+export class BridgeRpcError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BridgeRpcError';
+  }
+}
+
 export interface BridgeAssetEntry {
   assetPath: string;
   className?: string;
@@ -240,8 +247,8 @@ export class EditorBridgeClient implements vscode.Disposable {
         this.rpcOptions,
       )) as { referencers?: BridgeAssetEntry[] };
       return result.referencers ?? [];
-    } catch {
-      return [];
+    } catch (err) {
+      throw new BridgeRpcError(`assetRegistry.referencers failed: ${err}`);
     }
   }
 
@@ -256,8 +263,8 @@ export class EditorBridgeClient implements vscode.Disposable {
         this.rpcOptions,
       )) as { dependencies?: BridgeAssetEntry[] };
       return result.dependencies ?? [];
-    } catch {
-      return [];
+    } catch (err) {
+      throw new BridgeRpcError(`assetRegistry.dependencies failed: ${err}`);
     }
   }
 

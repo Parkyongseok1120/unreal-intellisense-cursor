@@ -22,4 +22,33 @@ describe('bridge C++ stability helpers', () => {
   it('handshake delta avoids baseline when snapshot already populated', () => {
     assert.ok(cppSrc.includes('SinceTs <= 0 && GAssetRegistrySnapshot.Num() > 0'));
   });
+
+  it('scans /Game and plugin content roots for asset sync', () => {
+    assert.ok(cppSrc.includes('AppendProjectContentPackagePaths'));
+    assert.ok(cppSrc.includes('QueryProjectAssets'));
+    assert.ok(cppSrc.includes('FPaths::ProjectPluginsDir()'));
+  });
+
+  it('caps blueprint loads in findUFunctionNodes', () => {
+    assert.ok(cppSrc.includes('MaxUFunctionBlueprintLoads'));
+    assert.ok(cppSrc.includes('SetBoolField(TEXT("truncated")'));
+    assert.ok(cppSrc.includes('BuildFindUFunctionNodesResult'));
+    assert.ok(cppSrc.includes('ENamedThreads::GameThread'));
+  });
+
+  it('limits automation state updates to the active test', () => {
+    assert.ok(cppSrc.includes('GActiveAutomationTestName.IsEmpty()'));
+    assert.ok(cppSrc.includes('Test already running'));
+  });
+
+  it('caps referencers and dependencies graph results', () => {
+    assert.ok(cppSrc.includes('MAX_BRIDGE_REFERENCERS'));
+    assert.ok(cppSrc.includes('MAX_BRIDGE_DEPENDENCIES'));
+    assert.ok(cppSrc.includes('QueryProjectBlueprintAssets'));
+  });
+
+  it('strips I prefix in InterfaceMatchToken for findImplementations', () => {
+    assert.ok(cppSrc.includes('InterfaceMatchToken'));
+    assert.ok(cppSrc.includes("Token[0] == TCHAR('I')"));
+  });
 });
