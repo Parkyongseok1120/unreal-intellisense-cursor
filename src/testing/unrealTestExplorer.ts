@@ -82,18 +82,17 @@ export class UnrealTestExplorer implements vscode.Disposable {
     this.activeProjectRoot = ctx.project.projectRoot;
     const state = this.state;
     if (state.bridge?.hasCapability('automationTests')) {
-      try {
-        const remote = await state.bridge.listAutomationTests();
-        state.tests = remote.map((t) => ({ name: t.name, source: t.source, path: typeof t.path === 'string' ? t.path : undefined }));
-        state.offlineMessage = '';
-        this.rebuildTree();
-        this.emitter.fire();
-        return state.tests;
-      } catch {
-        state.offlineMessage = 'Editor Bridge offline; automation tests unavailable.';
+      const remote = await state.bridge.listAutomationTestsResult();
+      if (!remote.ok) {
+        state.offlineMessage = remote.error.message;
         this.emitter.fire();
         return state.tests;
       }
+      state.tests = remote.value.map((t) => ({ name: t.name, source: t.source, path: typeof t.path === 'string' ? t.path : undefined }));
+      state.offlineMessage = '';
+        this.rebuildTree();
+      this.emitter.fire();
+      return state.tests;
     }
     state.offlineMessage = 'Editor Bridge offline; automation tests unavailable.';
     this.emitter.fire();
@@ -103,11 +102,10 @@ export class UnrealTestExplorer implements vscode.Disposable {
   private async refreshFromBridge(): Promise<void> {
     const state = this.state;
     if (!state.bridge?.hasCapability('automationTests')) return;
-    try {
-      const remote = await state.bridge.listAutomationTests();
-      state.tests = remote.map((t) => ({ name: t.name, source: t.source, path: typeof t.path === 'string' ? t.path : undefined }));
-      this.rebuildTree();
-    } catch { /* keep this project's cached tree */ }
+    const remote = await state.bridge.listAutomationTestsResult();
+    if (!remote.ok) return;
+    state.tests = remote.value.map((t) => ({ name: t.name, source: t.source, path: typeof t.path === 'string' ? t.path : undefined }));
+    this.rebuildTree();
   }
 
   private rebuildTree(): void {

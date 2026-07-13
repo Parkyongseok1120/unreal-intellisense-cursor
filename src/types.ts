@@ -63,6 +63,12 @@ export interface ParsedBuildDiagnostic {
 export interface UE5_8CursorTaskDefinition {
   type: 'ue58rider';
   action: 'build' | 'rebuild' | 'clean' | 'generateCompileCommands';
+  /** Project that owns this task — used on resolve instead of active editor context. */
+  projectRoot?: string;
+  engineRoot?: string;
+  buildTarget?: string;
+  buildConfiguration?: string;
+  platform?: string;
 }
 
 /** @deprecated Use UE5_8CursorTaskDefinition */

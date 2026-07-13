@@ -1,26 +1,27 @@
 {
   "version": 1,
-  "generatedAt": "2026-07-13T15:51:23.776Z",
+  "generatedAt": "2026-07-13T17:18:10.107Z",
   "source": "ci-merge",
   "areas": {
     "trust": {
       "accuracy": 0.85,
-      "completeness": 0.7,
+      "completeness": 0.82,
       "resilience": 0.8,
       "performance": 0.75,
-      "verification": 0.9,
+      "verification": 0.92,
       "e2ePassed": true,
       "details": {
         "bridgeContractTests": true,
-        "noFalsePassContract": true
+        "noFalsePassContract": true,
+        "typecheckClean": true
       }
     },
     "schemas": {
-      "accuracy": 0.8,
-      "completeness": 0.75,
-      "resilience": 0.7,
+      "accuracy": 0.82,
+      "completeness": 0.82,
+      "resilience": 0.8,
       "performance": 0.8,
-      "verification": 0.85,
+      "verification": 0.88,
       "e2ePassed": true,
       "details": {
         "editorBridgeSchema": true
@@ -58,7 +59,7 @@
     "semantic": {
       "accuracy": 1,
       "completeness": 1,
-      "resilience": 0.75,
+      "resilience": 0.8,
       "performance": 0.72,
       "verification": 1,
       "e2ePassed": true,
@@ -93,44 +94,48 @@
       }
     },
     "testing": {
-      "accuracy": 0.8,
-      "completeness": 0.78,
-      "resilience": 0.75,
-      "performance": 0.72,
-      "verification": 0.82,
+      "accuracy": 0.84,
+      "completeness": 0.82,
+      "resilience": 0.8,
+      "performance": 0.76,
+      "verification": 0.86,
       "e2ePassed": true,
       "details": {
         "automationCompletionTicker": true,
         "executionId": true,
-        "debugProfile": true
+        "debugProfile": true,
+        "projectRuntimeTests": true
       }
     },
     "workflow": {
-      "accuracy": 0.8,
-      "completeness": 0.78,
-      "resilience": 0.75,
-      "performance": 0.72,
-      "verification": 0.82,
+      "accuracy": 0.84,
+      "completeness": 0.82,
+      "resilience": 0.8,
+      "performance": 0.76,
+      "verification": 0.86,
       "e2ePassed": true,
       "details": {
         "testExplorerUri": true,
         "serverTarget": true,
         "logCursor": true,
         "hlslOverlay": true,
-        "bridgeBlueprint": true
+        "bridgeBlueprint": true,
+        "sourceWatcherDebounceSettings": true
       }
     },
     "projectRuntime": {
-      "accuracy": 0.62,
-      "completeness": 0.58,
-      "resilience": 0.55,
-      "performance": 0.58,
-      "verification": 0.6,
-      "e2ePassed": false,
+      "accuracy": 0.84,
+      "completeness": 0.82,
+      "resilience": 0.8,
+      "performance": 0.74,
+      "verification": 0.88,
+      "e2ePassed": true,
       "details": {
         "registryWired": true,
         "uriResolution": true,
-        "folderDispose": true
+        "folderDispose": true,
+        "multiRootIsolation": true,
+        "bridgeDispatchSerialized": true
       }
     },
     "ci": {

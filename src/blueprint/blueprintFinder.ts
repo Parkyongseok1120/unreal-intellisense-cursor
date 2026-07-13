@@ -4,6 +4,7 @@ import { mcpFindBlueprintsForClass } from './mcpBlueprintBridge';
 import { blueprintNameCandidates } from './cppClassParser';
 import { getCachedBlueprints, setCachedBlueprints } from './blueprintCache';
 import { contentToAssetPath, findUassetsRecursive } from '../assets/assetIndex';
+import type { BridgeBlueprintEntry } from '../editorBridge/editorBridgeClient';
 import type { BlueprintAsset } from './types';
 export type { BlueprintAsset } from './types';
 
@@ -15,7 +16,7 @@ async function findUassetsInContent(contentDir: string, depth: number): Promise<
 export async function findBlueprintsForClass(
   projectRoot: string,
   className: string,
-  bridge?: { listDerivedBlueprints: (parent: string) => Promise<BlueprintAsset[]> },
+  bridge?: { listDerivedBlueprints: (parent: string) => Promise<BridgeBlueprintEntry[]> },
 ): Promise<BlueprintAsset[]> {
   const cached = getCachedBlueprints(projectRoot, className);
   if (cached) return cached;
@@ -36,7 +37,7 @@ export async function findBlueprintsForClass(
       for (const bp of derived) {
         add({
           assetPath: bp.assetPath,
-          assetName: bp.assetName ?? bp.assetPath.split('/').pop()?.split('.')[0] ?? path.basename(bp.assetPath),
+          assetName: bp.assetPath.split('/').pop()?.split('.')[0] ?? bp.parentClass ?? bp.assetPath,
           source: 'bridge',
         });
       }

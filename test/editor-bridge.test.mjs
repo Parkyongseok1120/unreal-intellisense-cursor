@@ -112,10 +112,11 @@ describe('editor bridge rpc', () => {
     const slowServer = http.createServer(() => {
       // never respond
     });
-    await new Promise((resolve) => slowServer.listen(descriptor.port + 50, '127.0.0.1', resolve));
+    await new Promise((resolve) => slowServer.listen(0, '127.0.0.1', resolve));
+    const slowPort = slowServer.address().port;
     try {
       await rpc.editorBridgeRpc(
-        { ...descriptor, port: descriptor.port + 50 },
+        { ...descriptor, port: slowPort },
         'handshake',
         {},
         { timeoutMs: 200 },

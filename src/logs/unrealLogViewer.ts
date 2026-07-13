@@ -10,7 +10,8 @@ const MAX_READ_BYTES = 1024 * 1024;
 export interface LogViewerBridge {
   isConnected(): boolean;
   canCall(method: string): boolean;
-  tailLogs(lines?: number): Promise<string[]>;
+  tailLogsResult?(lines?: number, offset?: number, fileId?: string): Promise<import('../editorBridge/bridgeResult').BridgeResult<string[]>>;
+  tailLogs(lines?: number, offset?: number, fileId?: string): Promise<string[]>;
 }
 
 interface LogRuntimeState {
@@ -97,7 +98,13 @@ export class UnrealLogViewer implements vscode.Disposable {
     if (!state?.bridge || !state.follow) return;
     if (!state.bridge.isConnected() || !state.bridge.canCall('logs.tail')) return;
     try {
-      const lines = await state.bridge.tailLogs(200);
+      const client = state.bridge as import('../editorBridge/editorBridgeClient').EditorBridgeClient;
+      const result = typeof client.tailLogsResult === 'function'
+        ? await client.tailLogsResult(200, state.offset, state.fileId)
+        : undefined;
+      const lines = result
+        ? (result.ok ? result.value : [])
+        : await state.bridge.tailLogs(200, state.offset, state.fileId);
       for (const line of lines) {
         const key = line.trim();
         if (!key || state.bridgeSeen?.has(key)) continue;

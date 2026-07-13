@@ -80,6 +80,6 @@ describe('bridge protocol contract', () => {
     const src = fs.readFileSync(path.join(process.cwd(), 'src/editorBridge/editorBridgeClient.ts'), 'utf-8');
     assert.ok(!src.includes("state ?? 'passed'"));
     assert.ok(!src.includes("|| 'passed'"));
-    assert.ok(src.includes("result.state === 'passed'"));
+    assert.ok(src.includes("result.value.state === 'passed'"));
   });
 });

@@ -290,12 +290,12 @@ export function inspectionsToDiagnostics(uri: vscode.Uri, result: UeInspectionRe
     const range = new vscode.Range(ins.line, ins.column, ins.line, ins.column + ins.length);
     const severity =
       ins.severity === 'error'
-        ? vscode.DiagnosticSeverity.Error
+        ? vscode.DiagnosticSeverity.Warning
         : ins.severity === 'warning'
           ? vscode.DiagnosticSeverity.Warning
           : vscode.DiagnosticSeverity.Information;
     const diag = new vscode.Diagnostic(range, ins.message, severity);
-    diag.source = 'UE inspection (derived)';
+    diag.source = 'UE inspection (heuristic)';
     diag.code = ins.id;
     return diag;
   });

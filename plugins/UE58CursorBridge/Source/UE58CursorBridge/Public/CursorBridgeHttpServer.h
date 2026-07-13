@@ -26,7 +26,7 @@ private:
 	bool HandleRpcRequest(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
 	bool CheckAuth(const FHttpServerRequest& Request) const;
 	TSharedPtr<FJsonObject> ProcessRpcMethod(const FString& Method, const TSharedPtr<FJsonObject>& Params);
-	void WriteDescriptor() const;
+	bool WriteDescriptor() const;
 	void DeleteDescriptor() const;
 	void RefreshRunningAutomationStates();
 };

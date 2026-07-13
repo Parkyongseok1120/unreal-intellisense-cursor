@@ -539,6 +539,27 @@
           "description": "새 모듈/소스 추가 시 compile_commands 자동 갱신.",
           "scope": "resource"
         },
+        "ue58rider.sourceWatcher.compileDebounceMs": {
+          "type": "number",
+          "default": 15000,
+          "minimum": 1000,
+          "description": "소스 변경 후 compile_commands 배치 갱신까지 대기 시간(ms).",
+          "scope": "resource"
+        },
+        "ue58rider.sourceWatcher.reflectionDebounceMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 500,
+          "description": "헤더 reflection 인덱스 갱신 디바운스(ms).",
+          "scope": "resource"
+        },
+        "ue58rider.sourceWatcher.tuDebounceMs": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 500,
+          "description": "새 translation unit 추가 시 디바운스(ms).",
+          "scope": "resource"
+        },
         "ue58rider.mcp.enabled": {
           "type": "boolean",
           "default": true,

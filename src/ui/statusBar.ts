@@ -4,6 +4,7 @@ import { probeMcpEndpoint } from '../cursor/mcpConfig';
 import { getIndexCounts } from '../assets/indexCoordinator';
 import { Commands } from '../constants';
 import type { CompileDbIndexPlan, IntelliSenseMode } from '../cursor/bootstrapProject';
+import type { EditorBridgeInfo } from '../editorBridge/editorBridgeClient';
 import type { IntelliSenseIndexPhase } from '../telemetry/intellisenseMetrics';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
@@ -85,7 +86,7 @@ export class StatusBarManager implements vscode.Disposable {
     this.updateIntelliSenseItem();
   }
 
-  setBridgeStatus(info: { connected: boolean }): void {
+  setBridgeStatus(info: EditorBridgeInfo): void {
     this.bridgeConnected = info.connected;
     this.updateMcpItem();
   }

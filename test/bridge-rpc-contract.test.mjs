@@ -10,58 +10,58 @@ const cppSrc = fs.readFileSync(
   'utf-8',
 );
 
-function extractRpcParams(tsSource, method) {
-  const re = new RegExp(`editorBridgeRpc\\([\\s\\S]*?'${method}'[\\s\\S]*?\\{([^}]*)\\}`, 'm');
-  const match = tsSource.match(re);
-  return match?.[1] ?? '';
+function extractMethodParams(tsSource, method) {
+  const callRpc = new RegExp(`callRpc[^(]*\\(\\s*'${method}'[\\s\\S]*?\\{([^}]*)\\}`, 'm');
+  const direct = new RegExp(`editorBridgeRpc\\([\\s\\S]*?'${method}'[\\s\\S]*?\\{([^}]*)\\}`, 'm');
+  return tsSource.match(callRpc)?.[1] ?? tsSource.match(direct)?.[1] ?? '';
 }
 
 describe('bridge RPC param/response contract', () => {
   it('blueprint.findImplementations sends classPath', () => {
-    const params = extractRpcParams(clientSrc, 'blueprint.findImplementations');
+    const params = extractMethodParams(clientSrc, 'blueprint.findImplementations');
     assert.ok(params.includes('classPath'));
     assert.ok(cppSrc.includes('TEXT("blueprint.findImplementations")'));
   });
 
   it('blueprint.listDerived sends classPath', () => {
-    const params = extractRpcParams(clientSrc, 'blueprint.listDerived');
+    const params = extractMethodParams(clientSrc, 'blueprint.listDerived');
     assert.ok(params.includes('classPath'));
     assert.ok(cppSrc.includes('TEXT("blueprint.listDerived")'));
   });
 
   it('assetRegistry.delta uses since and normalizes delta shape', () => {
-    const params = extractRpcParams(clientSrc, 'assetRegistry.delta');
+    const params = extractMethodParams(clientSrc, 'assetRegistry.delta');
     assert.ok(params.includes('since'));
-    assert.ok(clientSrc.includes('added: result.added ?? []'));
-    assert.ok(clientSrc.includes('removed: result.removed ?? []'));
-    assert.ok(clientSrc.includes('updated: result.updated ?? []'));
+    assert.ok(clientSrc.includes('added: result.value.added ?? []'));
+    assert.ok(clientSrc.includes('removed: result.value.removed ?? []'));
+    assert.ok(clientSrc.includes('updated: result.value.updated ?? []'));
     assert.ok(cppSrc.includes('TEXT("assetRegistry.delta")'));
   });
 
   it('blueprint.propertyOverrides sends classPath and reads overrides array', () => {
-    const params = extractRpcParams(clientSrc, 'blueprint.propertyOverrides');
+    const params = extractMethodParams(clientSrc, 'blueprint.propertyOverrides');
     assert.ok(params.includes('classPath'));
-    assert.ok(clientSrc.includes('result.overrides ?? []'));
+    assert.ok(clientSrc.includes('result.value.overrides ?? []'));
   });
 
-  it('assetRegistry.referencers sends assetPath and depth', () => {
-    const params = extractRpcParams(clientSrc, 'assetRegistry.referencers');
-    assert.ok(params.includes('assetPath'));
+  it('assetRegistry.referencers sends path and depth', () => {
+    const params = extractMethodParams(clientSrc, 'assetRegistry.referencers');
+    assert.ok(params.includes('path'));
     assert.ok(params.includes('depth'));
     assert.ok(cppSrc.includes('TEXT("assetRegistry.referencers")'));
   });
 
-  it('assetRegistry.dependencies sends assetPath', () => {
-    const params = extractRpcParams(clientSrc, 'assetRegistry.dependencies');
-    assert.ok(params.includes('assetPath'));
+  it('assetRegistry.dependencies sends path', () => {
+    const params = extractMethodParams(clientSrc, 'assetRegistry.dependencies');
+    assert.ok(params.includes('path'));
     assert.ok(cppSrc.includes('TEXT("assetRegistry.dependencies")'));
   });
 
   it('blueprint.findUFunctionNodes sends classPath and functionName', () => {
-    const params = extractRpcParams(clientSrc, 'blueprint.findUFunctionNodes');
+    const params = extractMethodParams(clientSrc, 'blueprint.findUFunctionNodes');
     assert.ok(params.includes('classPath'));
     assert.ok(params.includes('functionName'));
-    assert.ok(clientSrc.includes('result.nodes ?? []'));
+    assert.ok(clientSrc.includes('nodes: result.value.nodes ?? []'));
     assert.ok(cppSrc.includes('TEXT("blueprint.findUFunctionNodes")'));
   });
 

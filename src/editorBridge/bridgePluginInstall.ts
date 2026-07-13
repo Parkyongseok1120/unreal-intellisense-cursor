@@ -54,7 +54,11 @@ export async function maybePromptInstallBridgePlugin(
   }
 
   if (settings.bridgeAutoInstallOnOpen) {
-    return runBridgePluginInstall(ctx, settings, extensionPath, { consentGranted: true, silent: settings.bridgeAutoInstallSilent });
+    return runBridgePluginInstall(ctx, settings, extensionPath, {
+      consentGranted: true,
+      silent: settings.bridgeAutoInstallSilent,
+      bridgeContext: extensionContext,
+    });
   }
 
   if (!settings.bridgePromptInstallOnOpen) {
@@ -79,14 +83,18 @@ export async function maybePromptInstallBridgePlugin(
     return { installed: false, skipped: true, message: 'Deferred' };
   }
 
-  return runBridgePluginInstall(ctx, settings, extensionPath, { consentGranted: true, silent: false });
+  return runBridgePluginInstall(ctx, settings, extensionPath, {
+    consentGranted: true,
+    silent: false,
+    bridgeContext: extensionContext,
+  });
 }
 
 export async function runBridgePluginInstall(
   ctx: UE5_8CursorContext,
   settings: UE5_8CursorSettings,
   extensionPath: string,
-  options: { consentGranted: boolean; silent?: boolean },
+  options: { consentGranted: boolean; silent?: boolean; bridgeContext?: vscode.ExtensionContext },
 ): Promise<BridgePluginInstallResult> {
   if (!ctx.project) return { installed: false, skipped: true };
 
@@ -95,6 +103,7 @@ export async function runBridgePluginInstall(
     extensionPath,
     enableInUproject: true,
     allowUpgrade: true,
+    bridgeContext: options.bridgeContext,
   });
 
   if (!result.ok) {
@@ -117,7 +126,7 @@ export async function runBridgePluginInstall(
     vscode.window.showInformationMessage(msg);
   }
 
-  return { installed: !!result.copied || result.upgraded, skipped: false, message: msg };
+  return { installed: !!result.copied || !!result.upgraded, skipped: false, message: msg };
 }
 
 export async function maybePromptRestartEditor(

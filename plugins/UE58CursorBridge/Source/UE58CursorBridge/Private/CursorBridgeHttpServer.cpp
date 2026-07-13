@@ -198,13 +198,13 @@ static bool IsDeclaredStubMethod(const FString& Method)
 }
 
 static TUniquePtr<FHttpServerResponse> JsonRpcResponse(
-	int32 Id,
+	const FString& Id,
 	const TSharedPtr<FJsonObject>& Result,
 	const TSharedPtr<FJsonObject>& Error)
 {
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("jsonrpc"), TEXT("2.0"));
-	Root->SetNumberField(TEXT("id"), Id);
+	Root->SetStringField(TEXT("id"), Id);
 	if (Error.IsValid())
 	{
 		Root->SetObjectField(TEXT("error"), Error);
@@ -227,7 +227,7 @@ static TUniquePtr<FHttpServerResponse> UnauthorizedResponse()
 	return Response;
 }
 
-void FCursorBridgeHttpServer::WriteDescriptor() const
+bool FCursorBridgeHttpServer::WriteDescriptor() const
 {
 	const FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
 	const FString DataDir = FPaths::Combine(ProjectDir, TEXT(".ue5_8cursor"));
@@ -260,8 +260,12 @@ void FCursorBridgeHttpServer::WriteDescriptor() const
 
 	const FString FinalPath = FPaths::Combine(DataDir, TEXT("editor-bridge.json"));
 	const FString TempPath = FinalPath + TEXT(".tmp");
-	FFileHelper::SaveStringToFile(Out, *TempPath);
+	if (!FFileHelper::SaveStringToFile(Out, *TempPath))
+	{
+		return false;
+	}
 	IFileManager::Get().Move(*FinalPath, *TempPath, true, true);
+	return IFileManager::Get().FileExists(*FinalPath);
 }
 
 void FCursorBridgeHttpServer::DeleteDescriptor() const
@@ -284,7 +288,17 @@ bool FCursorBridgeHttpServer::CheckAuth(const FHttpServerRequest& Request) const
 	{
 		return false;
 	}
-	return AuthHdr.RightChop(Prefix.Len()) == AuthToken;
+	const FString Provided = AuthHdr.RightChop(Prefix.Len());
+	if (Provided.Len() != AuthToken.Len())
+	{
+		return false;
+	}
+	uint32 Acc = 0;
+	for (int32 Idx = 0; Idx < AuthToken.Len(); ++Idx)
+	{
+		Acc |= static_cast<uint32>(Provided[Idx]) ^ static_cast<uint32>(AuthToken[Idx]);
+	}
+	return Acc == 0;
 }
 
 #if WITH_EDITOR
@@ -944,22 +958,33 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 			return BuildFindUFunctionNodesResult(Params);
 		}
 
-		struct FFindUFunctionNodesAsyncState
+static constexpr double UFUNCTION_RPC_WAIT_SEC = 30.0;
+
+		struct FFindUFunctionNodesSharedState
 		{
 			TSharedPtr<FJsonObject> Result;
 			FEvent* Done = nullptr;
 		};
-		FFindUFunctionNodesAsyncState AsyncState;
-		AsyncState.Done = FPlatformProcess::GetSynchEventFromPool(false);
+		TSharedPtr<FFindUFunctionNodesSharedState> AsyncState = MakeShared<FFindUFunctionNodesSharedState>();
+		AsyncState->Done = FPlatformProcess::GetSynchEventFromPool(false);
 		const TSharedPtr<FJsonObject> ParamsCopy = Params;
-		AsyncTask(ENamedThreads::GameThread, [ParamsCopy, &AsyncState]()
+		AsyncTask(ENamedThreads::GameThread, [ParamsCopy, AsyncState]()
 		{
-			AsyncState.Result = BuildFindUFunctionNodesResult(ParamsCopy);
-			AsyncState.Done->Trigger();
+			AsyncState->Result = BuildFindUFunctionNodesResult(ParamsCopy);
+			AsyncState->Done->Trigger();
 		});
-		AsyncState.Done->Wait();
-		FPlatformProcess::ReturnSynchEventToPool(AsyncState.Done);
-		return AsyncState.Result;
+		const bool bCompleted = AsyncState->Done->Wait(FTimespan::FromSeconds(UFUNCTION_RPC_WAIT_SEC));
+		FPlatformProcess::ReturnSynchEventToPool(AsyncState->Done);
+		if (!bCompleted)
+		{
+			TSharedPtr<FJsonObject> TimeoutResult = MakeShared<FJsonObject>();
+			TimeoutResult->SetArrayField(TEXT("nodes"), TArray<TSharedPtr<FJsonValue>>());
+			TimeoutResult->SetNumberField(TEXT("total"), 0);
+			TimeoutResult->SetBoolField(TEXT("truncated"), true);
+			TimeoutResult->SetBoolField(TEXT("timedOut"), true);
+			return TimeoutResult;
+		}
+		return AsyncState->Result;
 	}
 
 	if (Method == TEXT("blueprint.compileErrors"))
@@ -1239,13 +1264,35 @@ TSharedPtr<FJsonObject> FCursorBridgeHttpServer::ProcessRpcMethod(
 	return nullptr;
 }
 
+static FString ParseRpcRequestId(const TSharedPtr<FJsonObject>& Root)
+{
+	FString IdStr;
+	if (Root->TryGetStringField(TEXT("id"), IdStr))
+	{
+		return IdStr;
+	}
+	double IdNum = 0;
+	if (Root->TryGetNumberField(TEXT("id"), IdNum))
+	{
+		return FString::Printf(TEXT("%.0f"), IdNum);
+	}
+	return TEXT("0");
+}
+
 bool FCursorBridgeHttpServer::HandleRpcRequest(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 {
+	static constexpr int32 MaxRpcBodyBytes = 1024 * 1024;
 	UE_LOG(LogTemp, Verbose, TEXT("UE58CursorBridge: received RPC request (%d bytes)"), Request.Body.Num());
 	if (!CheckAuth(Request))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UE58CursorBridge: rejected unauthorized RPC request"));
 		OnComplete(UnauthorizedResponse());
+		return true;
+	}
+	if (Request.Body.Num() > MaxRpcBodyBytes)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UE58CursorBridge: rejected oversized RPC request (%d bytes)"), Request.Body.Num());
+		OnComplete(JsonRpcResponse(TEXT("0"), nullptr, MakeErrorObject(-32000, TEXT("Request body too large"))));
 		return true;
 	}
 
@@ -1258,16 +1305,22 @@ bool FCursorBridgeHttpServer::HandleRpcRequest(const FHttpServerRequest& Request
 	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UE58CursorBridge: invalid RPC JSON"));
-		OnComplete(JsonRpcResponse(0, nullptr, MakeErrorObject(-32000, TEXT("Invalid JSON-RPC request"))));
+		OnComplete(JsonRpcResponse(TEXT("0"), nullptr, MakeErrorObject(-32000, TEXT("Invalid JSON-RPC request"))));
 		return true;
 	}
 
-	int32 Id = 0;
-	Root->TryGetNumberField(TEXT("id"), Id);
+	FString JsonRpcVersion;
+	if (!Root->TryGetStringField(TEXT("jsonrpc"), JsonRpcVersion) || JsonRpcVersion != TEXT("2.0"))
+	{
+		OnComplete(JsonRpcResponse(TEXT("0"), nullptr, MakeErrorObject(-32000, TEXT("Invalid JSON-RPC version"))));
+		return true;
+	}
+
+	const FString RpcId = ParseRpcRequestId(Root);
 	FString Method;
 	if (!Root->TryGetStringField(TEXT("method"), Method))
 	{
-		OnComplete(JsonRpcResponse(Id, nullptr, MakeErrorObject(-32000, TEXT("Missing method"))));
+		OnComplete(JsonRpcResponse(RpcId, nullptr, MakeErrorObject(-32000, TEXT("Missing method"))));
 		return true;
 	}
 	UE_LOG(LogTemp, Verbose, TEXT("UE58CursorBridge: dispatching RPC %s"), *Method);
@@ -1275,7 +1328,7 @@ bool FCursorBridgeHttpServer::HandleRpcRequest(const FHttpServerRequest& Request
 	if (IsDeclaredStubMethod(Method))
 	{
 		OnComplete(JsonRpcResponse(
-			Id,
+			RpcId,
 			nullptr,
 			MakeErrorObject(BRIDGE_ERROR_UNSUPPORTED, FString::Printf(TEXT("Method not implemented: %s"), *Method))));
 		return true;
@@ -1288,11 +1341,11 @@ bool FCursorBridgeHttpServer::HandleRpcRequest(const FHttpServerRequest& Request
 	const TSharedPtr<FJsonObject> Result = ProcessRpcMethod(Method, Params);
 	if (!Result.IsValid())
 	{
-		OnComplete(JsonRpcResponse(Id, nullptr, MakeErrorObject(-32000, FString::Printf(TEXT("Unknown or invalid method: %s"), *Method))));
+		OnComplete(JsonRpcResponse(RpcId, nullptr, MakeErrorObject(-32000, FString::Printf(TEXT("Unknown or invalid method: %s"), *Method))));
 		return true;
 	}
 
-	OnComplete(JsonRpcResponse(Id, Result, nullptr));
+	OnComplete(JsonRpcResponse(RpcId, Result, nullptr));
 	UE_LOG(LogTemp, Verbose, TEXT("UE58CursorBridge: completed RPC %s"), *Method);
 	return true;
 }
@@ -1341,8 +1394,18 @@ void FCursorBridgeHttpServer::Start()
 			return HandleRpcRequest(Request, OnComplete);
 		}));
 
-	bRunning = true;
-	WriteDescriptor();
+	bRunning = WriteDescriptor();
+	if (!bRunning)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UE58CursorBridge: failed to write editor-bridge descriptor"));
+		if (HttpRouter.IsValid() && RpcRoute.IsValid())
+		{
+			HttpRouter->UnbindRoute(RpcRoute);
+			RpcRoute = FHttpRouteHandle();
+		}
+		HttpRouter.Reset();
+		return;
+	}
 }
 
 void FCursorBridgeHttpServer::Stop()

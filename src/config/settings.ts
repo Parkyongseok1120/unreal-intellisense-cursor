@@ -161,6 +161,19 @@ export class UE5_8CursorSettings {
     return this.cfg.get<boolean>('bridge.autoInstallSilent', true);
   }
 
+  /** Debounce before batch compile_commands refresh after source changes (ms). */
+  get sourceWatcherCompileDebounceMs(): number {
+    return Math.max(1000, this.cfg.get<number>('sourceWatcher.compileDebounceMs', 15_000));
+  }
+
+  get sourceWatcherReflectionDebounceMs(): number {
+    return Math.max(500, this.cfg.get<number>('sourceWatcher.reflectionDebounceMs', 5_000));
+  }
+
+  get sourceWatcherTuDebounceMs(): number {
+    return Math.max(500, this.cfg.get<number>('sourceWatcher.tuDebounceMs', 3_000));
+  }
+
   private get cfg(): vscode.WorkspaceConfiguration {
     return vscode.workspace.getConfiguration(EXTENSION_ID);
   }

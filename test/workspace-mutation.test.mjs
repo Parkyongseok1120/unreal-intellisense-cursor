@@ -53,6 +53,43 @@ describe('workspaceMutation transaction', () => {
   });
 });
 
+describe('workspaceMutation recovery', () => {
+  it('recovers orphaned journal after simulated crash', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ue58-recover-'));
+    const filePath = path.join(root, '.vscode', 'settings.json');
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify({ a: 1 }, null, 2) + '\n', 'utf-8');
+
+    const tx = await mutation.WorkspaceMutationTransaction.begin(root);
+    await tx.writeText(filePath, JSON.stringify({ a: 2 }, null, 2) + '\n');
+    mutation.__testAbandonActiveTransaction(root);
+
+    const recovery = await mutation.recoverIncompleteMutations(root);
+    assert.equal(recovery.recovered, true);
+    assert.equal(recovery.rolledBack, true);
+    assert.equal(recovery.conflict, false);
+
+    const restored = JSON.parse(await fs.promises.readFile(filePath, 'utf-8'));
+    assert.equal(restored.a, 1);
+    assert.equal(fs.existsSync(path.join(root, '.ue5_8cursor', 'mutation-journal.json')), false);
+  });
+
+  it('rolls back binary plugin files on transaction failure', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ue58-binary-'));
+    const pluginPath = path.join(root, 'Plugins', 'UE58CursorBridge', 'Binaries', 'Win64', 'UE58CursorBridge.dll');
+    await fs.promises.mkdir(path.dirname(pluginPath), { recursive: true });
+    const original = Buffer.from([0x4d, 0x5a, 0x90, 0x00]);
+    await fs.promises.writeFile(pluginPath, original);
+
+    const tx = await mutation.WorkspaceMutationTransaction.begin(root);
+    await tx.writeBytes(pluginPath, Buffer.from([0x00, 0x01, 0x02, 0x03]), { consentGranted: true });
+    await tx.rollback();
+
+    const restored = await fs.promises.readFile(pluginPath);
+    assert.ok(restored.equals(original));
+  });
+});
+
 describe('workspaceMutation legacy API', () => {
   it('writes atomically and rolls back on invalid JSON target', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ue58-mutation-'));

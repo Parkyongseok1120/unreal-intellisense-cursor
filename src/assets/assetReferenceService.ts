@@ -16,6 +16,10 @@ export interface AssetReference {
 }
 
 export interface AssetReferenceBridge {
+  getAssetReferencersResult?(
+    assetPath: string,
+    depth?: number,
+  ): Promise<import('../editorBridge/bridgeResult').BridgeResult<Array<{ assetPath: string; className?: string }>>>;
   getAssetReferencers(assetPath: string, depth?: number): Promise<Array<{ assetPath: string; className?: string }>>;
   getAssetDependencies(assetPath: string): Promise<Array<{ assetPath: string; className?: string }>>;
   isConnected(): boolean;
@@ -56,17 +60,31 @@ export async function getAssetReferencers(
   bridge?: AssetReferenceBridge,
 ): Promise<AssetReference[]> {
   if (bridge?.isConnected()) {
-    try {
-      const refs = await bridge.getAssetReferencers(assetPath, depth);
-      return refs.map((a) => ({
-        assetPath: a.assetPath,
-        assetName: a.assetPath.split('/').pop()?.split('.')[0] ?? '',
-        assetClass: a.className,
-        direction: 'referencer' as const,
-        authoritative: true,
-      }));
-    } catch {
-      // fall through to MCP
+    const client = bridge as import('../editorBridge/editorBridgeClient').EditorBridgeClient;
+    if (typeof client.getAssetReferencersResult === 'function') {
+      const result = await client.getAssetReferencersResult(assetPath, depth);
+      if (result.ok) {
+        return result.value.map((a) => ({
+          assetPath: a.assetPath,
+          assetName: a.assetPath.split('/').pop()?.split('.')[0] ?? '',
+          assetClass: a.className,
+          direction: 'referencer' as const,
+          authoritative: true,
+        }));
+      }
+    } else {
+      try {
+        const refs = await bridge.getAssetReferencers(assetPath, depth);
+        return refs.map((a) => ({
+          assetPath: a.assetPath,
+          assetName: a.assetPath.split('/').pop()?.split('.')[0] ?? '',
+          assetClass: a.className,
+          direction: 'referencer' as const,
+          authoritative: true,
+        }));
+      } catch {
+        // fall through to MCP
+      }
     }
   }
 

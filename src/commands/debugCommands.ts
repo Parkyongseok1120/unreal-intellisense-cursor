@@ -17,6 +17,15 @@ import type { UE5_8CursorSettings } from '../config/settings';
 
 const CPP_DEBUG_EXTENSION_IDS = ['anysphere.cpptools', 'ms-vscode.cpptools'];
 
+function preflightDebugConfig(program: string): vscode.DebugConfiguration {
+  return {
+    type: getDebuggerType(),
+    name: 'UE5_8: (preflight)',
+    request: 'launch',
+    program,
+  };
+}
+
 interface DebugPreflightResult {
   ok: boolean;
   reason?: string;
@@ -284,7 +293,7 @@ export async function debugLaunchEditor(
 
   const preflight = await preflightDebugLaunch(ctx, editorProgram);
   if (!preflight.ok) {
-    await showDebugLaunchFailure(ctx, { type: getDebuggerType(), program: editorProgram }, preflight);
+    await showDebugLaunchFailure(ctx, preflightDebugConfig(editorProgram), preflight);
     return;
   }
 
@@ -336,12 +345,13 @@ export async function debugAttachEditor(
   ctx: UE5_8CursorContext,
   settings?: UE5_8CursorSettings,
 ): Promise<void> {
-  if (!ctx.project || !ctx.engine) {
+  const project = ctx.project;
+  if (!project || !ctx.engine) {
     vscode.window.showErrorMessage('UE5_8 Cursor: 프로젝트 또는 엔진이 없습니다.');
     return;
   }
 
-  const folder = resolveDebugWorkspaceFolder(ctx.project);
+  const folder = resolveDebugWorkspaceFolder(project);
   if (!folder) {
     vscode.window.showErrorMessage(
       'UE5_8 Cursor: No workspace folder. Open the project root or .code-workspace.',
@@ -365,7 +375,7 @@ export async function debugAttachEditor(
   }
   const preflight = await preflightDebugLaunch(ctx, editorProgram);
   if (!preflight.ok) {
-    await showDebugLaunchFailure(ctx, { type: getDebuggerType(), program: editorProgram }, preflight);
+    await showDebugLaunchFailure(ctx, preflightDebugConfig(editorProgram), preflight);
     return;
   }
 
@@ -374,11 +384,11 @@ export async function debugAttachEditor(
   }
 
   const allProcesses = await findUnrealEditorProcesses();
-  const processes = filterEditorProcessesByProject(allProcesses, ctx.project.uprojectPath);
+  const processes = filterEditorProcessesByProject(allProcesses, project.uprojectPath);
   if (processes.length === 0) {
     if (allProcesses.length > 0) {
       vscode.window.showWarningMessage(
-        `UE5_8 Cursor: 실행 중인 Unreal Editor 중 ${path.basename(ctx.project.uprojectPath)} 프로젝트와 일치하는 프로세스가 없습니다.`,
+        `UE5_8 Cursor: 실행 중인 Unreal Editor 중 ${path.basename(project.uprojectPath)} 프로젝트와 일치하는 프로세스가 없습니다.`,
         '에디터 실행',
       ).then((choice) => {
         if (choice === '에디터 실행') {
@@ -404,7 +414,7 @@ export async function debugAttachEditor(
     const picked = await vscode.window.showQuickPick(
       processes.map((p) => ({
         label: `UnrealEditor.exe (PID ${p.pid})`,
-        description: p.commandLine ? path.basename(ctx.project.uprojectPath) : undefined,
+        description: p.commandLine ? path.basename(project.uprojectPath) : undefined,
         pid: p.pid,
       })),
       { placeHolder: '디버깅할 에디터 프로세스 선택' },
@@ -413,7 +423,7 @@ export async function debugAttachEditor(
     pid = picked.pid;
   }
 
-  const base = baseCppDebuggerOptions(ctx.engine, ctx.project);
+  const base = baseCppDebuggerOptions(ctx.engine, project);
   const config: vscode.DebugConfiguration = {
     ...base,
     name: 'UE5_8: Attach to Unreal Editor',
@@ -452,7 +462,7 @@ export async function debugLaunchGame(
   const gameExe = resolveGameExecutable(ctx.project, settings.debugBuildConfiguration, settings.platform);
   const preflight = await preflightDebugLaunch(ctx, gameExe);
   if (!preflight.ok) {
-    await showDebugLaunchFailure(ctx, { type: getDebuggerType(), program: gameExe }, preflight);
+    await showDebugLaunchFailure(ctx, preflightDebugConfig(gameExe), preflight);
     return;
   }
 
@@ -511,7 +521,7 @@ export async function debugPIE(ctx: UE5_8CursorContext, settings: UE5_8CursorSet
   );
   const preflight = await preflightDebugLaunch(ctx, editorProgram);
   if (!preflight.ok) {
-    await showDebugLaunchFailure(ctx, { type: getDebuggerType(), program: editorProgram }, preflight);
+    await showDebugLaunchFailure(ctx, preflightDebugConfig(editorProgram), preflight);
     return;
   }
 

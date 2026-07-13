@@ -15,28 +15,40 @@ export function startBlueprintCompileDiagnosticsWatch(
   intervalMs = 60_000,
 ): vscode.Disposable {
   const diagUri = blueprintCompileDiagUri(projectRoot);
+  let lastGoodErrors: Array<{ assetPath: string; message: string }> = [];
+  let stale = false;
 
-  const refresh = async () => {
-    const bridge = getBridge();
-    if (!bridge) {
+  const applyErrors = (errors: Array<{ assetPath: string; message: string }>, isStale = false): void => {
+    stale = isStale;
+    if (errors.length === 0 && !isStale) {
       collection.delete(diagUri);
+      lastGoodErrors = [];
       return;
     }
-    const errors = await bridge.getBlueprintCompileErrors();
-    if (errors.length === 0) {
-      collection.delete(diagUri);
-      return;
-    }
-
+    lastGoodErrors = errors;
     const diags = errors.map(
       (err) =>
         new vscode.Diagnostic(
           new vscode.Range(0, 0, 0, 1),
-          err.message,
+          isStale ? `[stale] ${err.message}` : err.message,
           vscode.DiagnosticSeverity.Error,
         ),
     );
     collection.set(diagUri, diags);
+  };
+
+  const refresh = async () => {
+    const bridge = getBridge();
+    if (!bridge?.isConnected()) {
+      if (lastGoodErrors.length) applyErrors(lastGoodErrors, true);
+      return;
+    }
+    const result = await bridge.getBlueprintCompileErrorsResult();
+    if (!result.ok) {
+      if (lastGoodErrors.length) applyErrors(lastGoodErrors, true);
+      return;
+    }
+    applyErrors(result.value, false);
   };
 
   const timer = setInterval(() => void refresh(), intervalMs);

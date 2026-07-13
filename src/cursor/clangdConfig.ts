@@ -66,7 +66,9 @@ export async function promotePluginIndexing(
   const key = path.resolve(projectRoot).toLowerCase();
   const previous = promotionQueues.get(key) ?? Promise.resolve();
   const run = previous.then(() => promotePluginIndexingUnlocked(projectRoot, filePath, options));
-  const queued = run.catch(() => {});
+  const queued = run.catch((err) => {
+    console.error(`[UE5_8 Cursor] Plugin indexing promotion failed: ${err instanceof Error ? err.message : err}`);
+  });
   promotionQueues.set(key, queued);
   try {
     return await run;

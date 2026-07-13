@@ -50,11 +50,8 @@ export class ProjectSession implements vscode.Disposable {
   }
 
   async runPipeline(runner: PipelineRunner, options: PipelineRunOptions = {}): Promise<void> {
-    const previous = this.pipelinePromise;
-    if (previous) {
-      this.cancelSource?.cancel();
-      await previous.catch(() => {});
-    }
+    if (this.disposed) return;
+    this.cancelSource?.cancel();
     this.cancelSource?.dispose();
 
     this.cancelSource = new vscode.CancellationTokenSource();
@@ -138,9 +135,12 @@ export class ProjectSession implements vscode.Disposable {
     token: vscode.CancellationToken,
     fn: () => Promise<T>,
   ): Promise<T | undefined> {
+    if (this.disposed) return undefined;
     const run = async (): Promise<T | undefined> => {
       if (token.isCancellationRequested || this.isStale(generation)) return undefined;
-      return fn();
+      const result = await fn();
+      if (token.isCancellationRequested || this.isStale(generation)) return undefined;
+      return result;
     };
 
     if (WRITE_JOBS.has(kind)) {
@@ -155,22 +155,30 @@ export class ProjectSession implements vscode.Disposable {
     return run();
   }
 
+  private bridgeStartPromise: Promise<CommandBridge | undefined> | undefined;
+  private disposed = false;
+
   async ensureBridge(projectRoot: string): Promise<CommandBridge | undefined> {
-    if (this.bridge && this.bridgeProjectRoot === projectRoot) {
-      return this.bridge;
-    }
+    if (this.disposed) return undefined;
+    if (this.bridgeStartPromise) return this.bridgeStartPromise;
+    if (this.bridge && this.bridgeProjectRoot === projectRoot) return this.bridge;
     this.bridge?.dispose();
     this.bridge = new CommandBridge(projectRoot);
     this.bridgeProjectRoot = projectRoot;
-    try {
-      await this.bridge.start();
-      return this.bridge;
-    } catch {
-      this.bridge.dispose();
-      this.bridge = undefined;
-      this.bridgeProjectRoot = undefined;
-      return undefined;
-    }
+    this.bridgeStartPromise = (async () => {
+      try {
+        await this.bridge!.start();
+        return this.bridge;
+      } catch {
+        this.bridge?.dispose();
+        this.bridge = undefined;
+        this.bridgeProjectRoot = undefined;
+        return undefined;
+      } finally {
+        this.bridgeStartPromise = undefined;
+      }
+    })();
+    return this.bridgeStartPromise;
   }
 
   getBridge(): CommandBridge | undefined {
@@ -178,9 +186,11 @@ export class ProjectSession implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.cancelSource?.cancel();
     this.cancelSource?.dispose();
     this.cancelSource = undefined;
+    this.bridgeStartPromise = undefined;
     this.bridge?.dispose();
     this.bridge = undefined;
     this.bridgeProjectRoot = undefined;

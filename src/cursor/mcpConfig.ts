@@ -2,9 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as http from 'http';
 import { mcpJsonRpc } from '../mcp/epicMcpClient';
+import { EPIC_MCP_DEFAULT_PORT, DEFAULT_MCP_PORT_CANDIDATES } from '../mcp/mcpPorts';
 import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
-export { EPIC_MCP_DEFAULT_PORT, DEFAULT_MCP_PORT_CANDIDATES } from '../mcp/mcpPorts';
+export { EPIC_MCP_DEFAULT_PORT, DEFAULT_MCP_PORT_CANDIDATES };
 
 export interface McpConfigOptions {
   projectRoot: string;

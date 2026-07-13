@@ -59,11 +59,12 @@ export function normalizeDefinitionLocations(
       continue;
     }
     if ('uri' in item && item.uri && 'range' in item && item.range) {
-      const uri =
-        typeof item.uri === 'object' && 'fsPath' in item.uri && item.uri.fsPath
-          ? vscode.Uri.file(item.uri.fsPath)
-          : item.uri;
-      const start = item.range.start ?? item.range;
+      const link = item as vscode.LocationLink;
+      const uri = link.targetUri ?? (link as { uri?: vscode.Uri }).uri;
+      if (!uri) continue;
+      const range = link.targetRange ?? (link as { range?: vscode.Range }).range;
+      if (!range) continue;
+      const start = 'start' in range ? range.start : range;
       out.push(new vscode.Location(uri, start));
     }
   }

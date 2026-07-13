@@ -47,12 +47,23 @@ const ASSET_EXTENSIONS = ['.uasset', '.umap'];
 const MCP_ENRICH_BATCH = 20;
 const MCP_ENRICH_DELAY_MS = 50;
 
-export function contentToAssetPath(contentRelative: string, assetName: string): string {
+export function contentToAssetPath(contentRelative: string, assetName: string, mountRoot = '/Game'): string {
   const withoutExt = contentRelative.replace(/\\/g, '/').replace(/\.(uasset|umap)$/i, '');
   const gamePath = withoutExt.startsWith('Content/')
     ? withoutExt.slice('Content/'.length)
     : withoutExt;
-  return `/Game/${gamePath}.${assetName}`;
+  const root = mountRoot.endsWith('/') ? mountRoot.slice(0, -1) : mountRoot;
+  return `${root}/${gamePath}.${assetName}`;
+}
+
+/** Infer UE package mount from a disk path under project Plugins/ or project Content/. */
+export function inferMountRootFromDiskPath(projectRoot: string, filePath: string): string {
+  const rel = path.relative(projectRoot, filePath).replace(/\\/g, '/');
+  const pluginMatch = rel.match(/^Plugins\/([^/]+)\/Content\//i);
+  if (pluginMatch) {
+    return `/${pluginMatch[1]}`;
+  }
+  return '/Game';
 }
 
 export function inferClassFromName(assetName: string): string | undefined {
@@ -99,12 +110,13 @@ export async function findUassetsRecursive(dir: string, depth: number, results: 
   }
 }
 
-function entryFromFile(contentDir: string, filePath: string, mtimeMs: number): AssetIndexEntry {
+function entryFromFile(projectRoot: string, contentDir: string, filePath: string, mtimeMs: number): AssetIndexEntry {
   const assetName = assetNameFromPath(filePath);
   const relFromContent = path.relative(contentDir, filePath);
+  const mountRoot = inferMountRootFromDiskPath(projectRoot, filePath);
   return {
     diskPath: filePath,
-    assetPath: contentToAssetPath(path.join('Content', relFromContent), assetName),
+    assetPath: contentToAssetPath(path.join('Content', relFromContent), assetName, mountRoot),
     fileName: path.basename(filePath),
     assetName,
     inferredClass: inferClassFromName(assetName),
@@ -114,8 +126,8 @@ function entryFromFile(contentDir: string, filePath: string, mtimeMs: number): A
   };
 }
 
-async function entryFromFileEnriched(contentDir: string, filePath: string, mtimeMs: number): Promise<AssetIndexEntry> {
-  const base = entryFromFile(contentDir, filePath, mtimeMs);
+async function entryFromFileEnriched(projectRoot: string, contentDir: string, filePath: string, mtimeMs: number): Promise<AssetIndexEntry> {
+  const base = entryFromFile(projectRoot, contentDir, filePath, mtimeMs);
   const { enrichEntryFromUasset } = await import('./uassetReader');
   const enriched = await enrichEntryFromUasset(filePath, base.assetName, base.inferredClass);
   return {
@@ -149,9 +161,9 @@ export async function buildAssetIndex(projectRoot: string, maxDepth = 16): Promi
     const contentDir = contentDirs.find((d) => filePath.startsWith(d)) ?? path.join(projectRoot, 'Content');
     try {
       const stat = await fs.promises.stat(filePath);
-      entries.push(await entryFromFileEnriched(contentDir, filePath, stat.mtimeMs));
+      entries.push(await entryFromFileEnriched(projectRoot, contentDir, filePath, stat.mtimeMs));
     } catch {
-      entries.push(await entryFromFileEnriched(contentDir, filePath, 0));
+      entries.push(await entryFromFileEnriched(projectRoot, contentDir, filePath, 0));
     }
   }
 
@@ -226,9 +238,9 @@ async function incrementalRefresh(projectRoot: string, existing: AssetIndexCache
         if (prev && prev.mtimeMs === stat.mtimeMs) {
           continue;
         }
-        byDisk.set(filePath.toLowerCase(), await entryFromFileEnriched(contentDir, filePath, stat.mtimeMs));
+        byDisk.set(filePath.toLowerCase(), await entryFromFileEnriched(projectRoot, contentDir, filePath, stat.mtimeMs));
       } catch {
-        byDisk.set(filePath.toLowerCase(), await entryFromFileEnriched(contentDir, filePath, 0));
+        byDisk.set(filePath.toLowerCase(), await entryFromFileEnriched(projectRoot, contentDir, filePath, 0));
       }
     }
   }

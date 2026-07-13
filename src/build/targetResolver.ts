@@ -42,7 +42,7 @@ export function resolveGameTargetName(project: UEProject): string {
   const gameTargets = targets.filter((t) => !t.name.endsWith('Editor') && !t.name.endsWith('Server'));
   if (gameTargets.length === 1) return gameTargets[0].name;
 
-  const moduleName = project.modules[0]?.Name;
+  const moduleName = project.modules[0]?.name;
   if (moduleName) {
     const byModule = gameTargets.find((t) => t.name === moduleName || t.name.startsWith(moduleName));
     if (byModule) return byModule.name;

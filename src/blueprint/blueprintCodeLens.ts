@@ -3,6 +3,7 @@ import * as path from 'path';
 import { parseUClassFromText } from '../blueprint/cppClassParser';
 import { findBlueprintsForClass } from '../blueprint/blueprintFinder';
 import { openAssetInEditor, createBlueprintSubclassInEditor } from '../blueprint/blueprintEditor';
+import { blueprintLabelFromEntry } from '../blueprint/types';
 import type { UE5_8CursorContext } from '../types';
 
 export class BlueprintCodeLensProvider implements vscode.CodeLensProvider {
@@ -200,9 +201,9 @@ export async function findBlueprintImplementations(ctx: UE5_8CursorContext, clas
     return;
   }
   const picked = await vscode.window.showQuickPick(
-    implementations.map((b) => ({ label: b.assetName, description: b.assetPath, assetPath: b.assetPath })),
+    implementations.map((b) => ({ label: blueprintLabelFromEntry(b), description: b.assetPath, assetPath: b.assetPath })),
     { placeHolder: `${className} Blueprint implementations` },
-  );
+  ) as { assetPath: string } | undefined;
   if (picked) await openBlueprintInEditor(ctx, picked.assetPath);
 }
 

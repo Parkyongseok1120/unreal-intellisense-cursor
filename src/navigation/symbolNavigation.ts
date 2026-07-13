@@ -10,6 +10,7 @@ import {
   getOrBuildSemanticGraph,
   querySymbol,
 } from '../semantic/semanticService';
+import { snapshotFreshness } from '../projectModel/buildSnapshot';
 import { isUhtMacroToken } from './stubPaths';
 
 export interface NavigationResolveOptions {
@@ -96,6 +97,9 @@ async function resolveFromSemanticGraph(
   if (!isUeClassTypeSymbol(word)) return undefined;
 
   const graph = await getOrBuildSemanticGraph(project);
+  const freshness = await snapshotFreshness(project.projectRoot, graph.fingerprint);
+  if (freshness === 'stale' || freshness === 'missing') return undefined;
+
   const symbols = graph.symbols.filter((s) => s.confidence === 'authoritative' || s.confidence === 'derived');
   const sym = symbols.find((s) => s.name === word);
   if (sym?.sourceFile) {

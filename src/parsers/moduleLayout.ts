@@ -12,7 +12,7 @@ export interface ModuleLayout {
 const SOURCE_EXTS = new Set(['.cpp', '.cc', '.cxx']);
 const HEADER_EXTS = new Set(['.h', '.hpp', '.inl']);
 const CPP_SOURCE_EXTS = ['.cpp', '.cc', '.cxx'];
-async function fileExists(filePath) {
+async function fileExists(filePath: string): Promise<boolean> {
   try {
     await fs.promises.access(filePath, fs.constants.F_OK);
     return true;

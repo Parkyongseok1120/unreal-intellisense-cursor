@@ -12,9 +12,9 @@ import {
 import { addTranslationUnitAction } from '../projectModel/projectModelService';
 import { requestClangdRestart } from '../cursor/clangdLifecycle';
 
-const DEBOUNCE_MS = 15_000;
-const REFLECTION_DEBOUNCE_MS = 5_000;
-const TU_DEBOUNCE_MS = 3_000;
+const DEFAULT_COMPILE_DEBOUNCE_MS = 15_000;
+const DEFAULT_REFLECTION_DEBOUNCE_MS = 5_000;
+const DEFAULT_TU_DEBOUNCE_MS = 3_000;
 
 export interface SourceWatcherRuntime {
   ctx: UE5_8CursorContext;
@@ -33,6 +33,9 @@ interface PendingBatch {
   rspDebounceTimer?: ReturnType<typeof setTimeout>;
   reflectionTimer?: ReturnType<typeof setTimeout>;
   tuTimer?: ReturnType<typeof setTimeout>;
+  reflectionFlushInFlight?: boolean;
+  tuFlushInFlight?: boolean;
+  compileFlushInFlight?: boolean;
 }
 
 function createPending(): PendingBatch {
@@ -95,43 +98,67 @@ export function watchSourceChanges(
     }
   };
 
+  const runtimeStillOwned = (runtime: SourceWatcherRuntime): boolean => {
+    const fresh = resolveRuntime(vscode.Uri.file(runtime.ctx.project!.projectRoot));
+    return !!fresh && fresh.key === runtime.key;
+  };
+
   const flushReflectionBatch = (runtime: SourceWatcherRuntime, pending: PendingBatch): void => {
-    if (!runtime.ctx.project || pending.headers.size === 0) return;
+    if (!runtimeStillOwned(runtime) || !runtime.ctx.project || pending.headers.size === 0) return;
+    if (pending.reflectionFlushInFlight) return;
+    pending.reflectionFlushInFlight = true;
     const headers = [...pending.headers];
     pending.headers.clear();
-    for (const headerPath of headers) {
-      void import('../uht/reflectionIndex').then(({ refreshReflectionForHeader }) =>
-        refreshReflectionForHeader(runtime.ctx.project!.projectRoot, headerPath),
-      );
-    }
+    void (async () => {
+      try {
+        const { refreshReflectionForHeader } = await import('../uht/reflectionIndex');
+        for (const headerPath of headers) {
+          await refreshReflectionForHeader(runtime.ctx.project!.projectRoot, headerPath);
+        }
+      } catch (err) {
+        runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] Reflection refresh failed: ${err}`);
+      } finally {
+        pending.reflectionFlushInFlight = false;
+      }
+    })();
   };
 
   const flushTuBatch = async (runtime: SourceWatcherRuntime, pending: PendingBatch): Promise<void> => {
-    if (!runtime.ctx.project || pending.translationUnits.size === 0) return;
-    const tus = [...pending.translationUnits];
-    pending.translationUnits.clear();
-    if (!settings.experimentalIncrementalCompileDb) {
-      runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] ${tus.length} new translation unit(s); scheduling compile_commands refresh.`);
-      onRefresh(runtime);
-      return;
-    }
-    let anyAdded = false;
-    for (const tuPath of tus) {
-      const added = await addTranslationUnitAction(runtime.ctx.project.projectRoot, tuPath);
-      if (added) {
-        anyAdded = true;
-        runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] Added provisional compile action for ${path.basename(tuPath)}`);
+    if (!runtimeStillOwned(runtime) || !runtime.ctx.project || pending.translationUnits.size === 0) return;
+    if (pending.tuFlushInFlight) return;
+    pending.tuFlushInFlight = true;
+    try {
+      const tus = [...pending.translationUnits];
+      pending.translationUnits.clear();
+      if (!settings.experimentalIncrementalCompileDb) {
+        runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] ${tus.length} new translation unit(s); scheduling compile_commands refresh.`);
+        onRefresh(runtime);
+        return;
       }
-    }
-    if (anyAdded) {
-      await requestClangdRestart(runtime.ctx.project.projectRoot, 'incremental translation unit action', (msg) => runtime.ctx.outputChannel.appendLine(msg));
-    } else {
-      onRefresh(runtime);
+      let anyAdded = false;
+      for (const tuPath of tus) {
+        const added = await addTranslationUnitAction(runtime.ctx.project.projectRoot, tuPath);
+        if (added) {
+          anyAdded = true;
+          runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] Added provisional compile action for ${path.basename(tuPath)}`);
+        }
+      }
+      if (anyAdded) {
+        await requestClangdRestart(runtime.ctx.project.projectRoot, 'incremental translation unit action', (msg) => runtime.ctx.outputChannel.appendLine(msg));
+      } else {
+        onRefresh(runtime);
+      }
+    } catch (err) {
+      runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] Translation unit flush failed: ${err}`);
+    } finally {
+      pending.tuFlushInFlight = false;
     }
   };
 
   const flushCompileRefreshBatch = (runtime: SourceWatcherRuntime, pending: PendingBatch): void => {
-    if (!runtime.ctx.project) return;
+    if (!runtimeStillOwned(runtime) || !runtime.ctx.project) return;
+    if (pending.compileFlushInFlight) return;
+    pending.compileFlushInFlight = true;
     const scopes: string[] = [];
     const uhtHeaders = [...pending.uhtModules];
     if (pending.projectModel) scopes.push('project model');
@@ -139,12 +166,19 @@ export function watchSourceChanges(
     if (pending.uhtModules.size) scopes.push(`${pending.uhtModules.size} UHT header(s)`);
     if (pending.targetModules.size) scopes.push(`${pending.targetModules.size} RSP(s)`);
     if (pending.deletedPaths.size) scopes.push(`${pending.deletedPaths.size} delete(s)`);
-    if (scopes.length === 0) return;
+    if (scopes.length === 0) {
+      pending.compileFlushInFlight = false;
+      return;
+    }
     if (pending.projectModel) onProjectModelInvalidate?.(runtime);
     if (uhtHeaders.length) onUhtHeaders?.(runtime, uhtHeaders);
     runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] Batch invalidation (${scopes.join(', ')}); refreshing IntelliSense...`);
     clearCompilePending(pending);
-    onRefresh(runtime);
+    try {
+      onRefresh(runtime);
+    } finally {
+      pending.compileFlushInFlight = false;
+    }
   };
 
   const schedule = (uri: vscode.Uri, isCreate: boolean, isDelete = false): void => {
@@ -156,17 +190,26 @@ export function watchSourceChanges(
     enqueueEvent(pending, event, isDelete);
     if (event.scope === 'reflection' && !isDelete) {
       if (pending.reflectionTimer) clearTimeout(pending.reflectionTimer);
-      pending.reflectionTimer = setTimeout(() => flushReflectionBatch(runtime, pending), REFLECTION_DEBOUNCE_MS);
+      pending.reflectionTimer = setTimeout(
+        () => flushReflectionBatch(runtime, pending),
+        settings.sourceWatcherReflectionDebounceMs || DEFAULT_REFLECTION_DEBOUNCE_MS,
+      );
       if (shouldRefreshReflectionOnly(event)) return;
     }
     if (isCreate && event.scope === 'translationUnit') {
       if (pending.tuTimer) clearTimeout(pending.tuTimer);
-      pending.tuTimer = setTimeout(() => { void flushTuBatch(runtime, pending); }, TU_DEBOUNCE_MS);
+      pending.tuTimer = setTimeout(
+        () => { void flushTuBatch(runtime, pending); },
+        settings.sourceWatcherTuDebounceMs || DEFAULT_TU_DEBOUNCE_MS,
+      );
       return;
     }
     if (!shouldRefreshCompileDatabase(event) && !isDelete) return;
     if (pending.debounceTimer) clearTimeout(pending.debounceTimer);
-    pending.debounceTimer = setTimeout(() => flushCompileRefreshBatch(runtime, pending), DEBOUNCE_MS);
+    pending.debounceTimer = setTimeout(
+      () => flushCompileRefreshBatch(runtime, pending),
+      settings.sourceWatcherCompileDebounceMs || DEFAULT_COMPILE_DEBOUNCE_MS,
+    );
   };
 
   const scheduleRspBootstrap = (uri: vscode.Uri): void => {
@@ -177,6 +220,7 @@ export function watchSourceChanges(
     pending.targetModules.add(uri.fsPath);
     if (pending.rspDebounceTimer) clearTimeout(pending.rspDebounceTimer);
     pending.rspDebounceTimer = setTimeout(() => {
+      if (!runtimeStillOwned(runtime)) return;
       runtime.ctx.outputChannel.appendLine(`[UE5_8 Cursor] ${invalidationLabel('targetModule')} change; refreshing compile_commands...`);
       pending.targetModules.clear();
       onRefresh(runtime);

@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 interface RestartState {
   fingerprint?: string;
   pending?: Promise<void>;
+  debounceTimer?: ReturnType<typeof setTimeout>;
 }
 
 const states = new Map<string, RestartState>();
@@ -28,6 +29,13 @@ async function effectiveFingerprint(projectRoot: string): Promise<string> {
   return crypto.createHash('sha256').update(parts.join('\n')).digest('hex');
 }
 
+function clearDebounce(state: RestartState): void {
+  if (state.debounceTimer) {
+    clearTimeout(state.debounceTimer);
+    state.debounceTimer = undefined;
+  }
+}
+
 /**
  * Coalesce all extension-originated restart requests. A server shutdown after
  * an unchanged DB is pure cache loss, so it is deliberately suppressed.
@@ -48,7 +56,10 @@ export async function requestClangdRestart(
     return requestClangdRestart(projectRoot, reason, log);
   }
 
-  state.pending = new Promise<void>((resolve) => setTimeout(resolve, 300)).then(async () => {
+  clearDebounce(state);
+  state.pending = new Promise<void>((resolve) => {
+    state.debounceTimer = setTimeout(resolve, 300);
+  }).then(async () => {
     const current = await effectiveFingerprint(projectRoot);
     if (state.fingerprint === current) return;
     try {
@@ -58,7 +69,10 @@ export async function requestClangdRestart(
     } catch {
       log?.('[UE5_8 Cursor] clangd restart skipped: language server is inactive.');
     }
-  }).finally(() => { state.pending = undefined; });
+  }).finally(() => {
+    clearDebounce(state);
+    state.pending = undefined;
+  });
   states.set(root, state);
   await state.pending;
   const restarted = state.fingerprint === fingerprint;
@@ -72,6 +86,15 @@ export async function requestClangdRestart(
 }
 
 export function resetClangdRestartState(projectRoot?: string): void {
-  if (projectRoot) states.delete(path.resolve(projectRoot).toLowerCase());
-  else states.clear();
+  if (projectRoot) {
+    const root = path.resolve(projectRoot).toLowerCase();
+    const state = states.get(root);
+    if (state) {
+      clearDebounce(state);
+      states.delete(root);
+    }
+    return;
+  }
+  for (const state of states.values()) clearDebounce(state);
+  states.clear();
 }

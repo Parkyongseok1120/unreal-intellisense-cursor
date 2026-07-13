@@ -16,6 +16,8 @@ export interface MutationRecord {
   existedBefore: boolean;
   backupPath?: string;
   originalSha256?: string;
+  postWriteSha256?: string;
+  status: 'pending' | 'committed';
   createdDirs: string[];
 }
 
@@ -36,6 +38,14 @@ export interface MutationRollbackResult {
   restoredFiles: string[];
   deletedFiles: string[];
   failedFiles: string[];
+  conflictFiles?: string[];
+}
+
+export interface MutationRecoveryResult {
+  recovered: boolean;
+  rolledBack: boolean;
+  conflict: boolean;
+  message?: string;
 }
 
 interface MutationJournal {
@@ -55,6 +65,39 @@ function sessionKey(projectRoot: string): string {
 
 function journalPath(projectRoot: string): string {
   return path.join(projectRoot, '.ue5_8cursor', 'mutation-journal.json');
+}
+
+/** Reject writes outside the project root (extension-managed paths only). */
+export function assertPathContained(projectRoot: string, absolutePath: string): void {
+  const root = path.resolve(projectRoot);
+  const target = path.resolve(absolutePath);
+  const rel = path.relative(root, target);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Mutation path outside project root: ${target}`);
+  }
+}
+
+const ALLOWED_ROOT_FILES = new Set([
+  'compile_commands.json',
+  '.clangd',
+  '.vsconfig',
+]);
+
+/** Paths the extension may mutate under a project root. */
+export function isExtensionManagedMutationPath(projectRoot: string, absolutePath: string): boolean {
+  assertPathContained(projectRoot, absolutePath);
+  const rel = relativeFromRoot(projectRoot, absolutePath).replace(/\\/g, '/');
+  if (ALLOWED_ROOT_FILES.has(rel)) return true;
+  if (rel.startsWith('.ue5_8cursor/')) return true;
+  if (rel.startsWith('.vscode/')) return true;
+  if (rel.startsWith('.cursor/')) return true;
+  if (rel.startsWith('Plugins/UE58CursorBridge/')) return true;
+  const base = path.basename(absolutePath).toLowerCase();
+  if (base.endsWith('.uproject') || base.endsWith('.uplugin') || base.endsWith('.build.cs')) return true;
+  if (base.endsWith('.target.cs')) return false;
+  if (rel.includes('/Source/') || rel.includes('/Plugins/')) return true;
+  if (rel.includes('/Config/')) return true;
+  return false;
 }
 
 export function classifyPolicy(filePath: string): MutationPolicy {
@@ -86,12 +129,30 @@ function sha256(content: string): string {
   return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
+function sha256Buffer(buf: Buffer): string {
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
 async function fileExists(p: string): Promise<boolean> {
   try {
     await fs.promises.access(p);
     return true;
   } catch {
     return false;
+  }
+}
+
+async function readTextIfExists(p: string): Promise<string | undefined> {
+  if (!(await fileExists(p))) return undefined;
+  return fs.promises.readFile(p, 'utf-8');
+}
+
+async function fileSha256(absolutePath: string): Promise<string | undefined> {
+  try {
+    const buf = await fs.promises.readFile(absolutePath);
+    return sha256Buffer(buf);
+  } catch {
+    return undefined;
   }
 }
 
@@ -116,6 +177,19 @@ async function removeEmptyDirs(dirs: string[]): Promise<void> {
   }
 }
 
+async function atomicReplace(source: string, target: string): Promise<void> {
+  try {
+    await fs.promises.rename(source, target);
+  } catch (err) {
+    if (process.platform === 'win32') {
+      await fs.promises.copyFile(source, target);
+      await fs.promises.unlink(source);
+      return;
+    }
+    throw err;
+  }
+}
+
 async function acquireLock(projectRoot: string): Promise<() => void> {
   const key = sessionKey(projectRoot);
   const prev = transactionLocks.get(key) ?? Promise.resolve();
@@ -123,13 +197,110 @@ async function acquireLock(projectRoot: string): Promise<() => void> {
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  transactionLocks.set(
-    key,
-    prev.then(() => gate),
-  );
+  const chain = prev.then(() => gate);
+  transactionLocks.set(key, chain);
   await prev;
   return () => {
     release();
+    void chain.finally(() => {
+      if (transactionLocks.get(key) === chain) {
+        transactionLocks.delete(key);
+      }
+    });
+  };
+}
+
+async function loadJournal(projectRoot: string): Promise<MutationJournal | undefined> {
+  try {
+    const raw = await fs.promises.readFile(journalPath(projectRoot), 'utf-8');
+    return JSON.parse(raw) as MutationJournal;
+  } catch {
+    return undefined;
+  }
+}
+
+async function rollbackJournalRecords(
+  projectRoot: string,
+  journal: MutationJournal,
+): Promise<MutationRollbackResult> {
+  const restoredFiles: string[] = [];
+  const deletedFiles: string[] = [];
+  const failedFiles: string[] = [];
+  const conflictFiles: string[] = [];
+
+  for (const record of [...journal.records].reverse()) {
+    try {
+      if (record.existedBefore && record.backupPath && (await fileExists(record.backupPath))) {
+        const currentHash = await fileSha256(record.absoluteTargetPath);
+        if (record.postWriteSha256 && currentHash !== undefined && currentHash !== record.postWriteSha256) {
+          conflictFiles.push(record.relativeTargetPath);
+          continue;
+        }
+        const content = await fs.promises.readFile(record.backupPath);
+        await fs.promises.writeFile(record.absoluteTargetPath, content);
+        restoredFiles.push(record.relativeTargetPath);
+      } else if (!record.existedBefore && (await fileExists(record.absoluteTargetPath))) {
+        const currentHash = await fileSha256(record.absoluteTargetPath);
+        if (currentHash !== undefined && record.postWriteSha256 && currentHash !== record.postWriteSha256) {
+          conflictFiles.push(record.relativeTargetPath);
+          continue;
+        }
+        await fs.promises.unlink(record.absoluteTargetPath);
+        deletedFiles.push(record.relativeTargetPath);
+      }
+      await removeEmptyDirs(record.createdDirs);
+    } catch {
+      failedFiles.push(record.relativeTargetPath);
+    }
+  }
+
+  try {
+    await fs.promises.unlink(journalPath(projectRoot));
+  } catch {
+    // ignore
+  }
+
+  return {
+    ok: failedFiles.length === 0 && conflictFiles.length === 0,
+    restoredFiles,
+    deletedFiles,
+    failedFiles,
+    conflictFiles,
+  };
+}
+
+/** Recover an orphaned journal left by a crashed extension host. */
+export async function recoverIncompleteMutations(projectRoot: string): Promise<MutationRecoveryResult> {
+  const key = sessionKey(projectRoot);
+  if (activeTransactions.has(key)) {
+    return { recovered: false, rolledBack: false, conflict: false, message: 'Active transaction in progress' };
+  }
+  const journal = await loadJournal(projectRoot);
+  if (!journal || journal.records.length === 0) {
+    return { recovered: true, rolledBack: false, conflict: false };
+  }
+  const result = await rollbackJournalRecords(projectRoot, journal);
+  if (result.conflictFiles?.length) {
+    await forceRollbackAndClear(projectRoot);
+    return {
+      recovered: false,
+      rolledBack: false,
+      conflict: true,
+      message: `Mutation recovery conflict on: ${result.conflictFiles.join(', ')}`,
+    };
+  }
+  try {
+    await fs.promises.unlink(journalPath(projectRoot));
+  } catch {
+    // journal already removed
+  }
+  return {
+    recovered: true,
+    rolledBack: true,
+    conflict: false,
+    message: result.restoredFiles.length || result.deletedFiles.length
+      ? 'Recovered incomplete mutation journal'
+      : undefined,
   };
 }
 
@@ -140,6 +311,7 @@ export class WorkspaceMutationTransaction {
   private committed = false;
   private rolledBack = false;
   private readonly createdDirs = new Set<string>();
+  private writeChain: Promise<void> = Promise.resolve();
 
   private constructor(readonly projectRoot: string, backupDir: string, sessionId: string) {
     this.projectRoot = path.resolve(projectRoot);
@@ -152,6 +324,7 @@ export class WorkspaceMutationTransaction {
     if (activeTransactions.has(key)) {
       throw new Error(`Mutation transaction already active for ${projectRoot}`);
     }
+    await recoverIncompleteMutations(projectRoot);
     const release = await acquireLock(projectRoot);
     try {
       const backupDir = path.join(projectRoot, '.ue5_8cursor', 'backups', String(Date.now()));
@@ -174,8 +347,11 @@ export class WorkspaceMutationTransaction {
       records: this.records,
       startedAt: Date.now(),
     };
-    await fs.promises.mkdir(path.dirname(journalPath(this.projectRoot)), { recursive: true });
-    await fs.promises.writeFile(journalPath(this.projectRoot), JSON.stringify(journal, null, 2) + '\n', 'utf-8');
+    const finalPath = journalPath(this.projectRoot);
+    const tempPath = `${finalPath}.${this.sessionId}.tmp`;
+    await fs.promises.mkdir(path.dirname(finalPath), { recursive: true });
+    await fs.promises.writeFile(tempPath, JSON.stringify(journal, null, 2) + '\n', 'utf-8');
+    await atomicReplace(tempPath, finalPath);
   }
 
   private async clearJournal(): Promise<void> {
@@ -187,7 +363,21 @@ export class WorkspaceMutationTransaction {
   }
 
   async writeText(absolutePath: string, content: string, opts?: MutationWriteOpts): Promise<void> {
+    const run = () => this.writeTextInternal(absolutePath, content, opts);
+    const chained = this.writeChain.then(run, run);
+    this.writeChain = chained.then(
+      () => {},
+      () => {},
+    );
+    return chained;
+  }
+
+  private async writeTextInternal(absolutePath: string, content: string, opts?: MutationWriteOpts): Promise<void> {
     this.ensureOpen();
+    assertPathContained(this.projectRoot, absolutePath);
+    if (!isExtensionManagedMutationPath(this.projectRoot, absolutePath)) {
+      throw new Error(`Mutation path is not extension-managed: ${absolutePath}`);
+    }
     const policy = resolvePolicy(absolutePath, opts);
     if (policy === 'forbidden') {
       throw new Error(`Mutation forbidden: ${absolutePath}`);
@@ -205,18 +395,20 @@ export class WorkspaceMutationTransaction {
       }
     }
 
-    const existedBefore = await fileExists(absolutePath);
+    const resolved = path.resolve(absolutePath);
+    const existedBefore = await fileExists(resolved);
     let previous = '';
     if (existedBefore) {
-      previous = await fs.promises.readFile(absolutePath, 'utf-8');
+      previous = await fs.promises.readFile(resolved, 'utf-8');
       if (previous === content) return;
     }
 
-    const relativeTargetPath = relativeFromRoot(this.projectRoot, absolutePath);
+    const relativeTargetPath = relativeFromRoot(this.projectRoot, resolved);
     const record: MutationRecord = {
-      absoluteTargetPath: path.resolve(absolutePath),
+      absoluteTargetPath: resolved,
       relativeTargetPath,
       existedBefore,
+      status: 'pending',
       createdDirs: [],
     };
 
@@ -227,18 +419,23 @@ export class WorkspaceMutationTransaction {
       record.originalSha256 = sha256(previous);
     }
 
-    const dir = path.dirname(absolutePath);
+    const dir = path.dirname(resolved);
     if (!(await fileExists(dir))) {
       await fs.promises.mkdir(dir, { recursive: true });
       record.createdDirs.push(dir);
       this.createdDirs.add(dir);
     }
 
-    const tempPath = `${absolutePath}.ue58cursor.tmp`;
+    const recordIndex = this.records.length;
+    this.records.push(record);
+
+    const tempPath = `${resolved}.ue58cursor.${this.sessionId}.${recordIndex}.tmp`;
     try {
+      await this.persistJournal();
       await fs.promises.writeFile(tempPath, content, 'utf-8');
-      await fs.promises.rename(tempPath, absolutePath);
-      this.records.push(record);
+      await atomicReplace(tempPath, resolved);
+      record.postWriteSha256 = sha256Buffer(Buffer.from(content, 'utf8'));
+      record.status = 'committed';
       await this.persistJournal();
     } catch (err) {
       try {
@@ -246,13 +443,90 @@ export class WorkspaceMutationTransaction {
       } catch {
         // ignore
       }
-      await this.rollbackRecordsFrom(this.records.length);
+      await this.rollbackRecordsFrom(recordIndex);
       throw err;
     }
   }
 
   async writeJson(absolutePath: string, value: unknown, opts?: MutationWriteOpts): Promise<void> {
     await this.writeText(absolutePath, JSON.stringify(value, null, 2) + '\n', opts);
+  }
+
+  async writeBytes(absolutePath: string, content: Buffer, opts?: MutationWriteOpts): Promise<void> {
+    const run = () => this.writeBytesInternal(absolutePath, content, opts);
+    const chained = this.writeChain.then(run, run);
+    this.writeChain = chained.then(
+      () => {},
+      () => {},
+    );
+    return chained;
+  }
+
+  private async writeBytesInternal(absolutePath: string, content: Buffer, opts?: MutationWriteOpts): Promise<void> {
+    this.ensureOpen();
+    assertPathContained(this.projectRoot, absolutePath);
+    if (!isExtensionManagedMutationPath(this.projectRoot, absolutePath)) {
+      throw new Error(`Mutation path is not extension-managed: ${absolutePath}`);
+    }
+    const policy = resolvePolicy(absolutePath, opts);
+    if (policy === 'forbidden') {
+      throw new Error(`Mutation forbidden: ${absolutePath}`);
+    }
+    if (policy === 'consentRequired' && !opts?.consentGranted) {
+      throw new Error(`Consent required: ${absolutePath}`);
+    }
+
+    const resolved = path.resolve(absolutePath);
+    const existedBefore = await fileExists(resolved);
+    let previous = Buffer.alloc(0);
+    if (existedBefore) {
+      previous = await fs.promises.readFile(resolved);
+      if (previous.equals(content)) return;
+    }
+
+    const relativeTargetPath = relativeFromRoot(this.projectRoot, resolved);
+    const record: MutationRecord = {
+      absoluteTargetPath: resolved,
+      relativeTargetPath,
+      existedBefore,
+      status: 'pending',
+      createdDirs: [],
+    };
+
+    if (existedBefore) {
+      const backupPath = path.join(this.backupDir, backupFileName(relativeTargetPath));
+      await fs.promises.writeFile(backupPath, previous);
+      record.backupPath = backupPath;
+      record.originalSha256 = sha256Buffer(previous);
+    }
+
+    const dir = path.dirname(resolved);
+    if (!(await fileExists(dir))) {
+      await fs.promises.mkdir(dir, { recursive: true });
+      record.createdDirs.push(dir);
+      this.createdDirs.add(dir);
+    }
+
+    const recordIndex = this.records.length;
+    this.records.push(record);
+
+    const tempPath = `${resolved}.ue58cursor.${this.sessionId}.${recordIndex}.tmp`;
+    try {
+      await this.persistJournal();
+      await fs.promises.writeFile(tempPath, content);
+      await atomicReplace(tempPath, resolved);
+      record.postWriteSha256 = sha256Buffer(content);
+      record.status = 'committed';
+      await this.persistJournal();
+    } catch (err) {
+      try {
+        await fs.promises.unlink(tempPath);
+      } catch {
+        // ignore
+      }
+      await this.rollbackRecordsFrom(recordIndex);
+      throw err;
+    }
   }
 
   private ensureOpen(): void {
@@ -264,18 +538,36 @@ export class WorkspaceMutationTransaction {
     const slice = this.records.slice(startIndex).reverse();
     for (const record of slice) {
       if (record.existedBefore && record.backupPath) {
-        const content = await fs.promises.readFile(record.backupPath, 'utf-8');
-        await fs.promises.writeFile(record.absoluteTargetPath, content, 'utf-8');
+        const currentHash = await fileSha256(record.absoluteTargetPath);
+        if (
+          record.postWriteSha256
+          && currentHash !== undefined
+          && currentHash !== record.postWriteSha256
+        ) {
+          continue;
+        }
+        const content = await fs.promises.readFile(record.backupPath);
+        await fs.promises.writeFile(record.absoluteTargetPath, content);
       } else if (!record.existedBefore && (await fileExists(record.absoluteTargetPath))) {
+        const currentHash = await fileSha256(record.absoluteTargetPath);
+        if (currentHash !== undefined && record.postWriteSha256 && currentHash !== record.postWriteSha256) {
+          continue;
+        }
         await fs.promises.unlink(record.absoluteTargetPath);
       }
       await removeEmptyDirs(record.createdDirs);
     }
     this.records.splice(startIndex);
+    if (this.records.length > 0) {
+      await this.persistJournal();
+    } else {
+      await this.clearJournal();
+    }
   }
 
   async commit(): Promise<MutationCommitResult> {
     this.ensureOpen();
+    await this.writeChain;
     this.committed = true;
     activeTransactions.delete(sessionKey(this.projectRoot));
     await this.clearJournal();
@@ -289,18 +581,34 @@ export class WorkspaceMutationTransaction {
     if (this.committed) {
       return { ok: false, restoredFiles: [], deletedFiles: [], failedFiles: ['transaction already committed'] };
     }
+    await this.writeChain;
     this.rolledBack = true;
     const restoredFiles: string[] = [];
     const deletedFiles: string[] = [];
     const failedFiles: string[] = [];
+    const conflictFiles: string[] = [];
 
     for (const record of [...this.records].reverse()) {
       try {
         if (record.existedBefore && record.backupPath) {
-          const content = await fs.promises.readFile(record.backupPath, 'utf-8');
-          await fs.promises.writeFile(record.absoluteTargetPath, content, 'utf-8');
+          const currentHash = await fileSha256(record.absoluteTargetPath);
+          if (
+            record.postWriteSha256
+            && currentHash !== undefined
+            && currentHash !== record.postWriteSha256
+          ) {
+            conflictFiles.push(record.relativeTargetPath);
+            continue;
+          }
+          const content = await fs.promises.readFile(record.backupPath);
+          await fs.promises.writeFile(record.absoluteTargetPath, content);
           restoredFiles.push(record.relativeTargetPath);
         } else if (!record.existedBefore && (await fileExists(record.absoluteTargetPath))) {
+          const currentHash = await fileSha256(record.absoluteTargetPath);
+          if (currentHash !== undefined && record.postWriteSha256 && currentHash !== record.postWriteSha256) {
+            conflictFiles.push(record.relativeTargetPath);
+            continue;
+          }
           await fs.promises.unlink(record.absoluteTargetPath);
           deletedFiles.push(record.relativeTargetPath);
         }
@@ -313,7 +621,13 @@ export class WorkspaceMutationTransaction {
     this.records.length = 0;
     activeTransactions.delete(sessionKey(this.projectRoot));
     await this.clearJournal();
-    return { ok: failedFiles.length === 0, restoredFiles, deletedFiles, failedFiles };
+    return {
+      ok: failedFiles.length === 0 && conflictFiles.length === 0,
+      restoredFiles,
+      deletedFiles,
+      failedFiles,
+      conflictFiles,
+    };
   }
 }
 
@@ -334,6 +648,11 @@ export async function runWithTransaction<T>(
 
 export function getActiveTransaction(projectRoot: string): WorkspaceMutationTransaction | undefined {
   return activeTransactions.get(sessionKey(projectRoot));
+}
+
+/** @internal Simulates a crash after journal persistence without commit. */
+export function __testAbandonActiveTransaction(projectRoot: string): void {
+  activeTransactions.delete(sessionKey(projectRoot));
 }
 
 export async function mutateText(
@@ -365,6 +684,33 @@ export async function mutateJson(
   opts?: MutationWriteOpts,
 ): Promise<void> {
   await mutateText(tx, projectRoot, filePath, JSON.stringify(value, null, 2) + '\n', opts);
+}
+
+export async function mutateBytes(
+  tx: WorkspaceMutationTransaction | undefined,
+  projectRoot: string,
+  filePath: string,
+  content: Buffer,
+  opts?: MutationWriteOpts,
+): Promise<void> {
+  if (tx) {
+    await tx.writeBytes(filePath, content, opts);
+    return;
+  }
+  assertPathContained(projectRoot, filePath);
+  if (!isExtensionManagedMutationPath(projectRoot, filePath)) {
+    throw new Error(`Mutation path is not extension-managed: ${filePath}`);
+  }
+  const policy = resolvePolicy(filePath, opts);
+  if (policy === 'forbidden') throw new Error(`Mutation forbidden: ${filePath}`);
+  if (policy === 'consentRequired' && !opts?.consentGranted) {
+    throw new Error(`Consent required: ${filePath}`);
+  }
+  const dir = path.dirname(filePath);
+  await fs.promises.mkdir(dir, { recursive: true });
+  const tempPath = `${filePath}.ue58cursor.tmp`;
+  await fs.promises.writeFile(tempPath, content);
+  await atomicReplace(tempPath, filePath);
 }
 
 /** @deprecated Prefer WorkspaceMutationTransaction within runWithTransaction */
@@ -404,6 +750,20 @@ export async function rollbackSession(projectRoot: string): Promise<boolean> {
   return result.ok;
 }
 
+/** Roll back any active or orphaned journal state, then clear the session map entry. */
+export async function forceRollbackAndClear(projectRoot: string): Promise<MutationRollbackResult> {
+  const tx = activeTransactions.get(sessionKey(projectRoot));
+  if (tx) {
+    return tx.rollback();
+  }
+  const journal = await loadJournal(projectRoot);
+  if (!journal) {
+    return { ok: true, restoredFiles: [], deletedFiles: [], failedFiles: [] };
+  }
+  return rollbackJournalRecords(projectRoot, journal);
+}
+
+/** @deprecated Use forceRollbackAndClear — this dropped rollback guarantees. */
 export function clearMutationSession(projectRoot: string): void {
   activeTransactions.delete(sessionKey(projectRoot));
 }

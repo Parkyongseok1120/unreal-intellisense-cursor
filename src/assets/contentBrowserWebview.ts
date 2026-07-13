@@ -73,6 +73,7 @@ export async function showContentBrowserWebview(
     page?: number;
     query?: string;
     filter?: string;
+    scrollTop?: number;
     filePaths?: string[];
   }) => {
     if (msg.type === 'open' && msg.path) onOpenAsset(msg.path);

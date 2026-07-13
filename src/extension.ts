@@ -16,16 +16,21 @@ import { UFunctionCodeLensProvider } from './providers/ufunctionCodeLens';
 import { GeneratedHeaderDefinitionProvider } from './providers/generatedHeaderProvider';
 import { UE5_8CursorTaskProvider } from './build/taskProvider';
 import { UnrealLogViewer, type LogViewerBridge } from './logs/unrealLogViewer';
-import { CommandBridge } from './mcp/commandBridge';
 import { configureMcpBridge } from './blueprint/mcpBlueprintBridge';
 import { parseBuildProgress } from './parsers/buildProgressParser';
 import { ProjectSession } from './session/projectSession';
 import { getWorkspaceProjectRegistry, disposeWorkspaceProjectRegistry, type ProjectRuntime } from './session/workspaceProjectRegistry';
+import {
+  getBridgeDispatchRoot,
+  resetBridgeCommandDispatch,
+  runSerializedBridgeCommand,
+} from './extension/bridgeCommandDispatch';
 import { getExtensionVersion } from './version';
 import { refreshSemanticGraph, computeCompileParity, invalidateSemanticGraph } from './semantic/semanticService';
 import { registerSemanticNavigation } from './semantic/semanticNavigation';
 import { registerUeNavigationCommands } from './navigation/ueNavigationCommands';
-import { EditorBridgeClient, formatBridgeStatus, withBridgeTimeout } from './editorBridge/editorBridgeClient';
+import { EditorBridgeClient, formatBridgeStatus } from './editorBridge/editorBridgeClient';
+import { recoverIncompleteMutations } from './platform/workspaceMutation';
 import { disposeBridgeConnectedSetup } from './editorBridge/bridgeConnectedSetup';
 import {
   formatInstallPreview,
@@ -36,7 +41,7 @@ import { disposeUhtDiagnostics } from './uht/uhtDiagnostics';
 import { registerUhtSaveValidation } from './uht/uhtValidation';
 import { registerHLSLProviders } from './hlsl/hlslProviders';
 import { UnrealTestExplorer } from './testing/unrealTestExplorer';
-import type { UE5_8CursorContext } from './types';
+import type { UE5_8CursorContext, UEProject, UEInstallation } from './types';
 import { requestClangdRestart, resetClangdRestartState } from './cursor/clangdLifecycle';
 import {
   disposeIntelliSenseMetrics,
@@ -48,20 +53,16 @@ let ctx: UE5_8CursorContext;
 let settings: UE5_8CursorSettings;
 let statusBar: StatusBarManager;
 let logViewer: UnrealLogViewer;
-let commandBridge: CommandBridge | undefined;
-let projectSession: ProjectSession | undefined;
-let editorBridge: EditorBridgeClient | undefined;
+let detectionBootstrapSession: ProjectSession | undefined;
 let testExplorer: UnrealTestExplorer | undefined;
 let contentBrowser: import('./assets/contentBrowserProvider').ContentBrowserProvider | undefined;
 let mcpDiagnostics: import('./mcp/mcpDiagnosticsProvider').McpDiagnosticsProvider | undefined;
 let extensionPath = '';
 let extensionContext: vscode.ExtensionContext | undefined;
-let bridgeDispatchRoot: string | undefined;
-let bridgeDispatchChain: Promise<void> = Promise.resolve();
 const pluginIndexRestartTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let sourceWatcherDisposable: vscode.Disposable | undefined;
-let settingsChangeTimer: ReturnType<typeof setTimeout> | undefined;
-let headerContextSaveTimer: ReturnType<typeof setTimeout> | undefined;
+const settingsChangeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const headerContextSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function projectRegistry() {
   return getWorkspaceProjectRegistry();
@@ -72,8 +73,8 @@ function resolveRuntime(uri?: vscode.Uri): ProjectRuntime | undefined {
   if (uri) return reg.getByUri(uri);
   // HTTP bridge requests have no editor URI. Their project root takes priority
   // over the focused document while the serialized dispatch is in progress.
-  if (bridgeDispatchRoot) {
-    const bridgeRuntime = reg.getByRoot(bridgeDispatchRoot);
+  if (getBridgeDispatchRoot()) {
+    const bridgeRuntime = reg.getByRoot(getBridgeDispatchRoot()!);
     if (bridgeRuntime) return bridgeRuntime;
   }
   const activeUri = vscode.window.activeTextEditor?.document.uri;
@@ -85,11 +86,12 @@ function resolveRuntime(uri?: vscode.Uri): ProjectRuntime | undefined {
 }
 
 function resolveProjectRoot(uri?: vscode.Uri): string | undefined {
-  return resolveRuntime(uri)?.project.projectRoot ?? ctx?.project?.projectRoot;
+  const runtime = resolveRuntime(uri);
+  return runtime?.displayPath ?? runtime?.project.projectRoot;
 }
 
 function resolveEditorBridge(uri?: vscode.Uri): EditorBridgeClient | undefined {
-  return resolveRuntime(uri)?.editorBridge ?? editorBridge;
+  return resolveRuntime(uri)?.editorBridge;
 }
 
 function bridgeGetterForProject(projectRoot: string): () => EditorBridgeClient | undefined {
@@ -104,10 +106,13 @@ function bridgeConnectedSetupOptions(): import('./editorBridge/bridgeConnectedSe
         void contentBrowser?.refresh();
       }
     },
+    onBridgeSyncError: (projectRoot, message) => {
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Bridge asset sync degraded (${projectRoot}): ${message}`);
+    },
   };
 }
 
-/** Session that owns detection/bootstrap jobs for a project (or the global fallback). */
+/** Session that owns detection/bootstrap jobs for a project. */
 function resolvePipelineSession(projectRoot?: string): ProjectSession | undefined {
   if (projectRoot) {
     const runtime = projectRegistry().getByRoot(projectRoot);
@@ -115,7 +120,12 @@ function resolvePipelineSession(projectRoot?: string): ProjectSession | undefine
   }
   const active = resolveRuntime();
   if (active) return active.session;
-  return projectSession;
+  const registryActive = projectRegistry().getActive();
+  if (registryActive) return registryActive.session;
+  if (!detectionBootstrapSession) {
+    detectionBootstrapSession = new ProjectSession();
+  }
+  return detectionBootstrapSession;
 }
 
 /** Project-scoped view used by commands launched from the active editor. */
@@ -233,7 +243,7 @@ function settingsAffectsIntellisenseOrDebug(event: vscode.ConfigurationChangeEve
 
 async function handleSettingsChange(event: vscode.ConfigurationChangeEvent): Promise<void> {
   await statusBar.update(runtimeContext(), settings);
-  if (ctx.project) {
+  if (resolveRuntime()?.project) {
     void openContentBrowserForProject({ reopen: false });
   }
   if (event.affectsConfiguration(`${EXTENSION_ID}.debug`)) {
@@ -254,8 +264,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   settings = new UE5_8CursorSettings();
   statusBar = new StatusBarManager();
   logViewer = new UnrealLogViewer();
-  projectSession = new ProjectSession();
-  editorBridge = new EditorBridgeClient(undefined, context);
   testExplorer = new UnrealTestExplorer();
   const outputChannel = createOutputChannel();
 
@@ -267,37 +275,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   extensionContext.subscriptions.push(outputChannel, statusBar, logViewer, ctx.diagnosticCollection);
-  if (projectSession) extensionContext.subscriptions.push(projectSession);
-  if (editorBridge) extensionContext.subscriptions.push(editorBridge);
   if (testExplorer) extensionContext.subscriptions.push(testExplorer);
 
   const { startBridgeReconnectWatcher } = await import('./editorBridge/bridgeReconnectWatcher');
   extensionContext.subscriptions.push(
     startBridgeReconnectWatcher({
-      getProjectRoot: () => resolveProjectRoot(),
-      getBridge: () => resolveEditorBridge(),
+      listProjectRoots: () => projectRegistry().listRoots(),
+      getBridge: (root) => projectRegistry().getByRoot(root)?.editorBridge,
       getCtx: () => ctx,
-      onReconnect: async (info) => {
-        statusBar.setBridgeStatus(info);
-        const root = resolveProjectRoot();
-        if (root) {
-          testExplorer?.setRuntime(root, resolveEditorBridge());
+      onReconnect: async (root, info) => {
+        if (resolveProjectRoot() === root) {
+          statusBar.setBridgeStatus(info);
+          testExplorer?.setRuntime(root, projectRegistry().getByRoot(root)?.editorBridge);
           void testExplorer?.refresh(runtimeContext());
-          const { setupBridgeConnectedServices } = await import('./editorBridge/bridgeConnectedSetup');
-          await setupBridgeConnectedServices(root, bridgeGetterForProject(root), ctx.diagnosticCollection, bridgeConnectedSetupOptions());
         }
+        const { setupBridgeConnectedServices } = await import('./editorBridge/bridgeConnectedSetup');
+        await setupBridgeConnectedServices(root, bridgeGetterForProject(root), ctx.diagnosticCollection, bridgeConnectedSetupOptions());
       },
       onEditorIdentityChanged: async (root) => {
         const { disposeBridgeConnectedSetup } = await import('./editorBridge/bridgeConnectedSetup');
         disposeBridgeConnectedSetup(root);
       },
-      onDisconnect: () => {
-        statusBar.setBridgeStatus({ connected: false, capabilities: [], protocolVersion: 1 });
-        const root = resolveProjectRoot();
-        if (root) {
-          testExplorer?.setRuntime(root, resolveEditorBridge());
+      onDisconnect: (root) => {
+        if (resolveProjectRoot() === root) {
+          statusBar.setBridgeStatus({ connected: false, capabilities: [], protocolVersion: 1, state: 'offline' });
+          testExplorer?.setRuntime(root, projectRegistry().getByRoot(root)?.editorBridge);
           void testExplorer?.refresh(runtimeContext());
         }
+        void import('./editorBridge/bridgeConnectedSetup').then(({ disposeBridgeConnectedSetup }) =>
+          disposeBridgeConnectedSetup(root),
+        );
       },
     }),
   );
@@ -447,6 +454,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   configureMcpBridge(undefined, extensionPath);
   await runDetectionPipeline({ allowAutoSetup: true });
 
+  for (const root of projectRegistry().listRoots()) {
+    const recovery = await recoverIncompleteMutations(root);
+    if (recovery.message) {
+      outputChannel.appendLine(`[UE5_8 Cursor] ${recovery.message}`);
+    }
+  }
+
   if (settings.showWelcomeOnFirstOpen && !extensionContext.globalState.get('ue58rider.welcomeShown')) {
     extensionContext.globalState.update('ue58rider.welcomeShown', true);
     const { showWelcomePanel } = await import('./ui/welcomePanel');
@@ -472,7 +486,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const runtime = resolveRuntime(editor.document.uri);
       if (!runtime) return;
       projectRegistry().setActive(runtime.project.projectRoot);
-      commandBridge = runtime.session.getBridge();
       contentBrowser?.setProjectRoot(runtime.project.projectRoot);
       testExplorer?.setRuntime(runtime.project.projectRoot, runtime.editorBridge);
       void testExplorer?.refresh(runtimeContext(editor.document.uri));
@@ -501,28 +514,38 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.onDidSaveTextDocument((document) => {
       if (!settings.reapplyHeaderContextOnSave) return;
       if (document.uri.scheme !== 'file' || !/\.(?:h|hpp|inl)$/i.test(document.uri.fsPath)) return;
-      if (headerContextSaveTimer) clearTimeout(headerContextSaveTimer);
-      headerContextSaveTimer = setTimeout(() => {
-        headerContextSaveTimer = undefined;
-        const runtime = resolveRuntime(document.uri);
-        if (!runtime) return;
-        void import('./cursor/headerCompileContextManager').then(async ({ invalidateHeaderCompileContextLog, reportHeaderCompileContext, countProvisionalHeaders }) => {
-          invalidateHeaderCompileContextLog(document.uri.fsPath);
-          await reportHeaderCompileContext(document, runtime.project.projectRoot, (message) => ctx.outputChannel.appendLine(message), true);
-          statusBar.setProvisionalHeaderCount(countProvisionalHeaders(runtime.project.projectRoot));
-        });
-      }, 500);
+      const runtime = resolveRuntime(document.uri);
+      if (!runtime) return;
+      const timerKey = runtime.project.projectRoot.toLowerCase();
+      const prior = headerContextSaveTimers.get(timerKey);
+      if (prior) clearTimeout(prior);
+      headerContextSaveTimers.set(
+        timerKey,
+        setTimeout(() => {
+          headerContextSaveTimers.delete(timerKey);
+          void import('./cursor/headerCompileContextManager').then(async ({ invalidateHeaderCompileContextLog, reportHeaderCompileContext, countProvisionalHeaders }) => {
+            invalidateHeaderCompileContextLog(document.uri.fsPath);
+            await reportHeaderCompileContext(document, runtime.project.projectRoot, (message) => ctx.outputChannel.appendLine(message), true);
+            statusBar.setProvisionalHeaderCount(countProvisionalHeaders(runtime.project.projectRoot));
+          });
+        }, 500),
+      );
     }),
   );
   extensionContext.subscriptions.push(watchForProjectChanges(() => runDetectionPipeline()));
   extensionContext.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (!event.affectsConfiguration(EXTENSION_ID)) return;
-      if (settingsChangeTimer) clearTimeout(settingsChangeTimer);
-      settingsChangeTimer = setTimeout(() => {
-        settingsChangeTimer = undefined;
-        void handleSettingsChange(event);
-      }, 500);
+      const timerKey = resolveRuntime()?.project.projectRoot.toLowerCase() ?? '__global__';
+      const prior = settingsChangeTimers.get(timerKey);
+      if (prior) clearTimeout(prior);
+      settingsChangeTimers.set(
+        timerKey,
+        setTimeout(() => {
+          settingsChangeTimers.delete(timerKey);
+          void handleSettingsChange(event);
+        }, 500),
+      );
     }),
   );
 
@@ -534,16 +557,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export function deactivate(): void {
-  if (settingsChangeTimer) clearTimeout(settingsChangeTimer);
-  if (headerContextSaveTimer) clearTimeout(headerContextSaveTimer);
+  for (const timer of settingsChangeTimers.values()) clearTimeout(timer);
+  settingsChangeTimers.clear();
+  for (const timer of headerContextSaveTimers.values()) clearTimeout(timer);
+  headerContextSaveTimers.clear();
   sourceWatcherDisposable?.dispose();
   disposeBridgeConnectedSetup();
   for (const projectRoot of projectRegistry().listRoots()) cleanupProjectExtensionState(projectRoot);
   for (const timer of pluginIndexRestartTimers.values()) clearTimeout(timer);
   pluginIndexRestartTimers.clear();
-  commandBridge?.dispose();
-  projectSession?.dispose();
-  editorBridge?.dispose();
+  detectionBootstrapSession?.dispose();
+  detectionBootstrapSession = undefined;
+  resetClangdRestartState();
+  resetBridgeCommandDispatch();
   testExplorer?.dispose();
   disposeUhtDiagnostics();
   disposeIntelliSenseMetrics();
@@ -568,7 +594,7 @@ async function connectProjectBridge(projectRoot: string, options: { primary: boo
   const bridge = projectRegistry().getByRoot(projectRoot)?.editorBridge;
   if (!bridge) return;
 
-  const bridgeInfo = await withBridgeTimeout(bridge.connect(projectRoot), 5000);
+  const bridgeInfo = await bridge.connect(projectRoot, 5000);
   if (!bridgeInfo) {
     if (options.primary) {
       const { isBridgePluginReady } = await import('./editorBridge/bridgePluginInstall');
@@ -578,7 +604,6 @@ async function connectProjectBridge(projectRoot: string, options: { primary: boo
   }
 
   if (options.primary) {
-    editorBridge = bridge;
     ctx.editorBridge = bridge;
     testExplorer?.setRuntime(projectRoot, bridge);
     ctx.outputChannel.appendLine(`[UE5_8 Cursor] ${formatBridgeStatus(bridgeInfo)}`);
@@ -610,7 +635,7 @@ async function connectProjectBridge(projectRoot: string, options: { primary: boo
   }
 }
 
-async function scheduleCompileRefresh(commandCtx = runtimeContext(), session = resolveRuntime()?.session ?? projectSession): Promise<void> {
+async function scheduleCompileRefresh(commandCtx = runtimeContext(), session = resolveRuntime()?.session): Promise<void> {
   if (!session || !commandCtx.project || !extensionPath) return;
   const gen = session.getGeneration();
   const token = session.getActiveToken() ?? new vscode.CancellationTokenSource().token;
@@ -716,7 +741,11 @@ function bridgeLogAdapter(bridge?: EditorBridgeClient): LogViewerBridge | undefi
   return {
     isConnected: () => bridge.isConnected(),
     canCall: () => true,
-    tailLogs: (lines) => bridge.tailLogs(lines),
+    tailLogs: async (lines, offset, fileId) => {
+      const result = await bridge.tailLogsResult(lines ?? 200, offset ?? 0, fileId);
+      if (!result.ok) throw result.error;
+      return result.value;
+    },
   };
 }
 
@@ -734,127 +763,125 @@ async function executeDetectionPipeline(
   if (projects.length === 0) {
     ctx.outputChannel.appendLine('[UE5_8 Cursor] No UE 5.8 .uproject found in workspace.');
     await setContext(ContextKeys.ProjectDetected, false);
-    ctx.project = undefined;
     statusBar.setIntelliSense('missing');
-    void statusBar.update(ctx, settings);
+    void statusBar.update(runtimeContext(), settings);
     return;
   }
 
+  let primaryProject: UEProject | undefined;
   if (settings.projectFile) {
-    ctx.project = projects.find((p) => p.uprojectPath === settings.projectFile) ?? projects[0];
+    primaryProject = projects.find((p) => p.uprojectPath === settings.projectFile) ?? projects[0];
   } else {
-    ctx.project = await resolvePrimaryProject(projects);
+    primaryProject = await resolvePrimaryProject(projects);
   }
 
-  if (!ctx.project) {
+  if (!primaryProject) {
     await setContext(ContextKeys.ProjectDetected, false);
     statusBar.setIntelliSense('missing');
-    void statusBar.update(ctx, settings);
+    void statusBar.update(runtimeContext(), settings);
     return;
   }
 
   if (token.isCancellationRequested || session.isStale(gen)) return;
 
   await setContext(ContextKeys.ProjectDetected, true);
-  ctx.outputChannel.appendLine(`[UE5_8 Cursor] Project: ${ctx.project.name} (${ctx.project.projectRoot})`);
+  ctx.outputChannel.appendLine(`[UE5_8 Cursor] Project: ${primaryProject.name} (${primaryProject.projectRoot})`);
 
-  configureMcpBridge(ctx.project.projectRoot, extensionPath);
-  contentBrowser?.setProjectRoot(ctx.project.projectRoot);
+  configureMcpBridge(primaryProject.projectRoot, extensionPath);
+  contentBrowser?.setProjectRoot(primaryProject.projectRoot);
 
-  if (extensionPath) {
+  if (extensionPath && extensionContext) {
     const { maybePromptInstallBridgePlugin } = await import('./editorBridge/bridgePluginInstall');
-    await maybePromptInstallBridgePlugin(ctx, settings, extensionPath, extensionContext);
+    await maybePromptInstallBridgePlugin(
+      { ...ctx, project: primaryProject },
+      settings,
+      extensionPath,
+      extensionContext,
+    );
   }
 
   if (token.isCancellationRequested || session.isStale(gen)) return;
 
+  let primaryEngine: UEInstallation | undefined;
   let discoveredEngines: Awaited<ReturnType<typeof discoverEngines>> = [];
   if (settings.engineRoot) {
-    ctx.engine = (await createManualInstallation(settings.engineRoot)) ?? undefined;
+    primaryEngine = (await createManualInstallation(settings.engineRoot)) ?? undefined;
   } else {
     discoveredEngines = await discoverEngines();
     ctx.outputChannel.appendLine(`[UE5_8 Cursor] Found ${discoveredEngines.length} UE 5.8 engine(s).`);
-    ctx.engine = await findMatchingEngine(ctx.project, discoveredEngines);
-    if (!ctx.engine && discoveredEngines.length === 1) {
-      ctx.engine = discoveredEngines[0];
-      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Engine auto-selected: ${ctx.engine.root}`);
-    } else if (!ctx.engine && discoveredEngines.length > 1) {
-      ctx.engine = await promptSelectEngine(discoveredEngines);
+    primaryEngine = await findMatchingEngine(primaryProject, discoveredEngines);
+    if (!primaryEngine && discoveredEngines.length === 1) {
+      primaryEngine = discoveredEngines[0];
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Engine auto-selected: ${primaryEngine.root}`);
+    } else if (!primaryEngine && discoveredEngines.length > 1) {
+      primaryEngine = await promptSelectEngine(discoveredEngines);
     }
   }
 
-  // Register every discovered project. Providers resolve a runtime from the
-  // active document URI, so secondary workspace folders must exist here even
-  // when the UI chooses a different primary project.
   for (const project of projects) {
     const runtimeEngine =
-      project.projectRoot === ctx.project.projectRoot
-        ? ctx.engine
+      project.projectRoot === primaryProject.projectRoot
+        ? primaryEngine
         : settings.engineRoot
-          ? ctx.engine
+          ? primaryEngine
           : await findMatchingEngine(project, discoveredEngines);
     projectRegistry().ensure(project, runtimeEngine, extensionContext);
   }
 
-  const runtime = projectRegistry().getByRoot(ctx.project.projectRoot)!;
-  projectRegistry().setActive(ctx.project.projectRoot);
-  // This pipeline was started by the current global session. Replacing it while
-  // the run is in flight makes later generation checks compare against a fresh
-  // session and abort first activation as stale. Gate 2 routes whole pipelines
-  // through ProjectRuntime; retain the owning session for this run until then.
-  editorBridge = runtime.editorBridge;
-  ctx.editorBridge = editorBridge;
+  const runtime = projectRegistry().getByRoot(primaryProject.projectRoot)!;
+  projectRegistry().setActive(primaryProject.projectRoot);
 
-  await connectProjectBridge(ctx.project.projectRoot, { primary: true });
+  await connectProjectBridge(primaryProject.projectRoot, { primary: true });
   for (const project of projects) {
-    if (project.projectRoot !== ctx.project.projectRoot) {
+    if (project.projectRoot !== primaryProject.projectRoot) {
       await connectProjectBridge(project.projectRoot, { primary: false });
     }
   }
-  testExplorer?.setRuntime(ctx.project.projectRoot, editorBridge);
+  testExplorer?.setRuntime(primaryProject.projectRoot, runtime.editorBridge);
   void testExplorer?.refresh(runtimeContext());
 
-  if (ctx.project) {
-    const graph = await refreshSemanticGraph(ctx.project, {
-      engine: ctx.engine,
-      targetType: settings.buildTarget,
-      platform: settings.platform,
-      configuration: settings.buildConfiguration,
-    });
+  const graph = await refreshSemanticGraph(primaryProject, {
+    engine: primaryEngine,
+    targetType: settings.buildTarget,
+    platform: settings.platform,
+    configuration: settings.buildConfiguration,
+  });
+  ctx.outputChannel.appendLine(
+    `[UE5_8 Cursor] Semantic graph: ${graph.modules.length} module(s), ${graph.reflection.length} class(es), ${graph.plugins.length} plugin(s)`,
+  );
+  const parity = await computeCompileParity(primaryProject, {
+    engine: primaryEngine,
+    targetType: settings.buildTarget,
+    platform: settings.platform,
+    configuration: settings.buildConfiguration,
+  });
+  statusBar.setCompileParity(parity.parity, parity.synthetic, {
+    status: parity.status,
+    provenance: parity.provenance,
+  });
+  if (parity.synthetic) {
+    statusBar.setIntelliSense('partial', { provisional: true });
+  }
+  if (parity.synthetic && parity.total > 0) {
     ctx.outputChannel.appendLine(
-      `[UE5_8 Cursor] Semantic graph: ${graph.modules.length} module(s), ${graph.reflection.length} class(es), ${graph.plugins.length} plugin(s)`,
+      `[UE5_8 Cursor] Compile action parity: ${Math.round(parity.parity * 100)}% (synthetic DB)`,
     );
-    const parity = await computeCompileParity(ctx.project, {
-      engine: ctx.engine,
-      targetType: settings.buildTarget,
-      platform: settings.platform,
-      configuration: settings.buildConfiguration,
-    });
-    statusBar.setCompileParity(parity.parity, parity.synthetic, {
-      status: parity.status,
-      provenance: parity.provenance,
-    });
-    if (parity.synthetic && parity.total > 0) {
-      ctx.outputChannel.appendLine(
-        `[UE5_8 Cursor] Compile action parity: ${Math.round(parity.parity * 100)}% (synthetic DB)`,
-      );
-    }
   }
 
   if (token.isCancellationRequested || session.isStale(gen)) return;
 
-  await setContext(ContextKeys.EngineFound, !!ctx.engine);
-  if (ctx.engine) {
-    ctx.outputChannel.appendLine(`[UE5_8 Cursor] Engine: ${ctx.engine.root}`);
+  await setContext(ContextKeys.EngineFound, !!primaryEngine);
+  if (primaryEngine) {
+    ctx.outputChannel.appendLine(`[UE5_8 Cursor] Engine: ${primaryEngine.root}`);
   } else {
     ctx.outputChannel.appendLine('[UE5_8 Cursor] Engine not found — workspace artifacts only (set ue58rider.engineRoot).');
   }
 
   void mcpDiagnostics?.refresh();
 
-  if (ctx.project && options?.allowAutoSetup !== false && settings.autoSetupOnOpen && extensionPath) {
+  if (options?.allowAutoSetup !== false && settings.autoSetupOnOpen && extensionPath) {
     session?.markRefreshing();
-    const metricsProjectRoot = ctx.project.projectRoot;
+    const metricsProjectRoot = primaryProject.projectRoot;
     const metrics = await startIntelliSenseMetricsRun(metricsProjectRoot, {
       onPhase: (phase, snapshot) => {
         if (resolveRuntime()?.project.projectRoot === metricsProjectRoot) {
@@ -866,7 +893,11 @@ async function executeDetectionPipeline(
       },
     });
     const { bootstrapProject } = await import('./cursor/bootstrapProject');
-    const result = await bootstrapProject(ctx, settings, extensionPath);
+    const result = await bootstrapProject(
+      { ...ctx, project: primaryProject, engine: primaryEngine, editorBridge: runtime.editorBridge },
+      settings,
+      extensionPath,
+    );
     metrics.markCompileDatabaseReady();
     if (result.indexPlan) metrics.markProjectModelReady(result.indexPlan);
     statusBar.setIndexPlan(result.indexPlan);
@@ -890,26 +921,21 @@ async function executeDetectionPipeline(
   session.markIndexing();
   void statusBar.update(runtimeContext(), settings);
 
-  if (ctx.project) {
-    // CommandBridge is owned by each project runtime. Every discovered project
-    // gets a separate authenticated endpoint and bridge file under its root.
-    for (const project of projects) {
-      const projectRuntime = projectRegistry().getByRoot(project.projectRoot);
-      if (!projectRuntime) continue;
-      const bridge = await projectRuntime.session.ensureBridge(project.projectRoot);
-      if (project.projectRoot === ctx.project.projectRoot) commandBridge = bridge;
-      if (bridge) {
-        const { readBridgePort } = await import('./mcp/commandBridge');
-        const port = await readBridgePort(project.projectRoot);
-        ctx.outputChannel.appendLine(`[UE5_8 Cursor] MCP command bridge (${project.name}) on port ${port ?? 'unknown'}`);
-      } else {
-        ctx.outputChannel.appendLine(`[UE5_8 Cursor] Command bridge unavailable for ${project.name}`);
-      }
+  for (const project of projects) {
+    const projectRuntime = projectRegistry().getByRoot(project.projectRoot);
+    if (!projectRuntime) continue;
+    const bridge = await projectRuntime.session.ensureBridge(project.projectRoot);
+    if (bridge) {
+      const { readBridgePort } = await import('./mcp/commandBridge');
+      const port = await readBridgePort(project.projectRoot);
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] MCP command bridge (${project.name}) on port ${port ?? 'unknown'}`);
+    } else {
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] Command bridge unavailable for ${project.name}`);
     }
+  }
 
-    if (settings.autoStartLogViewer) {
-      void logViewer.start(ctx.project, bridgeLogAdapter(editorBridge));
-    }
+  if (settings.autoStartLogViewer) {
+    void logViewer.start(primaryProject, bridgeLogAdapter(runtime.editorBridge));
   }
 }
 
@@ -925,17 +951,12 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
       // Command handlers were intentionally written around runtimeContext().
       // Serialize bridge invocations so this temporary context cannot leak from
       // one project's authenticated endpoint into another project's command.
-      const dispatch = bridgeDispatchChain.then(async () => {
-        const previous = bridgeDispatchRoot;
-        bridgeDispatchRoot = request.projectRoot;
-        try {
-          await vscode.commands.executeCommand(request.command!, ...(request.args ?? []));
-        } finally {
-          bridgeDispatchRoot = previous;
-        }
-      });
-      bridgeDispatchChain = dispatch.catch(() => {});
-      await dispatch;
+      await runSerializedBridgeCommand(
+        request.projectRoot,
+        request.command,
+        request.args ?? [],
+        runtimeContext().outputChannel,
+      );
     },
   ));
 
@@ -1232,6 +1253,7 @@ function registerCommands(extensionContext: vscode.ExtensionContext): void {
     const result = await runBridgePluginInstall(commandCtx, settings, extensionPath, {
       consentGranted: true,
       silent: false,
+      bridgeContext: extensionContext,
     });
     if (result.installed) {
       await runDetectionPipeline();

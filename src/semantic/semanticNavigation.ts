@@ -7,6 +7,7 @@ import {
   getOrBuildSemanticGraph,
   querySymbol,
 } from './semanticService';
+import { snapshotFreshness } from '../projectModel/buildSnapshot';
 import { findUeReferences } from '../navigation/referenceNavigation';
 
 import type { EditorBridgeClient } from '../editorBridge/editorBridgeClient';
@@ -30,7 +31,10 @@ function symbolRange(sym: UeClassSymbol): vscode.Range {
 async function loadGraph(getProject: ProjectGetter, document: vscode.TextDocument) {
   const project = getProject(document);
   if (!project) return undefined;
-  return getOrBuildSemanticGraph(project);
+  const graph = await getOrBuildSemanticGraph(project);
+  const freshness = await snapshotFreshness(project.projectRoot, graph.fingerprint);
+  if (freshness === 'stale' || freshness === 'missing') return undefined;
+  return graph;
 }
 
 function authoritativeSymbols(graph: Awaited<ReturnType<typeof loadGraph>>): UeClassSymbol[] {
@@ -265,7 +269,7 @@ export class UeSemanticTypeHierarchyProvider implements vscode.TypeHierarchyProv
       try {
         const derived = await bridge.listDerivedBlueprints(item.name);
         for (const bp of derived) {
-          const label = bp.assetPath?.split('/').pop()?.split('.')[0] ?? bp.className ?? 'Blueprint';
+          const label = bp.assetPath?.split('/').pop()?.split('.')[0] ?? bp.parentClass ?? 'Blueprint';
           subtypes.push(
             new vscode.TypeHierarchyItem(
               vscode.SymbolKind.Interface,

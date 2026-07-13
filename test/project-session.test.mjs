@@ -40,7 +40,7 @@ const projectSession = loadTsModule('src/session/projectSession.ts', {
 });
 
 describe('projectSession scheduler', () => {
-  it('serializes consecutive runPipeline calls', async () => {
+  it('supersedes an in-flight runPipeline with a newer call', async () => {
     const session = new projectSession.ProjectSession();
     const order = [];
     let releaseFirst;
@@ -48,10 +48,10 @@ describe('projectSession scheduler', () => {
       releaseFirst = resolve;
     });
 
-    const first = session.runPipeline(async () => {
+    const first = session.runPipeline(async (_options, token) => {
       order.push('first-start');
       await holdFirst;
-      order.push('first-end');
+      if (!token.isCancellationRequested) order.push('first-end');
     });
 
     await Promise.resolve();
@@ -64,6 +64,7 @@ describe('projectSession scheduler', () => {
     await Promise.all([first, second]);
     assert.ok(order.indexOf('second-start') > order.indexOf('first-start'));
     assert.equal(order.at(-1), 'second-end');
+    assert.ok(!order.includes('first-end'), 'cancelled pipeline should not commit first-end');
     session.dispose();
   });
 

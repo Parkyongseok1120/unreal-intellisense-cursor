@@ -6,6 +6,8 @@ import { EditorBridgeClient } from '../editorBridge/editorBridgeClient';
 
 export interface ProjectRuntime {
   project: UEProject;
+  /** Original filesystem path before canonical registry lookup. */
+  displayPath: string;
   engine?: UEInstallation;
   session: ProjectSession;
   editorBridge: EditorBridgeClient;
@@ -47,6 +49,7 @@ export class WorkspaceProjectRegistry {
     if (!runtime) {
       runtime = {
         project,
+        displayPath: path.resolve(project.projectRoot),
         engine,
         session: new ProjectSession(),
         editorBridge: new EditorBridgeClient(project.projectRoot, bridgeContext),
@@ -54,6 +57,7 @@ export class WorkspaceProjectRegistry {
       this.runtimes.set(key, runtime);
     } else {
       runtime.project = project;
+      runtime.displayPath = path.resolve(project.projectRoot);
       runtime.engine = engine;
     }
     return runtime;
