@@ -177,7 +177,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (editorBridge) extensionContext.subscriptions.push(editorBridge);
   if (testExplorer) extensionContext.subscriptions.push(testExplorer);
 
-  registerSemanticNavigation(extensionContext, () => resolveRuntime()?.project, settings);
+  registerSemanticNavigation(extensionContext, (doc) => resolveRuntime(doc.uri)?.project, settings);
   registerUeNavigationCommands(extensionContext, () => resolveRuntime()?.project);
 
   if (settings.experimentalHlsl) {
@@ -213,7 +213,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.languages.registerDefinitionProvider(
       { language: 'cpp', scheme: 'file' },
-      new GeneratedHeaderDefinitionProvider(() => resolveProjectRoot()),
+      new GeneratedHeaderDefinitionProvider((doc) => resolveRuntime(doc.uri)?.project),
     ),
     vscode.languages.registerDocumentLinkProvider(
       { language: 'cpp', scheme: 'file' },

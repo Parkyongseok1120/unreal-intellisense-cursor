@@ -84,6 +84,10 @@ async function enrichFromSourceHeaders(projectRoot: string, classes: UClassRefle
   }
 
   await scanSource(path.join(projectRoot, 'Source'), 12);
+  const pluginsDir = path.join(projectRoot, 'Plugins');
+  if (fs.existsSync(pluginsDir)) {
+    await scanSource(pluginsDir, 16);
+  }
 }
 
 export async function buildReflectionIndex(projectRoot: string): Promise<UClassReflection[]> {

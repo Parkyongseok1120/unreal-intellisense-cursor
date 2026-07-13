@@ -226,7 +226,7 @@ export async function ensureCompileDatabase(
       // LLVM installation and then fails looking for <LLVM_ROOT>/bin/clang++.
       // PATH lets UBT find a bundled clang++ when present while preserving a
       // user's explicitly configured native toolchain.
-      env.PATH = `${binDir};${env.PATH ?? ''}`;
+      env.PATH = `${binDir}${path.delimiter}${env.PATH ?? ''}`;
       // UBT's Windows platform scanner accepts LLVM_PATH only as an LLVM root
       // containing bin/clang++.exe. The VSIX uses exactly that layout.
       if (await fileExists(path.join(binDir, 'bin', 'clang++.exe'))) {
@@ -415,7 +415,7 @@ export async function getCompileDbIndexPlan(projectRoot: string): Promise<Compil
 function isProjectTranslationUnit(projectRoot: string, filePath: string): boolean {
   const absolute = path.resolve(projectRoot, filePath);
   const relative = path.relative(projectRoot, absolute).replace(/\\/g, '/');
-  return /^(?:Source|Plugins\/[^/]+\/Source)\//i.test(relative) && /\.(?:cpp|cc|cxx|c)$/i.test(absolute);
+  return /^(?:Source|Plugins\/.+\/Source)\//i.test(relative) && /\.(?:cpp|cc|cxx|c)$/i.test(absolute);
 }
 
 /** UBT may emit engine actions too; retain one command per project/plugin TU. */

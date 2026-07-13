@@ -8,6 +8,7 @@ import {
   getSymbolPathSeparator,
   resolveEditorPath,
 } from './platform';
+import { resolveGameTargetName } from '../build/targetResolver';
 import type { BuildConfiguration, BuildPlatform, UEInstallation, UEProject } from '../types';
 
 export interface EditorProcess {
@@ -56,11 +57,12 @@ export function resolveGameExecutable(
   const platDir = resolveBinariesPlatformDir();
   const ext = getHostPlatform() === 'win32' ? '.exe' : '';
   const binDir = path.join(project.projectRoot, 'Binaries', platDir);
+  const gameName = resolveGameTargetName(project);
   if (getHostPlatform() === 'win32' && configuration !== 'Development' && configuration !== 'Shipping') {
-    const candidate = path.join(binDir, `${project.name}-${platform}-${configuration}${ext}`);
+    const candidate = path.join(binDir, `${gameName}-${platform}-${configuration}${ext}`);
     if (fs.existsSync(candidate)) return path.normalize(candidate);
   }
-  return path.join(binDir, `${project.name}${ext}`);
+  return path.join(binDir, `${gameName}${ext}`);
 }
 
 export function buildSymbolSearchPaths(project: UEProject, engine: UEInstallation): string {
@@ -69,8 +71,15 @@ export function buildSymbolSearchPaths(project: UEProject, engine: UEInstallatio
   const paths = [
     path.join(project.projectRoot, 'Binaries', platDir),
     path.join(engine.root, 'Engine', 'Binaries', platDir),
-    path.join(project.projectRoot, 'Plugins'),
   ];
+  const pluginsDir = path.join(project.projectRoot, 'Plugins');
+  if (fs.existsSync(pluginsDir)) {
+    for (const entry of fs.readdirSync(pluginsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const pluginBin = path.join(pluginsDir, entry.name, 'Binaries', platDir);
+      if (fs.existsSync(pluginBin)) paths.push(pluginBin);
+    }
+  }
   return paths.join(sep);
 }
 

@@ -1,4 +1,4 @@
-﻿import * as fs from 'fs';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { UEProject } from '../types';
@@ -29,17 +29,23 @@ export function getSymbolAtPosition(
   return { word: document.getText(wordRange), range: wordRange };
 }
 
+const NON_CLASS_QUALIFIERS = new Set(['Super', 'Self', 'ThisClass', 'StaticClass', 'FObjectInitializer']);
+
 export function findEnclosingUeClass(document: vscode.TextDocument, line: number): string | undefined {
   for (let i = line; i >= 0; i--) {
     const text = document.lineAt(i).text;
-    const qualified = text.match(/\b(\w+)::/);
-    if (qualified) return qualified[1];
+    const methodImpl = text.match(/\b(\w+)::\s*\w+\s*\(/);
+    if (methodImpl && !NON_CLASS_QUALIFIERS.has(methodImpl[1])) return methodImpl[1];
     const uclass = text.match(/UCLASS\s*\([^)]*\)\s*class\s+(?:\w+_API\s+)?(\w+)/);
     if (uclass) return uclass[1];
-    const plain = text.match(/class\s+(?:\w+_API\s+)?(\w+)\s*:\s*public/);
-    if (plain && i < line) return plain[1];
-    const structMatch = text.match(/USTRUCT\s*\([^)]*\)\s*struct\s+(?:\w+_API\s+)?(\w+)/);
-    if (structMatch) return structMatch[1];
+    const plain = text.match(/class\s+(?:\w+_API\s+)?(\w+)\s*:\s*(?:public|private|protected)\b/i);
+    if (plain && i <= line) return plain[1];
+    const plainStruct = text.match(/(?:USTRUCT\s*\([^)]*\)\s*)?struct\s+(?:\w+_API\s+)?(\w+)/);
+    if (plainStruct && i <= line) {
+      const structIdx = text.indexOf(plainStruct[0]);
+      const beforeStruct = structIdx >= 0 ? text.slice(0, structIdx) : text;
+      if (!beforeStruct.includes('(')) return plainStruct[1];
+    }
   }
   return undefined;
 }
@@ -121,26 +127,56 @@ function resolveMethodInHeader(
   return pos ? locationFromFile(headerPath, pos) : undefined;
 }
 
+function findMethodSignatureInSource(
+  sourcePath: string,
+  className: string | undefined,
+  methodName: string,
+): vscode.Position | undefined {
+  let content: string;
+  try {
+    content = fs.readFileSync(sourcePath, 'utf-8');
+  } catch {
+    return undefined;
+  }
+  const lines = content.split(/\r?\n/);
+  const patterns: RegExp[] = [];
+  if (className) {
+    patterns.push(
+      new RegExp(`\\b${escapeRegex(className)}::${escapeRegex(methodName)}\\s*\\(`),
+      new RegExp(`\\b${escapeRegex(className)}::${escapeRegex(methodName)}_Implementation\\s*\\(`),
+    );
+  } else {
+    patterns.push(
+      new RegExp(`\\b\\w+::${escapeRegex(methodName)}\\s*\\(`),
+      new RegExp(`\\b\\w+::${escapeRegex(methodName)}_Implementation\\s*\\(`),
+    );
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      const match = pattern.exec(lines[i]);
+      if (!match) continue;
+      const index = match.index ?? lines[i].search(pattern);
+      if (index >= 0) return new vscode.Position(i, index);
+    }
+    if (className) {
+      const sig = new RegExp(`\\b${escapeRegex(className)}::${escapeRegex(methodName)}\\s*\\([^)]*\\)\\s*(?:const)?\\s*$`);
+      if (sig.test(lines[i].trim()) && i + 1 < lines.length && lines[i + 1].trim().startsWith('{')) {
+        return new vscode.Position(i, lines[i].indexOf('::') + 2);
+      }
+    }
+  }
+  return undefined;
+}
+
 function resolveMethodInSource(
   sourcePath: string,
   className: string | undefined,
   methodName: string,
 ): vscode.Location | undefined {
-  if (className) {
-    const qualifiedPatterns = [
-      new RegExp(`\\b${escapeRegex(className)}::${escapeRegex(methodName)}\\s*\\(`),
-      new RegExp(`\\b${escapeRegex(className)}::${escapeRegex(methodName)}_Implementation\\s*\\(`),
-    ];
-    const qualified = findSymbolInFile(sourcePath, qualifiedPatterns);
-    if (qualified) return locationFromFile(sourcePath, qualified);
-  }
-
-  const anyQualifiedPatterns = [
-    new RegExp(`\\b\\w+::${escapeRegex(methodName)}\\s*\\(`),
-    new RegExp(`\\b\\w+::${escapeRegex(methodName)}_Implementation\\s*\\(`),
-  ];
-  const anyQualified = findSymbolInFile(sourcePath, anyQualifiedPatterns);
-  if (anyQualified) return locationFromFile(sourcePath, anyQualified);
+  const qualified = findMethodSignatureInSource(sourcePath, className, methodName);
+  if (qualified) return locationFromFile(sourcePath, qualified);
 
   const patterns: RegExp[] = [
     new RegExp(`\\b${escapeRegex(methodName)}\\s*\\([^)]*\\)\\s*(?:const)?\\s*\\{`),
@@ -240,63 +276,77 @@ function resolveMethodNavigation(
   return undefined;
 }
 
-async function findGeneratedHeaderForClass(projectRoot: string, className: string): Promise<string | undefined> {
-  const intermediate = path.join(projectRoot, 'Intermediate', 'Build');
-  const matches: string[] = [];
-  const stripped = className.replace(/^[AUIF]/, '');
-
-  async function walk(dir: string, depth: number): Promise<void> {
-    if (depth <= 0) return;
-    let entries: fs.Dirent[];
-    try {
-      entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isFile() && entry.name.endsWith('.generated.h')) {
-        if (entry.name === `${className}.generated.h` || entry.name === `${stripped}.generated.h`) {
-          matches.push(full);
-        }
-      } else if (entry.isDirectory()) {
-        await walk(full, depth - 1);
+async function walkGeneratedHeaders(rootDir: string, className: string, depth: number, matches: string[]): Promise<void> {
+  if (depth <= 0) return;
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(rootDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const stripped = className.replace(/^[AUIFG]/, '');
+  for (const entry of entries) {
+    const full = path.join(rootDir, entry.name);
+    if (entry.isFile() && entry.name.endsWith('.generated.h')) {
+      if (entry.name === `${className}.generated.h` || entry.name === `${stripped}.generated.h`) {
+        matches.push(full);
       }
+    } else if (entry.isDirectory()) {
+      await walkGeneratedHeaders(full, className, depth - 1, matches);
+    }
+  }
+}
+
+async function findGeneratedHeaderForClass(projectRoot: string, className: string): Promise<string | undefined> {
+  const matches: string[] = [];
+  const searchRoots = [path.join(projectRoot, 'Intermediate', 'Build')];
+
+  const pluginsDir = path.join(projectRoot, 'Plugins');
+  if (fs.existsSync(pluginsDir)) {
+    const plugins = await fs.promises.readdir(pluginsDir, { withFileTypes: true }).catch(() => []);
+    for (const plugin of plugins) {
+      if (!plugin.isDirectory()) continue;
+      const pluginIntermediate = path.join(pluginsDir, plugin.name, 'Intermediate', 'Build');
+      if (fs.existsSync(pluginIntermediate)) searchRoots.push(pluginIntermediate);
     }
   }
 
-  await walk(intermediate, 10);
+  for (const root of searchRoots) {
+    await walkGeneratedHeaders(root, className, 10, matches);
+  }
   if (matches.length > 0) {
     return matches.sort((a, b) => a.length - b.length)[0];
   }
 
-  const allGenerated: string[] = [];
-  async function collectAll(dir: string, depth: number): Promise<void> {
-    if (depth <= 0) return;
-    let entries: fs.Dirent[];
-    try {
-      entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isFile() && entry.name.endsWith('.generated.h')) {
-        allGenerated.push(full);
-      } else if (entry.isDirectory()) {
-        await collectAll(full, depth - 1);
+  for (const root of searchRoots) {
+    const allGenerated: string[] = [];
+    async function collectAll(dir: string, depth: number): Promise<void> {
+      if (depth <= 0) return;
+      let entries: fs.Dirent[];
+      try {
+        entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isFile() && entry.name.endsWith('.generated.h')) {
+          allGenerated.push(full);
+        } else if (entry.isDirectory()) {
+          await collectAll(full, depth - 1);
+        }
       }
     }
-  }
-  await collectAll(intermediate, 10);
-  for (const candidate of allGenerated) {
-    try {
-      const content = await fs.promises.readFile(candidate, 'utf-8');
-      if (content.includes(`${className}::StaticClass`) || content.includes(`Z_Construct_UClass_${className}`)) {
-        return candidate;
+    await collectAll(root, 10);
+    for (const candidate of allGenerated) {
+      try {
+        const content = await fs.promises.readFile(candidate, 'utf-8');
+        if (content.includes(`${className}::StaticClass`) || content.includes(`Z_Construct_UClass_${className}`)) {
+          return candidate;
+        }
+      } catch {
+        // skip
       }
-    } catch {
-      // skip
     }
   }
   return undefined;
@@ -333,13 +383,21 @@ async function resolveStaticClassForType(
     // optional graph
   }
 
-  const adjacentGenerated = path.join(
-    path.dirname(currentFile),
-    `${path.basename(currentFile, path.extname(currentFile))}.generated.h`,
-  );
-  if (fs.existsSync(adjacentGenerated)) {
-    const pos = findStaticClassPosition(adjacentGenerated, className);
-    if (pos) return locationFromFile(adjacentGenerated, pos);
+  const pairedHeader = isSource(currentFile)
+    ? findPairedSourceFile(currentFile)
+    : isHeader(currentFile)
+      ? currentFile
+      : undefined;
+  if (pairedHeader) {
+    const includeMatch = fs.readFileSync(pairedHeader, 'utf-8').match(/#include\s+"([^"]+\.generated\.h)"/);
+    if (includeMatch) {
+      const genName = path.basename(includeMatch[1]);
+      const genFromIntermediate = await findGeneratedHeaderForClass(project.projectRoot, className);
+      if (genFromIntermediate && path.basename(genFromIntermediate) === genName) {
+        const pos = findStaticClassPosition(genFromIntermediate, className);
+        if (pos) return locationFromFile(genFromIntermediate, pos);
+      }
+    }
   }
 
   const generated = await findGeneratedHeaderForClass(project.projectRoot, className);
@@ -443,21 +501,29 @@ export async function resolveUeNavigationTarget(
   return undefined;
 }
 
-export function isEngineSourcePath(filePath: string): boolean {
+export function isEngineSourcePath(filePath: string, projectRoot?: string, engineRoot?: string): boolean {
   const normalized = path.normalize(filePath).replace(/\\/g, '/').toLowerCase();
+  const projectNorm = projectRoot ? path.normalize(projectRoot).replace(/\\/g, '/').toLowerCase() : undefined;
+  if (projectNorm && normalized.startsWith(projectNorm)) {
+    return false;
+  }
+  if (engineRoot) {
+    const engineNorm = path.normalize(engineRoot).replace(/\\/g, '/').toLowerCase();
+    if (normalized.startsWith(engineNorm)) return true;
+  }
   return (
     normalized.includes('/engine/') ||
     normalized.includes('/unrealengine/') ||
-    normalized.includes('/epic games/') ||
-    normalized.includes('/ue_') ||
-    normalized.includes('/programs/') ||
-    normalized.includes('/plugins/runtime/')
+    normalized.includes('/epic games/ue_') ||
+    normalized.includes('/engine/build/') ||
+    (normalized.includes('/engine/plugins/') && !projectNorm)
   );
 }
 
 export interface PickBestDefinitionOptions {
   projectRoot?: string;
   pairedFilePath?: string;
+  engineRoot?: string;
 }
 
 export function pickBestDefinitionLocation(
@@ -484,8 +550,8 @@ export function pickBestDefinitionLocation(
     if (targetPath.endsWith('.generated.h') && preferredWord === 'StaticClass') score += 8;
     if (targetPath.endsWith('.h') || targetPath.endsWith('.hpp')) score += 4;
     if (targetPath.endsWith('.cpp') || targetPath.endsWith('.cxx') || targetPath.endsWith('.cc')) score += 4;
-    if (targetPath.includes(`${path.sep}intermediate${path.sep}`)) score += 2;
-    if (isEngineSourcePath(targetPath)) score -= 20;
+    if (targetPath.includes(`${path.sep}intermediate${path.sep}`) && preferredWord === 'StaticClass') score += 2;
+    if (isEngineSourcePath(targetPath, options?.projectRoot, options?.engineRoot)) score -= 20;
     return { loc, score };
   });
 

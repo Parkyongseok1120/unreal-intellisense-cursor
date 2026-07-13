@@ -60,6 +60,10 @@ async function resolvePriorityUeLocation(
     const current = path.normalize(document.fileName).toLowerCase();
     const target = path.normalize(pairedLoc.uri.fsPath).toLowerCase();
     if (target !== current) return pairedLoc;
+    if (mode === 'implementation') {
+      const line = document.lineAt(position.line).text;
+      if (new RegExp(`\\w+::${symbol.word}\\s*\\(`).test(line)) return pairedLoc;
+    }
   }
 
   return undefined;
@@ -69,6 +73,7 @@ function pickOptions(document: vscode.TextDocument, project: UEProject | undefin
   return {
     projectRoot: project?.projectRoot,
     pairedFilePath: findPairedSourceFile(document.fileName),
+    engineRoot: undefined as string | undefined,
   };
 }
 

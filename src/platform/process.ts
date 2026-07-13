@@ -1,9 +1,9 @@
 import { spawn } from 'child_process';
 import type { CancellationToken } from 'vscode';
 import type { SpawnResult } from '../types';
-import { findUnrealEditorProcesses } from './debug';
 
 export async function isUnrealEditorRunning(): Promise<boolean> {
+  const { findUnrealEditorProcesses } = await import('./debug');
   const processes = await findUnrealEditorProcesses();
   return processes.length > 0;
 }

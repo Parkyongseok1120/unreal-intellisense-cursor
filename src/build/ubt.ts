@@ -1,9 +1,7 @@
 import type { UEInstallation, UEProject, BuildConfiguration, BuildTargetType, BuildPlatform, UBTCommandLine } from '../types';
-import { TARGET_SUFFIXES } from '../constants';
+import { resolveTargetName } from './targetResolver';
 
-export function resolveTargetName(project: UEProject, targetType: BuildTargetType): string {
-  return project.name + (TARGET_SUFFIXES[targetType] ?? '');
-}
+export { resolveTargetName } from './targetResolver';
 
 export function buildCommandLine(
   engine: UEInstallation,

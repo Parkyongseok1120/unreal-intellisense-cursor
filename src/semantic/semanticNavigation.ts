@@ -8,10 +8,10 @@ import {
   querySymbol,
 } from './semanticService';
 
-type ProjectGetter = () => UEProject | undefined;
+type ProjectGetter = (document: vscode.TextDocument) => UEProject | undefined;
 
-async function loadGraph(getProject: ProjectGetter) {
-  const project = getProject();
+async function loadGraph(getProject: ProjectGetter, document: vscode.TextDocument) {
+  const project = getProject(document);
   if (!project) return undefined;
   return getOrBuildSemanticGraph(project);
 }
@@ -28,7 +28,7 @@ export class UeSemanticDefinitionProvider implements vscode.DefinitionProvider {
     document: vscode.TextDocument,
     position: vscode.Position,
   ): Promise<vscode.Definition | undefined> {
-    const graph = await loadGraph(this.getProject);
+    const graph = await loadGraph(this.getProject, document);
     if (!graph) return undefined;
 
     const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
@@ -70,7 +70,7 @@ export class UeSemanticDocumentSymbolProvider implements vscode.DocumentSymbolPr
   constructor(private readonly getProject: ProjectGetter) {}
 
   async provideDocumentSymbols(document: vscode.TextDocument): Promise<vscode.DocumentSymbol[]> {
-    const graph = await loadGraph(this.getProject);
+    const graph = await loadGraph(this.getProject, document);
     if (!graph) return [];
 
     const file = path.normalize(document.fileName).toLowerCase();
@@ -96,7 +96,9 @@ export class UeSemanticWorkspaceSymbolProvider implements vscode.WorkspaceSymbol
   constructor(private readonly getProject: ProjectGetter) {}
 
   async provideWorkspaceSymbols(query: string): Promise<vscode.SymbolInformation[]> {
-    const graph = await loadGraph(this.getProject);
+    const activeDoc = vscode.window.activeTextEditor?.document;
+    if (!activeDoc) return [];
+    const graph = await loadGraph(this.getProject, activeDoc);
     if (!graph || query.length < 2) return [];
 
     const q = query.toLowerCase();
@@ -125,7 +127,7 @@ export class UeSemanticTypeHierarchyProvider implements vscode.TypeHierarchyProv
     document: vscode.TextDocument,
     position: vscode.Position,
   ): Promise<vscode.TypeHierarchyItem | undefined> {
-    const graph = await loadGraph(this.getProject);
+    const graph = await loadGraph(this.getProject, document);
     if (!graph) return undefined;
 
     const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
@@ -147,7 +149,8 @@ export class UeSemanticTypeHierarchyProvider implements vscode.TypeHierarchyProv
   }
 
   async provideTypeHierarchySupertypes(item: vscode.TypeHierarchyItem): Promise<vscode.TypeHierarchyItem[] | undefined> {
-    const graph = await loadGraph(this.getProject);
+    const doc = await vscode.workspace.openTextDocument(item.uri);
+    const graph = await loadGraph(this.getProject, doc);
     if (!graph) return [];
 
     const sym = authoritativeSymbols(graph).find((s) => s.name === item.name);
@@ -180,7 +183,8 @@ export class UeSemanticTypeHierarchyProvider implements vscode.TypeHierarchyProv
   }
 
   async provideTypeHierarchySubtypes(item: vscode.TypeHierarchyItem): Promise<vscode.TypeHierarchyItem[] | undefined> {
-    const graph = await loadGraph(this.getProject);
+    const doc = await vscode.workspace.openTextDocument(item.uri);
+    const graph = await loadGraph(this.getProject, doc);
     if (!graph) return [];
 
     return authoritativeSymbols(graph)
@@ -206,7 +210,7 @@ export class UeSemanticInlayHintsProvider implements vscode.InlayHintsProvider {
     document: vscode.TextDocument,
     range: vscode.Range,
   ): Promise<vscode.InlayHint[]> {
-    const graph = await loadGraph(this.getProject);
+    const graph = await loadGraph(this.getProject, document);
     if (!graph) return [];
 
     const hints: vscode.InlayHint[] = [];

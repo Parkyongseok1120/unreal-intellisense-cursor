@@ -4,10 +4,7 @@ import * as http from 'http';
 import { mcpJsonRpc } from '../mcp/epicMcpClient';
 import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
-export const EPIC_MCP_DEFAULT_PORT = 8000;
-
-/** Epic 공식 기본 포트 우선, 레거시 포트 호환 */
-export const DEFAULT_MCP_PORT_CANDIDATES = [8000, 13377, 3000, 9315, 13579, 8090, 8091];
+export { EPIC_MCP_DEFAULT_PORT, DEFAULT_MCP_PORT_CANDIDATES } from '../mcp/mcpPorts';
 
 export interface McpConfigOptions {
   projectRoot: string;

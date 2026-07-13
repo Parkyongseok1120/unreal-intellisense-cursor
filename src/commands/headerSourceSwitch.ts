@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { findPairedSourceFile } from '../platform/paths';
+import { findPairedSourceFile } from '../parsers/moduleLayout';
 
 export async function switchHeaderSource(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
@@ -9,7 +9,7 @@ export async function switchHeaderSource(): Promise<void> {
   const paired = findPairedSourceFile(currentPath);
 
   if (!paired) {
-    vscode.window.showInformationMessage('UE5_8 Cursor: 대응하는 헤더/소스 파일을 찾을 수 없습니다.');
+    vscode.window.showInformationMessage('UE5_8 Cursor: ?�?�하???�더/?�스 ?�일??찾을 ???�습?�다.');
     return;
   }
 

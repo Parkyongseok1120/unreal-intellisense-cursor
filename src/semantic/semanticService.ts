@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import type { BuildConfiguration, BuildPlatform, BuildTargetType, UEInstallation, UEProject } from '../types';
 import type { UClassReflection } from '../uht/generatedHeaderParser';
@@ -17,9 +16,8 @@ import {
   type BuildSnapshot,
 } from '../projectModel/buildSnapshot';
 
-let cachedGraph: SemanticGraph | undefined;
-let cachedProjectRoot: string | undefined;
-let cachedSnapshot: BuildSnapshot | undefined;
+const graphCache = new Map<string, SemanticGraph>();
+const snapshotCache = new Map<string, BuildSnapshot>();
 
 export interface SemanticRefreshOptions {
   engine?: UEInstallation;
@@ -44,16 +42,14 @@ export async function getOrBuildSemanticGraph(
   project: UEProject,
   options?: SemanticRefreshOptions,
 ): Promise<SemanticGraph> {
-  if (cachedGraph && cachedProjectRoot === project.projectRoot) {
-    return cachedGraph;
-  }
+  const cached = graphCache.get(project.projectRoot);
+  if (cached) return cached;
 
   const loaded = await loadSemanticGraph(project.projectRoot);
   const snap = await loadBuildSnapshot(project.projectRoot);
   if (loaded && snap && loaded.fingerprint === snap.fingerprint) {
-    cachedGraph = loaded;
-    cachedProjectRoot = project.projectRoot;
-    cachedSnapshot = snap;
+    graphCache.set(project.projectRoot, loaded);
+    snapshotCache.set(project.projectRoot, snap);
     return loaded;
   }
 
@@ -66,7 +62,7 @@ export async function refreshSemanticGraph(
 ): Promise<SemanticGraph> {
   const snapshot = await buildCompileSnapshot(snapshotOptions(project, options));
   await saveBuildSnapshot(project.projectRoot, snapshot);
-  cachedSnapshot = snapshot;
+  snapshotCache.set(project.projectRoot, snapshot);
 
   const graph = await buildSemanticGraph(project);
   graph.fingerprint = snapshot.fingerprint;
@@ -76,21 +72,23 @@ export async function refreshSemanticGraph(
   graph.synthetic = snapshot.synthetic;
 
   await saveSemanticGraph(project.projectRoot, graph);
-  cachedGraph = graph;
-  cachedProjectRoot = project.projectRoot;
+  graphCache.set(project.projectRoot, graph);
   return graph;
 }
 
-export function getCachedSemanticGraph(): SemanticGraph | undefined {
-  return cachedGraph;
+export function getCachedSemanticGraph(projectRoot?: string): SemanticGraph | undefined {
+  if (projectRoot) return graphCache.get(projectRoot);
+  return graphCache.values().next().value;
 }
 
 export function invalidateSemanticGraph(projectRoot?: string): void {
-  if (!projectRoot || cachedProjectRoot === projectRoot) {
-    cachedGraph = undefined;
-    cachedProjectRoot = undefined;
-    cachedSnapshot = undefined;
+  if (projectRoot) {
+    graphCache.delete(projectRoot);
+    snapshotCache.delete(projectRoot);
+    return;
   }
+  graphCache.clear();
+  snapshotCache.clear();
 }
 
 export function querySymbol(graph: SemanticGraph, name: string): UClassReflection | undefined {
@@ -113,9 +111,8 @@ export function findGeneratedPair(graph: SemanticGraph, filePath: string): { hea
 }
 
 export async function getReflectionClasses(projectRoot: string): Promise<UClassReflection[]> {
-  if (cachedGraph && cachedProjectRoot === projectRoot) {
-    return cachedGraph.reflection;
-  }
+  const cached = graphCache.get(projectRoot);
+  if (cached) return cached.reflection;
   const loaded = await loadSemanticGraph(projectRoot);
   return loaded?.reflection ?? [];
 }
@@ -136,7 +133,7 @@ export async function computeCompileParity(
   flagParity?: number;
 }> {
   const snapshot =
-    cachedSnapshot ??
+    snapshotCache.get(project.projectRoot) ??
     (await loadBuildSnapshot(project.projectRoot)) ??
     (await buildCompileSnapshot(snapshotOptions(project, options)));
   const result = snapshot.parity ?? {
@@ -145,7 +142,7 @@ export async function computeCompileParity(
     parity: snapshot.synthetic ? 0 : 1,
   };
 
-  const graph = cachedGraph ?? (await loadSemanticGraph(project.projectRoot));
+  const graph = graphCache.get(project.projectRoot) ?? (await loadSemanticGraph(project.projectRoot));
   const status = await snapshotFreshness(
     project.projectRoot,
     graph?.fingerprint,

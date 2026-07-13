@@ -58,7 +58,7 @@ async function ensureCppDebugger(): Promise<DebugPreflightResult> {
 
 function getProjectWorkspaceFolder(project: UEProject): vscode.WorkspaceFolder | undefined {
   const uri = vscode.Uri.file(project.projectRoot);
-  return vscode.workspace.getWorkspaceFolder(uri) ?? vscode.workspace.workspaceFolders?.[0];
+  return vscode.workspace.getWorkspaceFolder(uri);
 }
 
 async function waitForCppDebugAdapter(extensionId: string, timeoutMs = 4000): Promise<void> {

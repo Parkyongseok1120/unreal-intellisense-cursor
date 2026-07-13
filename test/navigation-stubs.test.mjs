@@ -498,4 +498,12 @@ describe('symbol navigation resolver', () => {
     const doc = mockDocument(header, position);
     assert.equal(symbolNavigation.findEnclosingUeClass(doc, position.line), 'AGame');
   });
+
+  it('does not penalize project Plugins/Runtime paths as engine sources', () => {
+    const projectRoot = 'C:/Proj';
+    const pluginRuntime = 'C:/Proj/Plugins/Runtime/MyPlugin/Source/Foo.h';
+    assert.equal(symbolNavigation.isEngineSourcePath(pluginRuntime, projectRoot), false);
+    const enginePath = 'C:/UE/Engine/Source/Runtime/Engine/Classes/Engine/World.h';
+    assert.equal(symbolNavigation.isEngineSourcePath(enginePath, projectRoot, 'C:/UE'), true);
+  });
 });

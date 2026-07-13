@@ -67,7 +67,9 @@ export function buildUeSettings(options: {
   existingClangdPath?: unknown;
   applyExplorerFilter?: boolean;
   contentBrowserMode?: import('./explorerFilter').ContentBrowserMode;
+  compileCommandsDir?: string;
 }): Record<string, unknown> {
+  const compileDir = options.compileCommandsDir ?? '${workspaceFolder}';
   const ueSettings: Record<string, unknown> = {
     [GENERATED_SETTINGS_FLAG]: true,
     'C_Cpp.intelliSenseEngine': 'disabled',
@@ -77,7 +79,7 @@ export function buildUeSettings(options: {
     'clangd.arguments': [
       '--background-index',
       '--background-index-priority=low',
-      '--compile-commands-dir=${workspaceFolder}',
+      `--compile-commands-dir=${compileDir}`,
       '--completion-style=detailed',
       '--header-insertion=never',
       `--pch-storage=${recommendedPchStorage()}`,
@@ -130,6 +132,7 @@ export async function ensureWorkspaceSettings(
     existingClangdPath: existing['clangd.path'],
     applyExplorerFilter: options.applyExplorerFilter,
     contentBrowserMode: options.contentBrowserMode,
+    compileCommandsDir: project.projectRoot,
   });
 
   const merged = deepMerge(existing, ueSettings);

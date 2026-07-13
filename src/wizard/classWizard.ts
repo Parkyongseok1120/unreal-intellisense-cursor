@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { UEProject } from '../types';
+import { findModuleRootSync } from '../parsers/moduleLayout';
 import { mutateText, runWithTransaction, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 
 export type WizardClassKind =
@@ -68,12 +69,17 @@ export function resolveWizardPaths(project: UEProject, input: WizardInput) {
   const meta = KIND_META[input.kind];
   const className = normalizeClassName(input.className, meta.prefix, input.kind);
   const sub = input.subfolder?.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') ?? '';
-  const publicDir = path.join(project.projectRoot, 'Source', input.moduleName, 'Public', sub);
-  const privateDir = path.join(project.projectRoot, 'Source', input.moduleName, 'Private', sub);
+  const moduleRoot = findModuleRootSync(project.projectRoot, input.moduleName)
+    ?? path.join(project.projectRoot, 'Source', input.moduleName);
+  const publicDir = path.join(moduleRoot, 'Public', sub);
+  const privateDir = path.join(moduleRoot, 'Private', sub);
+  const includePath = sub ? `${sub}/${className}.h` : `${className}.h`;
   return {
     publicHeader: path.join(publicDir, `${className}.h`),
     privateCpp: path.join(privateDir, `${className}.cpp`),
     className,
+    moduleRoot,
+    includePath,
   };
 }
 
@@ -125,7 +131,7 @@ public:
 `;
 }
 
-function cppTemplate(input: WizardInput, className: string): string {
+function cppTemplate(input: WizardInput, className: string, includePath?: string): string {
   const beginPlay = ['Actor', 'Character', 'ActorComponent'].includes(input.kind)
     ? `\nvoid ${className}::BeginPlay()\n{\n\tSuper::BeginPlay();\n}\n`
     : '';
@@ -133,14 +139,17 @@ function cppTemplate(input: WizardInput, className: string): string {
     ? `\nvoid ${className}::Tick(float DeltaTime)\n{\n\tSuper::Tick(DeltaTime);\n}\n`
     : '';
   const ctorBody = input.kind === 'Actor' ? `\tPrimaryActorTick.bCanEverTick = true;\n` : '';
+  const headerInclude = includePath ?? `${className}.h`;
 
-  return `#include "${className}.h"
+  return `#include "${headerInclude}"
 
 ${className}::${className}()\n{\n${ctorBody}}\n${beginPlay}${tick}`;
 }
 
 export function buildCsPath(project: UEProject, moduleName: string): string {
-  return path.join(project.projectRoot, 'Source', moduleName, `${moduleName}.Build.cs`);
+  const moduleRoot = findModuleRootSync(project.projectRoot, moduleName)
+    ?? path.join(project.projectRoot, 'Source', moduleName);
+  return path.join(moduleRoot, `${moduleName}.Build.cs`);
 }
 
 export async function readBuildCsContent(project: UEProject, moduleName: string): Promise<string | undefined> {
@@ -265,7 +274,7 @@ async function generateClassFilesInTx(
   }
 
   if (!meta.headerOnly) {
-    await mutateText(tx, project.projectRoot, paths.privateCpp, cppTemplate(input, paths.className));
+    await mutateText(tx, project.projectRoot, paths.privateCpp, cppTemplate(input, paths.className, paths.includePath));
   }
 
   await mutateText(tx, project.projectRoot, paths.publicHeader, headerTemplate(input, paths.className));

@@ -3,6 +3,7 @@ import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
 import type { UEProject } from '../types';
 import { discoverModuleLayouts } from '../parsers/moduleLayout';
+import { discoverTargetsSync } from '../build/targetResolver';
 import { fileExists } from '../platform/paths';
 import { mutateJson, type WorkspaceMutationTransaction } from '../platform/workspaceMutation';
 import { buildReflectionIndex, type UClassReflection } from '../uht/reflectionIndex';
@@ -132,6 +133,12 @@ export async function buildSemanticGraph(project: UEProject): Promise<SemanticGr
     if (layout.publicDir && (await fileExists(layout.publicDir))) {
       await collectSourceFiles(layout.publicDir, headers, ['.h', '.hpp', '.inl']);
     }
+    if (layout.classesDir && (await fileExists(layout.classesDir))) {
+      await collectSourceFiles(layout.classesDir, headers, ['.h', '.hpp', '.inl']);
+    }
+    if (layout.privateDir && (await fileExists(layout.privateDir))) {
+      await collectSourceFiles(layout.privateDir, headers, ['.h', '.hpp', '.inl']);
+    }
     const buildCs = path.join(layout.moduleRoot, `${layout.moduleName}.Build.cs`);
     const deps = (await fileExists(buildCs)) ? parseBuildCsDeps(buildCs) : undefined;
     modules.push({
@@ -151,14 +158,15 @@ export async function buildSemanticGraph(project: UEProject): Promise<SemanticGr
     const entries = await fs.promises.readdir(pluginsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      const pluginNeedle = path.join('Plugins', entry.name).replace(/\\/g, '/').toLowerCase();
       const pluginModules = modules
-        .filter((m) => m.root.includes(path.join('Plugins', entry.name)))
+        .filter((m) => m.root.replace(/\\/g, '/').toLowerCase().includes(pluginNeedle))
         .map((m) => m.name);
       plugins.push({ name: entry.name, modules: pluginModules });
     }
   }
 
-  const targets = await discoverTargets(project.projectRoot);
+  const targets = discoverTargetsSync(project.projectRoot).map((t) => ({ name: t.name, path: t.path }));
   const reflection = await buildReflectionIndex(project.projectRoot);
   const compileActions = await collectCompileActionsFromProject(project.projectRoot);
   const generatedArtifacts = await linkGeneratedArtifacts(project, reflection);
@@ -235,27 +243,7 @@ export async function loadSemanticGraph(projectRoot: string): Promise<SemanticGr
   return undefined;
 }
 
-async function discoverTargets(projectRoot: string): Promise<TargetNode[]> {
-  const targets: TargetNode[] = [];
-  const sourceDir = path.join(projectRoot, 'Source');
-  if (!(await fileExists(sourceDir))) return targets;
-
-  let entries: fs.Dirent[];
-  try {
-    entries = await fs.promises.readdir(sourceDir, { withFileTypes: true });
-  } catch {
-    return targets;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.Target.cs')) continue;
-    targets.push({
-      name: entry.name.replace('.Target.cs', ''),
-      path: path.join(sourceDir, entry.name),
-    });
-  }
-  return targets;
-}
+export { resolveTargetName, discoverTargetsSync, resolveEditorTargetName, resolveGameTargetName } from '../build/targetResolver';
 
 function parseBuildCsDeps(buildCsPath: string): { public: string[]; private: string[] } {
   try {

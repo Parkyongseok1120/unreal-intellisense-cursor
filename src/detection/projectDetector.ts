@@ -4,7 +4,7 @@ import { parseUProject, isUE58Association } from '../parsers/uprojectParser';
 import type { UEProject } from '../types';
 
 export async function detectProjects(): Promise<UEProject[]> {
-  const uris = await vscode.workspace.findFiles('**/*.uproject', '**/Intermediate/**', 20);
+  const uris = await vscode.workspace.findFiles('**/*.uproject', '**/{Intermediate,Samples,Templates}/**', 50);
   const projects: UEProject[] = [];
 
   for (const uri of uris) {
@@ -41,7 +41,8 @@ export async function resolvePrimaryProject(projects: UEProject[]): Promise<UEPr
     if (atRoot.length > 1) return selectProject(atRoot);
 
     const subfolderOnly = projects.filter((p) => path.normalize(p.projectRoot) !== normalizedRoot);
-    if (subfolderOnly.length === 1) return subfolderOnly[0];
+    const atRootCount = projects.filter((p) => path.normalize(path.dirname(p.uprojectPath)) === normalizedRoot).length;
+    if (atRootCount === 0 && subfolderOnly.length === 1) return subfolderOnly[0];
   }
 
   return selectProject(projects);

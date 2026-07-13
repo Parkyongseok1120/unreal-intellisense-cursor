@@ -1,5 +1,5 @@
 import * as http from 'http';
-import { EPIC_MCP_DEFAULT_PORT, DEFAULT_MCP_PORT_CANDIDATES } from '../cursor/mcpConfig';
+import { EPIC_MCP_DEFAULT_PORT, DEFAULT_MCP_PORT_CANDIDATES } from './mcpPorts';
 
 export interface McpJsonRpcResponse {
   result?: {

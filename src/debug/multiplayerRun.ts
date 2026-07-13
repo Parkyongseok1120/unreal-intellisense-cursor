@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { UE5_8CursorContext } from '../types';
 import type { UE5_8CursorSettings } from '../config/settings';
-import { baseCppDebuggerOptions, resolveServerExecutable } from '../platform/debug';
+import { baseCppDebuggerOptions, resolveEditorProgramPath, resolveServerExecutable } from '../platform/debug';
 
 export interface MultiplayerRunOptions {
   players: number;
@@ -9,8 +9,8 @@ export interface MultiplayerRunOptions {
   dedicatedServer: boolean;
 }
 
-function getWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
-  return vscode.workspace.workspaceFolders?.[0];
+function getProjectWorkspaceFolder(project: { projectRoot: string }): vscode.WorkspaceFolder | undefined {
+  return vscode.workspace.getWorkspaceFolder(vscode.Uri.file(project.projectRoot));
 }
 
 export async function launchMultiplayerDebug(
@@ -23,8 +23,19 @@ export async function launchMultiplayerDebug(
     return;
   }
 
-  const folder = getWorkspaceFolder();
-  if (!folder) return;
+  const folder = getProjectWorkspaceFolder(ctx.project);
+  if (!folder) {
+    vscode.window.showWarningMessage(
+      'UE5_8 Cursor: 프로젝트 루트가 workspace에 포함되어 있지 않습니다. .code-workspace로 프로젝트를 열어주세요.',
+    );
+    return;
+  }
+
+  const editorProgram = resolveEditorProgramPath(
+    ctx.engine.root,
+    settings.debugBuildConfiguration,
+    settings.platform,
+  );
 
   const { ensureDebugConfigs } = await import('../cursor/launchConfig');
   await ensureDebugConfigs({
@@ -83,7 +94,7 @@ export async function launchMultiplayerDebug(
         ...base,
         name: `UE5_8: PIE Host (${ctx.project.name})`,
         request: 'launch',
-        program: ctx.engine.editorPath,
+        program: editorProgram,
         args: listenArgs,
         cwd: ctx.project.projectRoot,
       }),
@@ -96,7 +107,7 @@ export async function launchMultiplayerDebug(
           ...base,
           name: `UE5_8: PIE Client ${i + 1}`,
           request: 'launch',
-          program: ctx.engine.editorPath,
+          program: editorProgram,
           args: ['-game', `-project=${ctx.project.uprojectPath}`, `-PIEVirtualPort=${port}`, '-log'],
           cwd: ctx.project.projectRoot,
         }),
