@@ -103,6 +103,63 @@ function bridgeGetterForProject(projectRoot: string): () => EditorBridgeClient |
   return () => projectRegistry().getByRoot(projectRoot)?.editorBridge;
 }
 
+function resolvePrimaryProjectFast(projects: UEProject[]): UEProject | undefined {
+  if (projects.length === 0) return undefined;
+  if (projects.length === 1) return projects[0];
+  if (settings.projectFile) {
+    return projects.find((p) => p.uprojectPath === settings.projectFile) ?? projects[0];
+  }
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (workspaceRoot) {
+    const normalizedRoot = path.normalize(workspaceRoot);
+    const atRoot = projects.filter((p) => path.normalize(path.dirname(p.uprojectPath)) === normalizedRoot);
+    if (atRoot.length === 1) return atRoot[0];
+    const subfolderOnly = projects.filter((p) => path.normalize(p.projectRoot) !== normalizedRoot);
+    if (atRoot.length === 0 && subfolderOnly.length === 1) return subfolderOnly[0];
+  }
+  return projects[0];
+}
+
+/** Register project context immediately so navigation/commands work while bootstrap runs. */
+async function bootstrapActivationQuick(): Promise<void> {
+  const projects = await detectProjects();
+  if (projects.length === 0) {
+    await setContext(ContextKeys.ProjectDetected, false);
+    return;
+  }
+  const primary = resolvePrimaryProjectFast(projects);
+  if (!primary) {
+    await setContext(ContextKeys.ProjectDetected, false);
+    return;
+  }
+  for (const project of projects) {
+    projectRegistry().ensure(project, undefined, extensionContext);
+  }
+  projectRegistry().setActive(primary.projectRoot);
+  await setContext(ContextKeys.ProjectDetected, true);
+  ctx.outputChannel.appendLine(`[UE5_8 Cursor] Project detected: ${primary.name} (bootstrap in progress)`);
+}
+
+async function runPostActivationPipeline(): Promise<void> {
+  if (isExtensionTestHost()) {
+    await runDetectionPipeline({ allowAutoSetup: false });
+  } else {
+    await runDetectionPipeline({ allowAutoSetup: settings.autoSetupOnOpen });
+  }
+  for (const root of projectRegistry().listRoots()) {
+    const recovery = await recoverIncompleteMutations(root);
+    if (recovery.message) {
+      ctx.outputChannel.appendLine(`[UE5_8 Cursor] ${recovery.message}`);
+    }
+  }
+  if (settings.showWelcomeOnFirstOpen && !isExtensionTestHost() && extensionContext && !extensionContext.globalState.get('ue58rider.welcomeShown')) {
+    extensionContext.globalState.update('ue58rider.welcomeShown', true);
+    const { showWelcomePanel } = await import('./ui/welcomePanel');
+    void showWelcomePanel(settings);
+  }
+  ctx.outputChannel.appendLine('[UE5_8 Cursor] Bootstrap complete.');
+}
+
 function bridgeConnectedSetupOptions(): import('./editorBridge/bridgeConnectedSetup').BridgeConnectedSetupOptions {
   return {
     onAssetIndexChanged: (projectRoot) => {
@@ -456,25 +513,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   outputChannel.appendLine(`[UE5_8 Cursor] Activating UE 5.8 development environment (v${getExtensionVersion(extensionPath)})...`);
   configureMcpBridge(undefined, extensionPath);
-  if (isExtensionTestHost()) {
-    void runDetectionPipeline({ allowAutoSetup: false });
-  } else {
-    await runDetectionPipeline({ allowAutoSetup: true });
-  }
+  void bootstrapActivationQuick().then(() => runPostActivationPipeline()).catch((err) => {
+    ctx.outputChannel.appendLine(`[UE5_8 Cursor] Bootstrap failed: ${String(err)}`);
+  });
 
-  for (const root of projectRegistry().listRoots()) {
-    const recovery = await recoverIncompleteMutations(root);
-    if (recovery.message) {
-      outputChannel.appendLine(`[UE5_8 Cursor] ${recovery.message}`);
-    }
-  }
-
-  if (settings.showWelcomeOnFirstOpen && !isExtensionTestHost() && !extensionContext.globalState.get('ue58rider.welcomeShown')) {
-    extensionContext.globalState.update('ue58rider.welcomeShown', true);
-    const { showWelcomePanel } = await import('./ui/welcomePanel');
-    void showWelcomePanel(settings);
-  }
-
+  outputChannel.appendLine('[UE5_8 Cursor] Ready.');
   extensionContext.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders((e) => {
       for (const folder of e.removed) {
@@ -557,7 +600,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-  outputChannel.appendLine('[UE5_8 Cursor] Ready.');
   if (vscode.window.activeTextEditor) {
     void promoteOpenedPluginDocument(vscode.window.activeTextEditor.document);
     void reportHeaderCompileContext(vscode.window.activeTextEditor.document);
@@ -778,7 +820,10 @@ async function executeDetectionPipeline(
   }
 
   let primaryProject: UEProject | undefined;
-  if (settings.projectFile) {
+  const activeRuntime = projectRegistry().getActive();
+  if (activeRuntime && projects.some((p) => p.projectRoot === activeRuntime.project.projectRoot)) {
+    primaryProject = activeRuntime.project;
+  } else if (settings.projectFile) {
     primaryProject = projects.find((p) => p.uprojectPath === settings.projectFile) ?? projects[0];
   } else if (isExtensionTestHost()) {
     primaryProject = projects[0];
